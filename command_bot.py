@@ -121,6 +121,7 @@ class CommandHandler:
         tickers = snap.get("open_tickers") or []
         active_mode = snap.get("active_mode", "normal")
         size = snap.get("active_trade_size")
+        pct = snap.get("active_trade_pct")
         lines = [
             f"📊 FlipPulse status — {mode}",
             f"Format: {snap.get('trading_format', '?')}",
@@ -131,9 +132,14 @@ class CommandHandler:
         if total:
             wr = snap.get("win_rate", 0)
             lines.append(f"Record: {wins}W/{losses}L ({wr:.0f}%)")
-        lines.append(
-            f"Ladder/mode: {active_mode}"
-            + (f" · size ${size:,.2f}" if isinstance(size, (int, float)) else ""))
+        size_str = ""
+        if isinstance(pct, (int, float)):
+            size_str = f" · size {pct:.1f}%"
+            if isinstance(size, (int, float)):
+                size_str += f" (~${size:,.2f})"
+        elif isinstance(size, (int, float)):
+            size_str = f" · size ${size:,.2f}"
+        lines.append(f"Ladder/mode: {active_mode}{size_str}")
         open_str = f"{open_n}"
         if tickers:
             open_str += " [" + ", ".join(t[-15:] for t in tickers if t) + "]"

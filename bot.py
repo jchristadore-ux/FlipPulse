@@ -1,7 +1,26 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  MARKEYMACHINE  v9.8.0  —  Production Build                                  ║
+║  FLIPPULSE (MarkeyMachine core)  v10.0.0  —  Production Build                ║
 ║  "No disassemble."                                                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  v10.0.0 — PERCENTAGE SIZING: every stake is now a FRACTION OF THE CURRENT   ║
+║  BALANCE, so one config scales to any starting balance and compounds.        ║
+║                                                                              ║
+║  WHY: each customer funds a different bankroll, so fixed-dollar stakes could  ║
+║  never be shared. All sizing knobs are now percentages resolved to dollars   ║
+║  at ONE chokepoint (active_trade_size = active fraction × balance):          ║
+║    • NORMAL_TRADE_PCT   — full stake fraction (default 0.10 = 10%).          ║
+║    • RECOVERY_TRADE_PCT — reduced fraction while clawing back (default 0.03).║
+║    • MAX_TRADE_PCT      — hard ceiling on any one trade (default 0.15); the  ║
+║                           ladder overlay can never push past it.             ║
+║  The probation ramp climbs sub-full FRACTIONS (PROBATION_RUNG_STEP_PCT);     ║
+║  recovery targets stay absolute balances and keep working. REMOVED: the      ║
+║  owner-specific hardcoded TEMP stake override and the fixed-dollar high-stake ║
+║  balance gate (percentages self-de-risk, so it is redundant). Trading Formats ║
+║  (conservative/balanced/aggressive) seed these percentages; an explicit env  ║
+║  var always wins. RAILWAY: NORMAL_TRADE_PCT, RECOVERY_TRADE_PCT, MAX_TRADE_PCT.║
+║  Older dollar vars (NORMAL_TRADE_SIZE / TRADE_SIZE_DOLLARS / HIGH_STAKE_*)   ║
+║  are no longer read.                                                          ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  v9.8.0 — BALANCE-GATED $1000 CEILING: the slow-roll ramp can now climb to   ║
 ║  $750 and $1000, but only once the book can absorb it.                       ║
@@ -287,7 +306,7 @@
 
 from __future__ import annotations
 
-BOT_VERSION = "9.8.0"
+BOT_VERSION = "10.0.0"
 
 import base64
 import json
@@ -395,16 +414,21 @@ _RAW_PEM            = _require("KALSHI_PRIVATE_KEY_PEM")
 DEMO_MODE           = _env_bool("DEMO_MODE", True)
 POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
 
-# ── Capital & sizing ──────────────────────────────────────────────────────────
-# v9.5.0: two-tier sizing driven by a persistent Recovery Mode (see RecoveryState
-# below). The ACTIVE stake is derived from the current mode, never read raw from
-# a single env var at the sizing call:
-#   • NORMAL_TRADE_SIZE   — the full stake in normal operation.
-#   • RECOVERY_TRADE_SIZE — the reduced stake while clawing back a full-size loss.
-# NORMAL_TRADE_SIZE falls back to the legacy TRADE_SIZE_DOLLARS so existing
-# Railway configs keep working unchanged.
-NORMAL_TRADE_SIZE   = _env_float("NORMAL_TRADE_SIZE", _env_float("TRADE_SIZE_DOLLARS", 5.0))
-RECOVERY_TRADE_SIZE = _env_float("RECOVERY_TRADE_SIZE", 100.0)
+# ── Capital & sizing (PERCENTAGE-BASED — v10.0.0) ─────────────────────────────
+# Every stake is a FRACTION OF THE CURRENT BALANCE, resolved to dollars at the
+# single sizing chokepoint active_trade_size(balance). Nothing here is a fixed
+# dollar figure, so one config scales to ANY starting balance and compounds as
+# the account grows (and auto-de-risks as it shrinks). The ACTIVE fraction is
+# derived from the current mode, never read raw at the sizing call:
+#   • NORMAL_TRADE_PCT   — the full stake fraction in normal operation.
+#   • RECOVERY_TRADE_PCT — the reduced fraction while clawing back a full loss.
+#   • MAX_TRADE_PCT      — a HARD ceiling on any single trade (the "max trade"
+#                          knob); the ladder overlay can never push past it.
+# Values are fractions (0.10 = 10% of balance). A Trading Format seeds these
+# (see formats.py); an explicit env var always wins.
+NORMAL_TRADE_PCT   = _env_float("NORMAL_TRADE_PCT", 0.10)
+RECOVERY_TRADE_PCT = _env_float("RECOVERY_TRADE_PCT", 0.03)
+MAX_TRADE_PCT      = _env_float("MAX_TRADE_PCT", 0.15)
 # v9.1.0: 0.08 → 0.04. At 8% of bankroll per binary bet, an ordinary 4-loss
 # streak costs ~12.5% of the account in one session (2026-06-18: −$246.87 on
 # 1W/4L). Halving the per-bet fraction bounds a cold-streak session.
@@ -429,29 +453,29 @@ RECOVERY_PERSIST    = _env_bool("RECOVERY_PERSIST", True)
 # LADDER_ENABLED=true. See ladder.py and LADDER_STRATEGY.md.
 LADDER_ENABLED = _env_bool("LADDER_ENABLED", False)
 
-# After a recovery-mode exit (sizing returns to NORMAL_TRADE_SIZE), suppress the
+# After a recovery-mode exit (sizing returns to NORMAL_TRADE_PCT), suppress the
 # ladder's win-rate size-up for this many settled trades — win or loss — so the
 # ladder re-proves the edge on fresh data before it can scale the stake above
-# NORMAL_TRADE_SIZE again. Downside guardrails (loss-streak demote, drawdown)
+# NORMAL_TRADE_PCT again. Downside guardrails (loss-streak demote, drawdown)
 # stay active throughout. Set 0 to disable the pause. No effect unless the ladder
 # is enabled.
 RECOVERY_LADDER_PAUSE_TRADES = _env_int("RECOVERY_LADDER_PAUSE_TRADES", 5)
 
 # ── Post-recovery graduated re-entry ("probation ramp") ───────────────────────
-# WHY (2026-06-29 log review): the book grinds back up $100 at a time but loses
-# $500 at a time. After recovery cleared, the OLD behavior snapped the base
-# straight from RECOVERY_TRADE_SIZE back to the full NORMAL_TRADE_SIZE on the very
-# next trade; a single full-size loss then wiped ~5 small wins and re-armed
-# recovery. RECOVERY_LADDER_PAUSE_TRADES only held the ladder *multiplier* at 1×,
-# not the base, so it never kept the stake small.
+# WHY (2026-06-29 log review): the book grinds back up a small step at a time but
+# loses a full stake at a time. After recovery cleared, the OLD behavior snapped
+# the base straight from RECOVERY_TRADE_PCT back to the full NORMAL_TRADE_PCT on
+# the very next trade; a single full-size loss then wiped several small wins and
+# re-armed recovery. RECOVERY_LADDER_PAUSE_TRADES only held the ladder
+# *multiplier* at 1×, not the base, so it never kept the stake small.
 #
 # Instead, when recovery clears we do NOT jump back to full size. We re-enter at
-# the recovery base and climb a ladder of sub-full base sizes, advancing exactly
-# one rung when the edge re-proves itself (a short win streak OR a rolling
+# the recovery fraction and climb a ladder of sub-full base FRACTIONS, advancing
+# exactly one rung when the edge re-proves itself (a short win streak OR a rolling
 # win-rate threshold — whichever fires first) and stepping one rung DOWN on any
-# loss. Reaching full size graduates back to normal mode. Throughout the ramp the
-# laddering overlay is capped at the current base (it may size DOWN but never UP),
-# so a win rate earned at small size can never re-arm full stake in one jump.
+# loss. Reaching the full fraction graduates back to normal mode. Throughout the
+# ramp the laddering overlay is capped at the current base (it may size DOWN but
+# never UP), so a win rate earned small can never re-arm full stake in one jump.
 PROBATION_RAMP_ENABLED       = _env_bool("PROBATION_RAMP_ENABLED", True)
 # Advance one rung after this many consecutive wins at the current base size.
 PROBATION_WIN_STREAK         = _env_int("PROBATION_WIN_STREAK", 2)
@@ -459,53 +483,18 @@ PROBATION_WIN_STREAK         = _env_int("PROBATION_WIN_STREAK", 2)
 # least PROBATION_WINRATE_MIN_TRADES have settled in the ramp. "Either" wins.
 PROBATION_WIN_RATE_MIN       = _env_float("PROBATION_WIN_RATE_MIN", 0.60)
 PROBATION_WINRATE_MIN_TRADES = _env_int("PROBATION_WINRATE_MIN_TRADES", 4)
-# Explicit override for the ramp's sub-full base sizes, comma-separated dollars
-# (e.g. "100,250"). Empty → auto-build [RECOVERY_TRADE_SIZE, NORMAL_TRADE_SIZE/2].
-# Values are clamped to the [RECOVERY_TRADE_SIZE, NORMAL_TRADE_SIZE) half-open
-# range; NORMAL_TRADE_SIZE itself is the graduation target, never a rung.
+# Explicit override for the ramp's sub-full base FRACTIONS, comma-separated
+# (e.g. "0.03,0.06"). Empty → auto-build from RECOVERY_TRADE_PCT toward
+# NORMAL_TRADE_PCT. Values are clamped to the [RECOVERY_TRADE_PCT,
+# NORMAL_TRADE_PCT) half-open range; NORMAL_TRADE_PCT is the graduation target,
+# never a rung.
 PROBATION_RUNGS_RAW          = os.environ.get("PROBATION_RUNGS", "").strip()
 PROBATION_STATE_PATH         = os.environ.get("PROBATION_STATE_PATH", "probation_state.json")
 PROBATION_PERSIST            = _env_bool("PROBATION_PERSIST", True)
-# Auto-built rungs step up in fixed dollar increments from RECOVERY_TRADE_SIZE to
-# (exclusive) NORMAL_TRADE_SIZE. With NORMAL=$1000 this yields the owner ladder
-# $100 → $250 → $500 → $750 (graduating to $1000); with NORMAL=$500 it stays
-# $100 → $250 (graduating to $500), unchanged from v9.7.0.
-PROBATION_RUNG_STEP          = _env_float("PROBATION_RUNG_STEP", 250.0)
-
-# ── High-stake balance gate (v9.8.0) ──────────────────────────────────────────
-# WHY: the ramp ceiling now reaches $1000, but a $750/$1000 stake is only prudent
-# once the book can absorb it. Stakes ABOVE HIGH_STAKE_GATE_SIZE require at least
-# HIGH_STAKE_MIN_BALANCE of equity. The gate is enforced in two places: a hard
-# ceiling re-checked on every trade at sizing time (active_trade_size → kelly_bet)
-# so a balance that drops back under the line caps the next stake to the gate
-# size; AND at ramp-advance time so a win rate banked at $500 cannot jump straight
-# to $1000 the instant balance crosses the line — the high rungs are earned one at
-# a time, mirroring the v9.6.0 "no one-jump re-arm" rule. Set HIGH_STAKE_MIN_BALANCE
-# very high (or above your max stake) to effectively pin the ceiling at the gate.
-HIGH_STAKE_GATE_SIZE         = _env_float("HIGH_STAKE_GATE_SIZE", 500.0)
-HIGH_STAKE_MIN_BALANCE       = _env_float("HIGH_STAKE_MIN_BALANCE", 5000.0)
-
-# ── TEMPORARY hard stake override (owner directive, 2026-06-30) ────────────────
-# A hand-managed, one-way stake ramp that PREEMPTS every other sizing mode
-# (recovery/probation/normal) until the bankroll FIRST reaches
-# TEMP_OVERRIDE_EXIT_BALANCE. Stakes start at TEMP_OVERRIDE_BASE and ratchet UP
-# by TEMP_OVERRIDE_STEP after every TEMP_OVERRIDE_WIN_STREAK consecutive settled
-# wins; a loss only clears the in-progress win streak (the size NEVER steps down
-# — this is a deliberate one-way ramp, not a clawback). The instant equity hits
-# the exit balance the override RETIRES PERMANENTLY (it never re-arms for the
-# rest of that run) and sizing reverts to the normal recovery → probation →
-# normal ladder. This is intentionally a temporary patch: the values are
-# hardcoded as defaults here. To restore stock behaviour set
-# TEMP_OVERRIDE_ENABLED=false (or delete this block plus its wiring in
-# active_trade_size / place_order / the settlement hook). By design the override
-# bypasses the high-stake balance gate — it IS the owner's explicit sizing call.
-TEMP_OVERRIDE_ENABLED      = _env_bool("TEMP_OVERRIDE_ENABLED", True)
-TEMP_OVERRIDE_BASE         = _env_float("TEMP_OVERRIDE_BASE", 200.0)
-TEMP_OVERRIDE_STEP         = _env_float("TEMP_OVERRIDE_STEP", 10.0)
-TEMP_OVERRIDE_WIN_STREAK   = _env_int("TEMP_OVERRIDE_WIN_STREAK", 2)
-TEMP_OVERRIDE_EXIT_BALANCE = _env_float("TEMP_OVERRIDE_EXIT_BALANCE", 5000.0)
-TEMP_OVERRIDE_STATE_PATH   = os.environ.get("TEMP_OVERRIDE_STATE_PATH", "temp_override_state.json")
-TEMP_OVERRIDE_PERSIST      = _env_bool("TEMP_OVERRIDE_PERSIST", True)
+# Auto-built rungs step up in fixed PERCENTAGE-POINT increments from
+# RECOVERY_TRADE_PCT to (exclusive) NORMAL_TRADE_PCT. With NORMAL=10%,
+# RECOVERY=3%, STEP=0.035 this yields 3% → 6.5% (graduating to 10%).
+PROBATION_RUNG_STEP_PCT      = _env_float("PROBATION_RUNG_STEP_PCT", 0.035)
 
 # ── Dashboard / observability ─────────────────────────────────────────────────
 # When set, the bot writes a small JSON status snapshot once per main-loop cycle
@@ -516,29 +505,30 @@ STATUS_SNAPSHOT_PATH = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip()
 
 
 def _probation_rungs() -> "list[float]":
-    """Ascending list of sub-full base sizes the ramp climbs through. Each is in
-    [RECOVERY_TRADE_SIZE, NORMAL_TRADE_SIZE); full size is the graduation target,
-    not a rung. Returns [] when there is no room to ramp (caller stays normal)."""
-    lo, hi = RECOVERY_TRADE_SIZE, NORMAL_TRADE_SIZE
+    """Ascending list of sub-full base FRACTIONS the ramp climbs through. Each is
+    in [RECOVERY_TRADE_PCT, NORMAL_TRADE_PCT); the full fraction is the graduation
+    target, not a rung. Returns [] when there is no room to ramp (caller stays
+    normal)."""
+    lo, hi = RECOVERY_TRADE_PCT, NORMAL_TRADE_PCT
     if hi <= lo:
         return []
     if PROBATION_RUNGS_RAW:
         try:
-            vals = sorted({round(float(x), 2) for x in PROBATION_RUNGS_RAW.split(",") if x.strip()})
+            vals = sorted({round(float(x), 4) for x in PROBATION_RUNGS_RAW.split(",") if x.strip()})
         except ValueError:
             vals = []
         rungs = [v for v in vals if lo <= v < hi]
         if not rungs or rungs[0] > lo:
             rungs = [lo] + [r for r in rungs if r > lo]
         return rungs
-    # Fixed-step ladder: floor, then every PROBATION_RUNG_STEP up to (exclusive)
-    # full size. NORMAL=$1000 → [100, 250, 500, 750]; NORMAL=$500 → [100, 250].
+    # Fixed-step ladder: floor, then every PROBATION_RUNG_STEP_PCT up to
+    # (exclusive) the full fraction. NORMAL=10%, RECOVERY=3%, STEP=3.5pt → [3%, 6.5%].
     rungs = [lo]
-    step  = PROBATION_RUNG_STEP if PROBATION_RUNG_STEP > 0 else hi
-    v     = step
+    step  = PROBATION_RUNG_STEP_PCT if PROBATION_RUNG_STEP_PCT > 0 else hi
+    v     = lo + step
     while v < hi:
         if v > lo:
-            rungs.append(round(v, 2))
+            rungs.append(round(v, 4))
         v += step
     return rungs
 
@@ -814,9 +804,9 @@ stake_ladder: Optional[StakeLadder] = StakeLadder() if LADDER_ENABLED else None
 # ─────────────────────────────────────────────────────────────────────────────
 # RECOVERY MODE  (two-tier position sizing — v9.5.0)
 #
-# After a FULL-SIZE (normal-mode) trade settles a LOSS, the bot drops to a
-# reduced RECOVERY_TRADE_SIZE until the account balance climbs back to where it
-# was IMMEDIATELY BEFORE that losing trade. Then it returns to NORMAL_TRADE_SIZE
+# After a FULL-SIZE (normal-mode) trade settles a LOSS, the bot drops to the
+# reduced RECOVERY_TRADE_PCT until the account balance climbs back to where it
+# was IMMEDIATELY BEFORE that losing trade. Then it returns to NORMAL_TRADE_PCT
 # automatically. The state (active flag + recovery target balance) is persisted
 # to disk so an in-container restart resumes mid-recovery.
 #
@@ -866,11 +856,12 @@ class RecoveryState:
         log.warning("Recovery mode ACTIVATED after losing full-size trade.")
         log.warning("Previous balance: $%.2f", self.target_balance)
         log.warning("Recovery target: $%.2f", self.target_balance)
-        log.warning("Switching trade size to: $%.2f", RECOVERY_TRADE_SIZE)
+        log.warning("Switching trade size to: %.1f%% of balance", RECOVERY_TRADE_PCT * 100)
         tg.send_telegram_message(
             f"🛟 RECOVERY MODE ACTIVATED\n"
             f"Recovery target: ${self.target_balance:.2f}\n"
-            f"Trade size → ${RECOVERY_TRADE_SIZE:.2f} (was ${NORMAL_TRADE_SIZE:.2f})"
+            f"Trade size → {RECOVERY_TRADE_PCT*100:.1f}% of balance "
+            f"(was {NORMAL_TRADE_PCT*100:.1f}%)"
         )
         return True
 
@@ -887,12 +878,12 @@ class RecoveryState:
         self._save()
         log.warning("Recovery target reached.")
         log.warning("Recovery mode DEACTIVATED.")
-        log.warning("Switching trade size back to: $%.2f", NORMAL_TRADE_SIZE)
+        log.warning("Switching trade size back to: %.1f%% of balance", NORMAL_TRADE_PCT * 100)
         msg = (f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
-               f"${reached:.2f}\nTrade size → ${NORMAL_TRADE_SIZE:.2f}")
+               f"${reached:.2f}\nTrade size → {NORMAL_TRADE_PCT*100:.1f}% of balance")
         # Make the ladder re-prove the edge on fresh data: hold its win-rate
         # size-up at baseline for the next RECOVERY_LADDER_PAUSE_TRADES trades
-        # before it can scale the stake above NORMAL_TRADE_SIZE again.
+        # before it can scale the stake above NORMAL_TRADE_PCT again.
         if stake_ladder is not None and RECOVERY_LADDER_PAUSE_TRADES > 0:
             stake_ladder.pause_size_up(RECOVERY_LADDER_PAUSE_TRADES)
             msg += (f"\nLadder size-up paused for "
@@ -917,13 +908,14 @@ class RecoveryState:
             self.maybe_exit(current_balance)
             return
         log.warning("Recovery boot │ RESUMING recovery. Balance $%.2f, target "
-                    "$%.2f, trade size $%.2f.",
-                    current_balance, self.target_balance, RECOVERY_TRADE_SIZE)
+                    "$%.2f, trade size %.1f%% of balance.",
+                    current_balance, self.target_balance, RECOVERY_TRADE_PCT * 100)
 
     def status_line(self, current_balance: float) -> str:
+        stake = RECOVERY_TRADE_PCT * current_balance
         return (f"Recovery mode active. Current balance: ${current_balance:.2f}. "
                 f"Target: ${self.target_balance:.2f}. "
-                f"Trade size: ${RECOVERY_TRADE_SIZE:.2f}.")
+                f"Trade size: {RECOVERY_TRADE_PCT*100:.1f}% (~${stake:.2f}).")
 
     # ── persistence (atomic JSON write) ────────────────────────────────────────
     def _save(self) -> None:
@@ -973,7 +965,7 @@ class ProbationState:
         self.active:    bool        = False
         self.rungs:     List[float] = []     # ascending sub-full base sizes
         self.level:     int         = 0      # index into rungs
-        self.full_size: float       = 0.0    # graduation target (NORMAL size)
+        self.full_size: float       = 0.0    # graduation target (NORMAL fraction)
         self.streak:    int         = 0      # consecutive wins at the current rung
         self.wins:      int         = 0      # cumulative settled wins this ramp
         self.losses:    int         = 0      # cumulative settled losses this ramp
@@ -993,25 +985,26 @@ class ProbationState:
         daily-warm-up triggers read differently."""
         if not PROBATION_RAMP_ENABLED:
             return False
-        rungs = [round(float(r), 2) for r in rungs if r < full_size]
+        rungs = [round(float(r), 4) for r in rungs if r < full_size]
         if not rungs:
             return False
         self.active    = True
         self.rungs     = rungs
         self.level     = 0
-        self.full_size = round(float(full_size), 2)
+        self.full_size = round(float(full_size), 4)
         self.streak    = 0
         self.wins      = 0
         self.losses    = 0
         self.day       = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self._save()
-        log.warning("Probation ramp START (%s) │ base $%.2f → full $%.2f via %s",
-                    reason, self.rungs[0], self.full_size,
-                    " → ".join(f"${r:.0f}" for r in self.rungs + [self.full_size]))
+        _pct = lambda f: f"{f*100:.1f}%"
+        log.warning("Probation ramp START (%s) │ base %s → full %s via %s",
+                    reason, _pct(self.rungs[0]), _pct(self.full_size),
+                    " → ".join(_pct(r) for r in self.rungs + [self.full_size]))
         tg.send_telegram_message(
             f"🪜 PROBATION RAMP STARTED\n"
-            f"{reason}: re-entering at ${self.rungs[0]:.2f}; will climb "
-            f"{' → '.join(f'${r:.0f}' for r in self.rungs + [self.full_size])} "
+            f"{reason}: re-entering at {_pct(self.rungs[0])} of balance; will climb "
+            f"{' → '.join(_pct(r) for r in self.rungs + [self.full_size])} "
             f"as the edge re-proves itself.\n"
             f"Advance on {PROBATION_WIN_STREAK}-win streak or "
             f"≥{PROBATION_WIN_RATE_MIN*100:.0f}% win rate; step down on a loss."
@@ -1019,9 +1012,10 @@ class ProbationState:
         return True
 
     def current_size(self) -> float:
-        """The base stake for the current rung (full_size when inactive)."""
+        """The base stake FRACTION for the current rung (full fraction when
+        inactive)."""
         if not self.active or not self.rungs:
-            return self.full_size or NORMAL_TRADE_SIZE
+            return self.full_size or NORMAL_TRADE_PCT
         return self.rungs[min(self.level, len(self.rungs) - 1)]
 
     def _gate_met(self) -> bool:
@@ -1031,36 +1025,18 @@ class ProbationState:
         return (n >= PROBATION_WINRATE_MIN_TRADES
                 and (self.wins / n) >= PROBATION_WIN_RATE_MIN)
 
-    def _next_rung_allowed(self, balance: "float | None") -> bool:
-        """High-stake balance gate on advancement: the ramp may only climb into a
-        rung (or graduate into a full size) above HIGH_STAKE_GATE_SIZE once equity
-        clears HIGH_STAKE_MIN_BALANCE — so a win rate banked at $500 cannot jump to
-        $1000 the instant balance crosses the line. `balance is None` (no balance
-        in scope, e.g. unit tests) does not block, preserving legacy behavior."""
-        nxt = (self.full_size if self.level >= len(self.rungs) - 1
-               else self.rungs[self.level + 1])
-        if nxt <= HIGH_STAKE_GATE_SIZE or balance is None:
-            return True
-        return balance >= HIGH_STAKE_MIN_BALANCE
-
     def record_result(self, won: bool, balance: "float | None" = None) -> None:
-        """Fold one settled probation-mode trade into the ramp. `balance` (the
-        equity at settlement) feeds the high-stake gate on advancement."""
+        """Fold one settled probation-mode trade into the ramp. `balance` is
+        accepted for call-site symmetry but no longer gates advancement — because
+        every rung is a FRACTION of the current balance, the stake already scales
+        with equity and needs no separate high-stake dollar gate."""
         if not self.active:
             return
         if won:
             self.wins  += 1
             self.streak += 1
             if self._gate_met():
-                if self._next_rung_allowed(balance):
-                    self._advance()
-                else:
-                    # Boxes checked but equity too low for the next (high) rung —
-                    # hold and keep the streak so it climbs once balance clears.
-                    log.info("Probation ramp │ gate met but balance $%s < $%.0f — "
-                             "holding at $%.2f until the book can absorb the next rung.",
-                             f"{balance:.0f}" if balance is not None else "?",
-                             HIGH_STAKE_MIN_BALANCE, self.current_size())
+                self._advance()
         else:
             self.losses += 1
             self.streak  = 0
@@ -1074,37 +1050,37 @@ class ProbationState:
             return
         self.level += 1
         self.streak = 0                 # must re-prove the edge at the larger size
-        log.warning("Probation ramp UP → base $%.2f (rung %d/%d).",
-                    self.current_size(), self.level + 1, len(self.rungs))
+        log.warning("Probation ramp UP → base %.1f%% (rung %d/%d).",
+                    self.current_size() * 100, self.level + 1, len(self.rungs))
         tg.send_telegram_message(
-            f"🪜 PROBATION RAMP UP → ${self.current_size():.2f} "
+            f"🪜 PROBATION RAMP UP → {self.current_size()*100:.1f}% "
             f"(rung {self.level + 1}/{len(self.rungs)})"
         )
 
     def _step_down(self) -> None:
         if self.level == 0:
-            log.info("Probation ramp │ loss at floor ${:.2f} — holding."
-                     .format(self.current_size()))
+            log.info("Probation ramp │ loss at floor %.1f%% — holding.",
+                     self.current_size() * 100)
             return
         self.level -= 1
-        log.warning("Probation ramp DOWN → base $%.2f (loss).", self.current_size())
+        log.warning("Probation ramp DOWN → base %.1f%% (loss).", self.current_size() * 100)
         tg.send_telegram_message(
-            f"🪜 PROBATION RAMP DOWN → ${self.current_size():.2f} (loss)"
+            f"🪜 PROBATION RAMP DOWN → {self.current_size()*100:.1f}% (loss)"
         )
 
     def _graduate(self) -> None:
-        size = self.full_size or NORMAL_TRADE_SIZE
+        frac = self.full_size or NORMAL_TRADE_PCT
         self.active = False
         self.level  = 0
         self.rungs  = []
         self._save()
-        log.warning("Probation ramp COMPLETE → full size $%.2f restored.", size)
+        log.warning("Probation ramp COMPLETE → full size %.1f%% restored.", frac * 100)
         # Fresh ladder cooldown at full size so the overlay cannot 2× immediately
         # on a win rate banked at smaller stakes.
         if stake_ladder is not None and RECOVERY_LADDER_PAUSE_TRADES > 0:
             stake_ladder.pause_size_up(RECOVERY_LADDER_PAUSE_TRADES)
         tg.send_telegram_message(
-            f"✅ PROBATION COMPLETE — full size ${size:.2f} restored."
+            f"✅ PROBATION COMPLETE — full size {frac*100:.1f}% restored."
         )
 
     def cancel(self) -> None:
@@ -1133,17 +1109,17 @@ class ProbationState:
         if self.day and self.day != today and not recovery.active:
             log.info("Probation boot │ new day (%s→%s) — re-arming ramp from floor.",
                      self.day, today)
-            self.start(_probation_rungs(), NORMAL_TRADE_SIZE, reason="Daily slow-roll")
+            self.start(_probation_rungs(), NORMAL_TRADE_PCT, reason="Daily slow-roll")
             return
         self.level = max(0, min(self.level, len(self.rungs) - 1))
-        log.info("Probation boot │ RESUMING ramp at base $%.2f (rung %d/%d).",
-                 self.current_size(), self.level + 1, len(self.rungs))
+        log.info("Probation boot │ RESUMING ramp at base %.1f%% (rung %d/%d).",
+                 self.current_size() * 100, self.level + 1, len(self.rungs))
 
     def status_line(self) -> str:
         n  = self.wins + self.losses
         wr = (self.wins / n * 100.0) if n else 0.0
-        return (f"Probation ramp active. Base ${self.current_size():.2f} "
-                f"(rung {self.level + 1}/{len(self.rungs)}, target ${self.full_size:.2f}). "
+        return (f"Probation ramp active. Base {self.current_size()*100:.1f}% "
+                f"(rung {self.level + 1}/{len(self.rungs)}, target {self.full_size*100:.1f}%). "
                 f"streak={self.streak} WR={wr:.0f}% n={n}.")
 
     # ── persistence (atomic JSON write) ────────────────────────────────────────
@@ -1175,7 +1151,7 @@ class ProbationState:
         except (OSError, ValueError):
             return
         self.active    = bool(d.get("active", False))
-        self.rungs     = [round(float(r), 2) for r in d.get("rungs", [])]
+        self.rungs     = [round(float(r), 4) for r in d.get("rungs", [])]
         self.level     = int(d.get("level", 0))
         self.full_size = float(d.get("full_size", 0.0) or 0.0)
         self.streak    = int(d.get("streak", 0))
@@ -1185,134 +1161,6 @@ class ProbationState:
 
 
 probation = ProbationState(PROBATION_STATE_PATH, PROBATION_PERSIST)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TEMPORARY HARD STAKE OVERRIDE  (owner directive — manual ramp to $5k)
-#
-# Mutated IN-PLACE only, never reassigned (same rule as `recovery`/`probation`).
-# Preempts every other sizing mode while live; retires for good the moment the
-# bankroll first reaches TEMP_OVERRIDE_EXIT_BALANCE. See the config block above
-# for the full rationale and how to disable it.
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TempStakeOverride:
-    """TEMPORARY (owner directive): a one-way manual stake ramp that preempts
-    every other sizing mode until the bankroll first reaches the exit balance.
-
-    The hard stake starts at TEMP_OVERRIDE_BASE and steps up TEMP_OVERRIDE_STEP
-    after each run of TEMP_OVERRIDE_WIN_STREAK consecutive settled wins; a loss
-    only clears the in-progress win streak (the size never steps down). Once
-    equity reaches TEMP_OVERRIDE_EXIT_BALANCE the override retires permanently
-    (`done=True`) and active_trade_size() falls back to the normal
-    recovery → probation → normal ladder. State persists (atomic JSON) so the
-    ramped size and retirement survive restarts."""
-
-    SCHEMA = 1
-
-    def __init__(self, path: str, persist: bool) -> None:
-        self.size:   float = round(TEMP_OVERRIDE_BASE, 2)  # current hard stake
-        self.streak: int   = 0     # consecutive wins since the last step-up
-        self.wins:   int   = 0     # cumulative settled wins under the override
-        self.losses: int   = 0     # cumulative settled losses under the override
-        self.done:   bool  = False # retired after equity hit the exit balance
-        self._path    = path
-        self._persist = persist
-        if self._persist:
-            self._load()
-
-    @property
-    def active(self) -> bool:
-        """Live only while enabled and not yet retired."""
-        return TEMP_OVERRIDE_ENABLED and not self.done
-
-    def current_size(self) -> float:
-        return self.size
-
-    def _retire(self, balance: float) -> None:
-        if self.done:
-            return
-        self.done = True
-        self._save()
-        log.warning("Temp override RETIRED │ balance $%.2f ≥ $%.2f — reverting to "
-                    "the normal sizing ladder.", balance, TEMP_OVERRIDE_EXIT_BALANCE)
-        tg.send_telegram_message(
-            f"🏁 TEMP STAKE OVERRIDE COMPLETE\n"
-            f"Bankroll reached ${balance:,.2f} (≥ ${TEMP_OVERRIDE_EXIT_BALANCE:,.0f}).\n"
-            f"Final hard stake was ${self.size:.2f}; sizing now reverts to the "
-            f"normal recovery → probation → normal ramp."
-        )
-
-    def check_balance(self, balance: "float | None") -> None:
-        """Retire the override the instant equity reaches the exit balance.
-        `balance is None` (no equity in scope, e.g. unit tests) is a no-op."""
-        if not self.active or balance is None:
-            return
-        if balance >= TEMP_OVERRIDE_EXIT_BALANCE:
-            self._retire(balance)
-
-    def record_result(self, won: bool, balance: "float | None" = None) -> None:
-        """Fold one settled trade into the ramp, then re-check the exit balance.
-        No-op once the override has retired."""
-        if not self.active:
-            return
-        if won:
-            self.wins   += 1
-            self.streak += 1
-            if self.streak >= TEMP_OVERRIDE_WIN_STREAK:
-                self.size   = round(self.size + TEMP_OVERRIDE_STEP, 2)
-                self.streak = 0
-                log.warning("Temp override UP → hard stake $%.2f (after %d straight wins).",
-                            self.size, TEMP_OVERRIDE_WIN_STREAK)
-                tg.send_telegram_message(
-                    f"⏫ TEMP OVERRIDE → ${self.size:.2f} "
-                    f"(+${TEMP_OVERRIDE_STEP:.0f} after {TEMP_OVERRIDE_WIN_STREAK} wins)"
-                )
-        else:
-            self.losses += 1
-            self.streak  = 0
-        self._save()
-        self.check_balance(balance)
-
-    def status_line(self) -> str:
-        n = self.wins + self.losses
-        return (f"TEMP override active. Hard stake ${self.size:.2f} "
-                f"(+${TEMP_OVERRIDE_STEP:.0f} per {TEMP_OVERRIDE_WIN_STREAK} wins, "
-                f"streak={self.streak}). Retires at ${TEMP_OVERRIDE_EXIT_BALANCE:,.0f}. n={n}.")
-
-    # ── persistence (atomic JSON write) ────────────────────────────────────────
-    def _save(self) -> None:
-        if not self._persist:
-            return
-        try:
-            tmp = f"{self._path}.tmp"
-            with open(tmp, "w") as f:
-                json.dump({
-                    "schema": self.SCHEMA,
-                    "size":   self.size,
-                    "streak": self.streak,
-                    "wins":   self.wins,
-                    "losses": self.losses,
-                    "done":   self.done,
-                }, f)
-            os.replace(tmp, self._path)   # atomic on POSIX
-        except OSError as e:
-            log.warning("TempOverride │ state save failed: %s", e)
-
-    def _load(self) -> None:
-        try:
-            with open(self._path) as f:
-                d = json.load(f)
-        except (OSError, ValueError):
-            return
-        self.size   = round(float(d.get("size", TEMP_OVERRIDE_BASE) or TEMP_OVERRIDE_BASE), 2)
-        self.streak = int(d.get("streak", 0))
-        self.wins   = int(d.get("wins", 0))
-        self.losses = int(d.get("losses", 0))
-        self.done   = bool(d.get("done", False))
-
-
-temp_override = TempStakeOverride(TEMP_OVERRIDE_STATE_PATH, TEMP_OVERRIDE_PERSIST)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1406,47 +1254,34 @@ class BucketStats:
 bucket_stats = BucketStats(BUCKET_STATS_PATH, BUCKET_PERSIST)
 
 
-def _balance_gated_size(size: float, balance: "float | None") -> float:
-    """Cap a stake to HIGH_STAKE_GATE_SIZE while equity is below
-    HIGH_STAKE_MIN_BALANCE — the high rungs ($750/$1000) are only stakeable once
-    the book can absorb them. `balance is None` (no balance in scope, e.g. unit
-    tests) means "don't gate" so callers get the raw mode size."""
-    if balance is None:
-        return size
-    if size > HIGH_STAKE_GATE_SIZE and balance < HIGH_STAKE_MIN_BALANCE:
-        return HIGH_STAKE_GATE_SIZE
-    return size
-
-
-def active_trade_size(balance: "float | None" = None) -> float:
-    """The dollar stake for the current mode. Single source of truth for sizing
-    — every position-sizing path derives from this, not from a raw env var.
-    Priority: TEMP override (owner directive) → recovery (deepest claw-back) →
-    probation ramp → normal. When `balance` is supplied the high-stake balance
-    gate caps the result (see _balance_gated_size); the realized stake therefore
-    re-checks equity on every trade. The TEMP override bypasses that gate by
-    design and retires the instant equity reaches its exit balance."""
-    # TEMPORARY owner directive: a hard manual ramp preempts every other mode
-    # until the bankroll reaches the exit balance, then retires for good.
-    temp_override.check_balance(balance)
-    if temp_override.active:
-        return temp_override.current_size()
+def active_trade_fraction() -> float:
+    """The stake FRACTION of the current balance for the active mode. Single
+    source of truth for sizing posture: recovery (deepest claw-back) → probation
+    ramp → normal. The hard MAX_TRADE_PCT ceiling is applied when this fraction is
+    resolved to dollars (active_trade_size / kelly_bet)."""
     if recovery.active:
-        size = RECOVERY_TRADE_SIZE
-    elif probation.active:
-        size = probation.current_size()
-    else:
-        size = NORMAL_TRADE_SIZE
-    return _balance_gated_size(size, balance)
+        return RECOVERY_TRADE_PCT
+    if probation.active:
+        return probation.current_size()
+    return NORMAL_TRADE_PCT
+
+
+def active_trade_size(balance: float) -> float:
+    """The DOLLAR stake for the current mode = active fraction × balance, clamped
+    by the hard MAX_TRADE_PCT ceiling and by cash on hand. Because the fraction is
+    of the CURRENT balance, the stake re-scales on every trade — it compounds as
+    the account grows and auto-de-risks as it shrinks. Single dollar-resolution
+    point; every position-sizing path derives from this."""
+    frac = min(active_trade_fraction(), MAX_TRADE_PCT)
+    return round(min(frac * balance, balance), 2)
 
 
 def in_clawback() -> bool:
-    """True while clawing back a loss (recovery OR probation ramp) OR while the
-    TEMP override is pinning the stake. In this state the laddering overlay is
-    capped at the active base — it may size DOWN but never UP — so a win rate
-    earned at small stakes cannot re-arm full size, and the override's hard
-    stake cannot be scaled past its hardcoded value."""
-    return recovery.active or probation.active or temp_override.active
+    """True while clawing back a loss (recovery OR probation ramp). In this state
+    the laddering overlay is capped at the active base — it may size DOWN but
+    never UP — so a win rate earned at small stakes cannot re-arm full size in one
+    jump."""
+    return recovery.active or probation.active
 
 
 def on_trade_settled(won: bool, trade_rec: dict, current_balance: float) -> None:
@@ -1465,19 +1300,10 @@ def on_trade_settled(won: bool, trade_rec: dict, current_balance: float) -> None
 
 def probation_record(won: bool, trade_rec: dict, current_balance: "float | None" = None) -> None:
     """Probation RAMP hook, called once per settled trade. Only probation-mode
-    trades (entered while the ramp was active) advance or step the ramp.
-    `current_balance` (equity at settlement) feeds the high-stake advance gate."""
+    trades (entered while the ramp was active) advance or step the ramp."""
     if (trade_rec or {}).get("mode_at_entry") != "probation":
         return
     probation.record_result(bool(won), current_balance)
-
-
-def temp_override_record(won: bool, current_balance: "float | None" = None) -> None:
-    """TEMP override hook, called once per settled trade. While the override is
-    live it is the dominant sizing mode (every trade is override-sized), so each
-    settled outcome feeds its win-streak ramp; `current_balance` (equity at
-    settlement) drives the exit-balance retirement check. No-op once retired."""
-    temp_override.record_result(bool(won), current_balance)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1947,28 +1773,25 @@ def kelly_bet(win_prob: float, contract_price_cents: int, balance: float) -> flo
         return 0.0
     b          = (100 - contract_price_cents) / float(contract_price_cents)
     full_kelly = max(0.0, (b * win_prob - (1.0 - win_prob)) / b)
-    # v9.4.1 (owner directive): FLAT stake. Kelly is used ONLY as an edge gate —
-    # a positive full_kelly means the bet has positive expectancy. The stake size
-    # itself is the full active trade size regardless of balance (no Kelly or
-    # MAX_BET_FRACTION down-scaling), so trades fire at any bankroll. The only
-    # clamp is the cash on hand: you cannot stake more than the account holds.
-    # v9.5.0: the stake is derived from the current mode via active_trade_size()
-    # (NORMAL_TRADE_SIZE normally, RECOVERY_TRADE_SIZE while in recovery).
+    # v10.0.0: PERCENTAGE stake. Kelly is used ONLY as an edge gate — a positive
+    # full_kelly means the bet has positive expectancy. The stake itself is the
+    # active-mode FRACTION of the current balance (active_trade_size), so it
+    # compounds up as the account grows and de-risks as it shrinks. The clamps are
+    # the hard MAX_TRADE_PCT ceiling and the cash on hand.
     if full_kelly <= 0.0:
         return 0.0
-    size     = active_trade_size(balance)   # high-stake gate re-checks equity here
-    base_bet = round(min(size, balance), 2)
+    size       = active_trade_size(balance)   # fraction × balance, ≤ MAX_TRADE_PCT
+    max_dollars = round(MAX_TRADE_PCT * balance, 2)
+    base_bet   = round(min(size, max_dollars, balance), 2)
 
-    # Laddering overlay (opt-in). Scales the flat stake by a performance
-    # multiplier, but never past 2× the active trade size or the cash on hand.
-    # While clawing back a loss (recovery OR the post-recovery probation ramp)
-    # the ceiling is the active base itself: the ladder may size DOWN on a cold
-    # streak but can NEVER size UP, so a win rate banked at small stakes can't
-    # re-arm full size in one jump (the 2026-06-29 "$100 base × 2.0 = $200 in
-    # recovery" leak).
+    # Laddering overlay (opt-in). Scales the stake by a performance multiplier, but
+    # never past MAX_TRADE_PCT of balance or the cash on hand. While clawing back a
+    # loss (recovery OR the post-recovery probation ramp) the ceiling is the active
+    # base itself: the ladder may size DOWN on a cold streak but can NEVER size UP,
+    # so a win rate banked at small stakes can't re-arm full size in one jump.
     if stake_ladder is not None:
         cap_mult = 1.0 if in_clawback() else stake_ladder.cfg.max_multiplier
-        ceiling  = min(cap_mult * size, balance)
+        ceiling  = min(cap_mult * size, max_dollars, balance)
         decision = stake_ladder.get_stake(base_bet, max_stake=ceiling)
         return decision.stake
 
@@ -2287,8 +2110,6 @@ def resolve_open_orders() -> None:
             on_trade_settled(won, trade, paper_balance)
             # Probation RAMP hook: a probation-mode trade advances/steps the ramp.
             probation_record(won, trade, paper_balance)
-            # TEMP override hook: feed the manual win-streak ramp / exit check.
-            temp_override_record(won, paper_balance)
 
             log.info("📋 PAPER SETTLED │ %s │ %s │ %s │ sim=%s │ bal=$%.2f",
                      ticker[-15:], side, result.upper(), sim, paper_balance)
@@ -2415,8 +2236,6 @@ def resolve_open_orders() -> None:
             on_trade_settled(won, trade, balance)
             # Probation RAMP hook: a probation-mode trade advances/steps the ramp.
             probation_record(won, trade, balance)
-            # TEMP override hook: feed the manual win-streak ramp / exit check.
-            temp_override_record(won, balance)
 
             wlb = wilson_lower_bound(live_wins, live_wins + live_losses)
             log.info("✅ SETTLED │ %s │ %s │ $%.2f │ WR=%d/%d │ LB=%.1f%%",
@@ -2635,8 +2454,7 @@ def place_order(ticker: str, direction: str, bet_dollars: float,
     # v9.5.0: stamp the sizing mode + the realized balance immediately BEFORE
     # this trade so settlement can (a) tell a full-size loss from a recovery-size
     # loss and (b) set the recovery target to the exact pre-trade balance.
-    entry_mode = ("override" if temp_override.active
-                  else "recovery" if recovery.active
+    entry_mode = ("recovery" if recovery.active
                   else "probation" if probation.active
                   else "normal")
     # Stamp the time-of-day bucket at ENTRY so settlement scores the bucket the
@@ -2734,8 +2552,8 @@ def telegram_boot(balance: float) -> None:
         f"🤖 MarkeyMachine {BOT_VERSION} STARTED\n"
         f"{mode} │ State: {session_state.value}\n"
         f"Balance: ${balance:.2f}\n"
-        f"Size=${active_trade_size(balance):.0f} "
-        f"(normal=${NORMAL_TRADE_SIZE:.0f}/recovery=${RECOVERY_TRADE_SIZE:.0f}"
+        f"Size={active_trade_fraction()*100:.1f}% (~${active_trade_size(balance):.0f}) "
+        f"(normal={NORMAL_TRADE_PCT*100:.1f}%/recovery={RECOVERY_TRADE_PCT*100:.1f}%/max={MAX_TRADE_PCT*100:.1f}%"
         f"{' • RECOVERING→$%.0f' % recovery.target_balance if recovery.active else ''}) | "
         f"MaxConsecL={MAX_CONSEC_LOSSES}\n"
         f"MinConf={MIN_CONFIDENCE} | MinWinP={MIN_WIN_PROB*100:.0f}% | R²≥{R2_TREND_THRESHOLD}\n"
@@ -2787,8 +2605,7 @@ def write_status_snapshot(balance: float) -> None:
         total = wins + losses
         # wilson_confidence already returns percentages: (rate%, lower%, upper%).
         rate_pct, lo_pct, hi_pct = wilson_confidence(wins, total) if total > 0 else (0.0, 0.0, 0.0)
-        active_mode = ("override" if temp_override.active
-                       else "recovery" if recovery.active
+        active_mode = ("recovery" if recovery.active
                        else "probation" if probation.active else "normal")
         snapshot = {
             "version": BOT_VERSION,
@@ -2801,6 +2618,7 @@ def write_status_snapshot(balance: float) -> None:
             "win_rate": rate_pct,
             "wilson_ci": [lo_pct, hi_pct],
             "active_mode": active_mode,
+            "active_trade_pct": round(active_trade_fraction() * 100, 2),
             "active_trade_size": round(active_trade_size(balance), 2),
             "open_positions": len(open_orders),
             "open_tickers": [o.get("ticker", "") for o in open_orders.values()],
@@ -3046,7 +2864,7 @@ def maybe_roll_session_day(current_balance: float) -> bool:
     # sub-full room (sizing then stays normal), and it resets any half-climbed
     # ramp left over from yesterday back to the floor.
     if not recovery.active:
-        probation.start(_probation_rungs(), NORMAL_TRADE_SIZE, reason="Daily slow-roll")
+        probation.start(_probation_rungs(), NORMAL_TRADE_PCT, reason="Daily slow-roll")
 
     log.info("🔄 New trading day %s │ balance $%.2f │ daily budget reset%s",
              today, current_balance, " (halt cleared)" if was_halted else "")
@@ -3104,15 +2922,12 @@ def main() -> None:
              MIN_CONFIDENCE, YES_BREAKEVEN_PRICE, NEUTRAL_ACCURACY_DRAG)
     log.info("  Momentum lookback=%d intervals | thresh≥%.2f%% or R²≥%.2f",
              MOMENTUM_LOOKBACK, MOMENTUM_THRESH_PCT, MOMENTUM_R2_MIN)
-    log.info("  Sizing: normal=$%.0f recovery=$%.0f | active=$%.0f%s",
-             NORMAL_TRADE_SIZE, RECOVERY_TRADE_SIZE, active_trade_size(),
-             " (TEMP override, hard stake $%.0f → retires at $%.0f)"
-             % (temp_override.current_size(), TEMP_OVERRIDE_EXIT_BALANCE)
-             if temp_override.active else
+    log.info("  Sizing (%% of balance): normal=%.1f%% recovery=%.1f%% max=%.1f%%%s",
+             NORMAL_TRADE_PCT * 100, RECOVERY_TRADE_PCT * 100, MAX_TRADE_PCT * 100,
              " (RECOVERY active, target $%.2f)" % recovery.target_balance
              if recovery.active else
-             " (PROBATION ramp, rung $%.0f→full $%.0f)"
-             % (probation.current_size(), NORMAL_TRADE_SIZE)
+             " (PROBATION ramp, rung %.1f%%→full %.1f%%)"
+             % (probation.current_size() * 100, NORMAL_TRADE_PCT * 100)
              if probation.active else "")
     log.info("  Kelly=%.2f | SessionScore≥%d", KELLY_FRACTION, MIN_SESSION_SCORE)
     log.info("  TimePrior: %dh buckets fullN=%d | now=%s prior=%.3f n=%d",
@@ -3132,7 +2947,6 @@ def main() -> None:
         session_stop_threshold = paper_balance * SESSION_STOP_FRACTION
         recovery.reconcile_on_boot(paper_balance)
         probation.reconcile_on_boot()
-        temp_override.check_balance(paper_balance)   # retire if already ≥ exit
         telegram_boot(paper_balance)
     else:
         try:
@@ -3155,7 +2969,6 @@ def main() -> None:
         live_daily_realized = 0.0
         recovery.reconcile_on_boot(bal)
         probation.reconcile_on_boot()
-        temp_override.check_balance(bal)   # retire if already ≥ exit
         telegram_boot(bal)
 
     resolve_cycle = 0
@@ -3210,7 +3023,7 @@ def main() -> None:
             # snapping straight back to full size (no-op if the ramp is disabled
             # or there is no sub-full room, in which case sizing resumes normal).
             if recovery.maybe_exit(current_balance):
-                probation.start(_probation_rungs(), NORMAL_TRADE_SIZE)
+                probation.start(_probation_rungs(), NORMAL_TRADE_PCT)
             run_decision(market, current_balance)
             write_status_snapshot(current_balance)
 
@@ -3251,9 +3064,7 @@ def main() -> None:
                         last_daily_summary_ts = time.time()
                         telegram_daily_summary(live_bal, daily_pnl, live_wins, live_losses)
 
-                if temp_override.active:
-                    log.info(temp_override.status_line())
-                elif recovery.active:
+                if recovery.active:
                     log.info(recovery.status_line(current_balance))
                 elif probation.active:
                     log.info(probation.status_line())

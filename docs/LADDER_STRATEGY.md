@@ -5,6 +5,15 @@
 > strategy. Implemented in [`ladder.py`](ladder.py), wired into `bot.py` as an
 > opt-in overlay on the existing Kelly stake.
 
+> **v10.0.0 — sizing is now PERCENTAGE-BASED.** Every base stake is a fraction of
+> the current balance, not a fixed dollar figure. Wherever this doc says
+> `NORMAL_TRADE_SIZE` / `RECOVERY_TRADE_SIZE` (dollars), read the current knobs:
+> `NORMAL_TRADE_PCT` (default `0.10`), `RECOVERY_TRADE_PCT` (`0.03`), and the hard
+> ceiling `MAX_TRADE_PCT` (`0.15`). The ladder overlay multiplies these fractions
+> and can never push a trade past `MAX_TRADE_PCT × balance`. The dollar examples
+> below (e.g. `$100 → $250 → $500`) are historical; the probation ramp now climbs
+> **percentage** rungs (e.g. `3% → 6.5%` graduating to `10%`).
+
 ---
 
 ## 1. Why
@@ -126,15 +135,15 @@ real money — the new sizing behaviour does not go live on its own.
 
 The base stake the ladder multiplies is *itself* mode-driven (`active_trade_size()`):
 
-1. **Recovery** (`recovery.active`): after a full-size loss, base = `RECOVERY_TRADE_SIZE`
-   until the balance climbs back to the pre-loss target.
+1. **Recovery** (`recovery.active`): after a full-size loss, base = `RECOVERY_TRADE_PCT`
+   of balance until the balance climbs back to the pre-loss target.
 2. **Probation ramp** (`probation.active`): when recovery clears, the base does
    **not** snap back to full size. It re-enters at the recovery floor and climbs a
-   ladder of sub-full sizes (default `$100 → $250 → $500`), advancing **one rung**
-   on a short win streak *or* a rolling win-rate threshold (whichever fires first)
-   and stepping **one rung down** on any loss. Reaching full size graduates back to
-   normal.
-3. **Normal**: base = `NORMAL_TRADE_SIZE`.
+   ladder of sub-full **percentage** rungs (default `3% → 6.5%`), advancing **one
+   rung** on a short win streak *or* a rolling win-rate threshold (whichever fires
+   first) and stepping **one rung down** on any loss. Reaching the full fraction
+   graduates back to normal.
+3. **Normal**: base = `NORMAL_TRADE_PCT` of balance.
 
 While clawing back (recovery **or** probation), the overlay ceiling is the active
 base itself — the ladder may size **down** on a cold streak but can **never size
@@ -167,14 +176,16 @@ wedges; the worst case is grinding at the reduced floor.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `NORMAL_TRADE_SIZE` | `TRADE_SIZE_DOLLARS` | Full-size base stake |
-| `RECOVERY_TRADE_SIZE` | `100` | Reduced base while clawing back a full-size loss |
+| `NORMAL_TRADE_PCT` | `0.10` | Full-size base stake as a fraction of balance |
+| `RECOVERY_TRADE_PCT` | `0.03` | Reduced base (fraction) while clawing back a full-size loss |
+| `MAX_TRADE_PCT` | `0.15` | Hard ceiling (fraction) on any single trade; the ladder can't pass it |
 | `RECOVERY_LADDER_PAUSE_TRADES` | `5` | Hold ladder multiplier at 1× for N trades after full size returns |
 | `PROBATION_RAMP_ENABLED` | `true` | Graduated re-entry after recovery (false = old snap-back to full) |
 | `PROBATION_WIN_STREAK` | `2` | Consecutive wins at a rung that advance one step |
 | `PROBATION_WIN_RATE_MIN` | `0.60` | ...or rolling win rate that advances one step (either fires) |
 | `PROBATION_WINRATE_MIN_TRADES` | `4` | Min settled ramp trades before the win-rate path can fire |
-| `PROBATION_RUNGS` | _(auto)_ | Explicit sub-full base sizes, e.g. `100,250` (else `[floor, full/2]`) |
+| `PROBATION_RUNGS` | _(auto)_ | Explicit sub-full base **fractions**, e.g. `0.03,0.06` (else auto-built) |
+| `PROBATION_RUNG_STEP_PCT` | `0.035` | Auto-built rung step in fraction-of-balance points |
 | `PROBATION_STATE_PATH` | `probation_state.json` | Persistence file |
 | `PROBATION_PERSIST` | `true` | Toggle JSON persistence |
 

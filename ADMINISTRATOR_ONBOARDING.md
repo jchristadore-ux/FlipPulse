@@ -1,0 +1,199 @@
+# Administrator Onboarding — Deploying a New Customer Environment
+
+This is the operator/administrator runbook for standing up **one new customer** on
+FlipPulse. Every customer gets their own Railway project, their own Kalshi key, and
+their own Telegram bot. There is no shared dashboard, no signup, and no multi-tenant
+supervisor — one repo/template → one Railway project → one bot per customer.
+
+> **Customer-facing doc:** the customer fills out
+> [`docs/FlipPulse_Customer_Onboarding.pdf`](docs/FlipPulse_Customer_Onboarding.pdf)
+> (how it works + **picks a Trading Format**) and sends you their setup details via
+> [`docs/FlipPulse_Customer_Setup.pdf`](docs/FlipPulse_Customer_Setup.pdf). This
+> runbook is what **you** do with those details.
+
+Every customer starts in **paper mode** (`DEMO_MODE=true`). Going live is a separate,
+deliberate step (last section). Budget ~15 minutes per customer.
+
+---
+
+## 0. Prerequisites — collect from the customer first
+
+From the two customer PDFs you should have:
+
+- [ ] **Kalshi API Key ID** and the **RSA private key PEM** (customer creates these in
+      Kalshi → Account → Security → Create Key, or you create them on their account).
+- [ ] **Telegram bot token** (from BotFather) and their **chat id** (from
+      `@userinfobot`) — or you create the bot for them in step 4.
+- [ ] **Starting balance** they will fund — this becomes `PAPER_BALANCE` and, because
+      sizing is percentage-based, it is the only number that scales their stakes.
+- [ ] **Chosen Trading Format** — `conservative`, `balanced`, or `aggressive` (the box
+      they ticked on the onboarding PDF). Balanced if they didn't pick.
+- [ ] A short customer handle for naming, e.g. `acme`.
+
+---
+
+## 1. How sizing works (why you don't set dollar amounts per customer)
+
+FlipPulse sizes **every trade as a percentage of the current balance**, resolved to
+dollars at one place in the code (`active_trade_size` in `bot.py`). Consequences for
+you as the deployer:
+
+- You **do not** tune per-customer dollar stakes. You pick a **Trading Format** and the
+  percentages scale automatically to whatever balance the customer funds.
+- The stake **compounds** as the account grows and **de-risks** as it shrinks — no
+  manual resizing when a customer adds funds.
+- The three formats seed these percentage knobs (run `python formats.py` to print them):
+
+  | Format | Normal | Recovery | Max/trade | Ladder | Gates |
+  |---|---|---|---|---|---|
+  | `conservative` | 5% | 2% | 8% | off | strictest |
+  | `balanced` *(default)* | 10% | 3% | 15% | off | doctrine default |
+  | `aggressive` | 20% | 5% | 30% | on (≤2×) | relaxed |
+
+- To override a format for one customer, set `NORMAL_TRADE_PCT`, `RECOVERY_TRADE_PCT`,
+  or `MAX_TRADE_PCT` (fractions, e.g. `0.12`) explicitly — an explicit env var always
+  wins over the format's default.
+
+---
+
+## 2. Create the Railway project from the template
+
+Pick one and stay consistent:
+
+**Option A — GitHub template repo (recommended):**
+1. On GitHub, use this repo as a template ("Use this template" → new repo named
+   `flippulse-<customer>`), or clone it into the customer's own repo.
+2. In Railway: **New Project → Deploy from GitHub repo →** pick `flippulse-<customer>`.
+
+**Option B — Railway template:**
+1. In Railway: **New Project → Deploy from Template →** select the saved FlipPulse
+   template.
+
+Railway reads `railway.toml`, builds with Nixpacks, and runs `python bot.py`. It will
+crash-loop on first boot until env vars are set (step 4) — that's expected.
+
+---
+
+## 3. Attach a volume for state
+
+The bot writes its recovery/probation/ladder/bucket/status files to `/data` so they
+survive redeploys.
+
+1. In the Railway service → **Volumes → New Volume**.
+2. Mount path: **`/data`**.
+3. 1 GB is plenty.
+
+The `.env.example` `*_STATE_PATH` variables already point at `/data/...`, so as long as
+the mount path is exactly `/data` you just copy them in (step 4) and state persists. If
+you leave them unset, the bot falls back to a container-local file wiped on every
+redeploy — so keep them set.
+
+---
+
+## 4. Set the environment variables
+
+In the Railway service → **Variables**, set the following (see `.env.example` for the
+full annotated list):
+
+| Variable | Value |
+|---|---|
+| `KALSHI_API_KEY_ID` | The customer's Kalshi API Key ID |
+| `KALSHI_PRIVATE_KEY_PEM` | The full PEM, pasted as a multi-line value (include BEGIN/END lines) |
+| `DEMO_MODE` | `true` (always start in paper) |
+| `PAPER_BALANCE` | The customer's starting balance, e.g. `1000` |
+| `TRADING_FORMAT` | `conservative` \| `balanced` \| `aggressive` — the format they chose |
+| `TELEGRAM_BOT_TOKEN` | From BotFather (step 5) |
+| `TELEGRAM_CHAT_ID` | The customer's chat id (step 5) |
+| `TELEGRAM_OPERATOR_CHAT_ID` | *(optional)* your own chat id to also receive every alert — see step 7 |
+
+**Optional per-customer sizing overrides** (only if you want to deviate from the chosen
+format; all are fractions of balance):
+
+| Variable | Meaning |
+|---|---|
+| `NORMAL_TRADE_PCT` | Full stake fraction (e.g. `0.10`) |
+| `RECOVERY_TRADE_PCT` | Reduced stake while clawing back a loss (e.g. `0.03`) |
+| `MAX_TRADE_PCT` | Hard ceiling on any single trade (e.g. `0.15`) |
+
+Copy the `*_STATE_PATH`, `STATUS_SNAPSHOT_PATH`, and `HEALTH_LOG_PATH` values from
+`.env.example` as-is (they point at `/data`). Do **not** leave them blank — the code's
+fallback writes to a container-local file that is lost on redeploy. Only change them if
+you mounted the volume somewhere other than `/data`.
+
+---
+
+## 5. Create the customer's Telegram bot (BotFather)
+
+Each customer gets a dedicated bot so their alerts and commands are isolated.
+
+1. In Telegram, open **@BotFather → `/newbot`**.
+2. Name it, e.g. `FlipPulse <Customer>` with username `flippulse_<customer>_bot`.
+3. BotFather returns a **token** → that's `TELEGRAM_BOT_TOKEN` (step 4).
+4. Have the customer open a chat with their new bot and send `/start`.
+5. Get the **chat id**: message the bot, then visit
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` and read
+   `result[].message.chat.id`, or use `@userinfobot`.
+6. Put that value in `TELEGRAM_CHAT_ID` (step 4).
+
+---
+
+## 6. Deploy & verify
+
+1. After setting all variables, trigger a redeploy (Railway → **Deploy**).
+2. Watch the deploy logs until the bot boots cleanly (Kalshi auth OK, Telegram
+   connected, no crash loop). The boot banner logs the active percentages, e.g.
+   `Sizing (% of balance): normal=10.0% recovery=3.0% max=15.0%`.
+3. In the customer's Telegram chat, exercise the read-only commands (from
+   `command_bot.py`, started by `bot.py` on boot):
+   - **`/status`** — mode (paper/live), trading format, balance and session PnL, W/L
+     record, ladder/recovery/probation mode and **the active stake % (and ~$)**, open
+     positions, session state, last signal, last-tick time.
+   - **`/health-log [n]`** — tails the recent health/activity log.
+   - **`/help`** — lists the commands.
+
+   > The bot only *answers* these read-only commands; it also *sends* alerts on its own
+   > (boot, 15-min heartbeat, trade entry, win/loss, daily summary). It does **not**
+   > accept any command that changes trading — no order placement, no `DEMO_MODE` flip.
+
+4. Confirm the boot/heartbeat message arrives in Telegram. If you set
+   `TELEGRAM_OPERATOR_CHAT_ID`, confirm it reached you too.
+
+A green verify = bot booted, Kalshi authenticated in paper mode, `/status` responds and
+shows the expected format and stake percentage.
+
+---
+
+## 7. Operator oversight (watching all customers)
+
+No central dashboard needed. Pick one:
+
+- **Operator chat id (simplest, recommended):** set `TELEGRAM_OPERATOR_CHAT_ID` to your
+  own chat id (comma-separated for several operators). `telegram_utils.py` fans every
+  alert out to the customer chat *and* each operator chat. Your operator commands
+  (`/status`, `/health-log`) are answered too, since operator chat ids are authorized
+  alongside the customer's.
+- **Shared group:** create a Telegram group per customer, add the customer's bot and
+  both of you, and set `TELEGRAM_CHAT_ID` to the group's id.
+
+---
+
+## 8. Going live (later, deliberate step)
+
+Do **not** do this during initial onboarding. When the customer is ready:
+
+1. Confirm the customer's Kalshi account is funded and the key has trade permissions.
+2. Set `DEMO_MODE=false` in Railway Variables.
+3. Redeploy and immediately verify via `/status` that it reports **live** mode.
+4. Watch the first few trades / alerts closely. Because sizing is a percentage of the
+   real balance, the first live stake will be `NORMAL_TRADE_PCT × funded balance`.
+
+---
+
+## Out of scope (by design)
+
+- Signup / login
+- Multi-tenant supervisor or running many bots on one box
+- Central monitoring dashboard
+- Billing
+
+One customer = one repo/template clone = one Railway project = one bot.

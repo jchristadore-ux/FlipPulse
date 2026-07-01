@@ -1,8 +1,16 @@
-# TRADING DOCTRINE — MarkeyMachine v6.0.0
+# TRADING DOCTRINE — FlipPulse (MarkeyMachine core) v6.0.0
 
 > "A patient quantitative trader who waits all day for one unfair opportunity."
 >
 > If trade frequency drops 80% but expectancy rises, that is success.
+
+> **v10.0.0 — sizing is PERCENTAGE-BASED.** Historical sections below quote fixed
+> dollar stakes (`TRADE_SIZE_DOLLARS`, `NORMAL_TRADE_SIZE`, `RECOVERY_TRADE_SIZE`,
+> e.g. `$500`/`$100`). Those are kept for context only. The bot now stakes a
+> **fraction of the current balance**: `NORMAL_TRADE_PCT` (default `0.10` = 10%),
+> `RECOVERY_TRADE_PCT` (`0.03`), capped by `MAX_TRADE_PCT` (`0.15`). The stake
+> therefore compounds as the account grows and de-risks as it shrinks — read every
+> dollar figure below as "that fraction of balance."
 
 ---
 
@@ -191,8 +199,8 @@ truth:
 
 | Mode | Stake | Trigger |
 |------|-------|---------|
-| **Normal** | `NORMAL_TRADE_SIZE` ($500) | default |
-| **Recovery** | `RECOVERY_TRADE_SIZE` ($100) | a full-size trade settles a loss |
+| **Normal** | `NORMAL_TRADE_PCT × balance` (10%) | default |
+| **Recovery** | `RECOVERY_TRADE_PCT × balance` (3%) | a full-size trade settles a loss |
 
 **Lifecycle**
 
@@ -200,10 +208,10 @@ truth:
    **recovery target** is set to the realized balance recorded *immediately
    before that trade was entered* (stamped on the order at placement, so it is
    exact — never reconstructed from PnL).
-2. While recovering, every trade uses `RECOVERY_TRADE_SIZE`. Trade evaluation,
-   P/L tracking, halts, cooldowns and the streak pause are all unchanged.
+2. While recovering, every trade uses `RECOVERY_TRADE_PCT` of balance. Trade
+   evaluation, P/L tracking, halts, cooldowns and the streak pause are unchanged.
 3. As soon as the realized balance is **≥ the recovery target**, recovery
-   deactivates and sizing returns to `NORMAL_TRADE_SIZE` — no manual step.
+   deactivates and sizing returns to `NORMAL_TRADE_PCT` of balance — no manual step.
 
 **Invariants / edge cases (why it can't get stuck or oscillate)**
 

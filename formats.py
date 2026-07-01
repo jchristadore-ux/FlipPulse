@@ -1,19 +1,20 @@
 """
-formats.py — Trading Formats (named presets) for MarkeyMachine.
+formats.py — Trading Formats (named presets) for FlipPulse.
 
 WHY
 ---
-Across its history MarkeyMachine never changed its *strategy* (short-dated,
-trend-confirming order-book pressure). What changed — repeatedly, by owner
-directive and log review — was the **sizing policy and the risk/gate
-thresholds**: Kelly-scaled → flat stake → two-tier Recovery → Probation ramp,
-with the Ladder overlay on or off and the entry gates tightened or relaxed.
-
-All of that is already steered by ~40 individual environment variables read in
-`bot.py`. A "Trading Format" is simply a **named bundle of those env values** so
-the whole posture can be switched with one knob:
+Every customer funds a different bankroll, so sizing can never be shipped as a
+fixed dollar figure. FlipPulse sizes every trade as a **percentage of the current
+balance** (see bot.py `active_trade_size`), and a "Trading Format" is a named
+bundle of those percentage knobs plus the entry-gate thresholds — the whole risk
+posture switched with one variable:
 
     TRADING_FORMAT=conservative python bot.py
+
+The three customer-facing formats map 1:1 to the branded strategy modes the
+onboarding PDF asks the customer to choose from:
+
+    Conservative  •  Balanced  •  Aggressive
 
 DESIGN
 ------
@@ -24,9 +25,16 @@ DESIGN
   • Any explicit env var (Railway config, a one-off override, the dashboard)
     still wins over the preset — formats set defaults, they never clobber.
 
-It must run BEFORE `bot.py` reads its config block (the module-level
-`_env_*()` calls), so `bot.py` imports and calls this right after defining its
-env helpers and before the first `_require()`.
+It must run BEFORE `bot.py` reads its config block (the module-level `_env_*()`
+calls), so `bot.py` imports and calls this right after defining its env helpers
+and before the first `_require()`.
+
+SIZING IS PERCENTAGES
+---------------------
+`NORMAL_TRADE_PCT` / `RECOVERY_TRADE_PCT` / `MAX_TRADE_PCT` are fractions of the
+current balance (0.10 = 10%). Because they are percentages, one format fits every
+customer regardless of their starting balance, and the stake compounds up as the
+account grows and de-risks as it shrinks. There are no dollar sizes here.
 
 This module is intentionally dependency-free and does NOT import `bot.py`, so it
 can be listed (`python formats.py`) and unit-tested without Kalshi credentials.
@@ -39,38 +47,38 @@ import os
 import sys
 from typing import Dict, List
 
-log = logging.getLogger("MarkeyMachine.formats")
+log = logging.getLogger("FlipPulse.formats")
 
 DEFAULT_FORMAT = "balanced"
 
-# Keys every preset sets, so a format fully defines the posture rather than
-# inheriting stray values from a previously-selected one. (Documentation aid;
-# apply_format simply iterates each preset's own "settings".)
+# ── The three branded strategy modes ──────────────────────────────────────────
+# Each preset FULLY defines a posture: the percentage sizing knobs (fractions of
+# the current balance) plus the entry-gate thresholds. Selecting a format seeds
+# all of them; an explicit env var always overrides.
 #
-# NOTE ON SIZES: NORMAL_TRADE_SIZE / RECOVERY_TRADE_SIZE below are sensible
-# DEFAULTS tuned for a ~$1–2k bankroll and matching the documented production
-# baseline ($500 normal / $100 recovery for "balanced"). They are seeded with
-# setdefault, so set NORMAL_TRADE_SIZE / RECOVERY_TRADE_SIZE explicitly (env or
-# dashboard) to size to your own account — the format will not override you.
-# The bot already clamps any stake to cash on hand, so an oversized default is
-# safe on a small (e.g. paper $25) balance.
+# Per-trade sizing (fractions of the CURRENT balance):
+#   NORMAL_TRADE_PCT    full stake in normal operation
+#   RECOVERY_TRADE_PCT  reduced stake while clawing back a full-size loss
+#   MAX_TRADE_PCT       hard ceiling on any single trade (the ladder can't pass it)
 
 FORMATS: Dict[str, dict] = {
     "conservative": {
         "display_name": "Conservative — Capital Preservation",
-        "blurb": "Fewer, higher-conviction trades. Strict gates, recovery + "
-                 "probation on, ladder off. Built to protect the bankroll.",
+        "blurb": "Fewer, higher-conviction trades at a small % of balance. Strict "
+                 "gates, recovery + probation on, ladder off. Built to protect the "
+                 "bankroll.",
         "description": (
             "Tightens every entry gate (order-book imbalance, regime R², "
             "confidence, edge, win-prob), requires BTC momentum AGREE, runs one "
             "position at a time, and keeps the graduated Recovery/Probation "
-            "sizing on with the Ladder overlay off. Smaller base stake and an "
-            "earlier session-stop. Lowest trade frequency, lowest variance."
+            "sizing on with the Ladder overlay off. Smallest per-trade percentage "
+            "and an earlier session-stop. Lowest trade frequency, lowest variance."
         ),
         "settings": {
             "DEMO_MODE": "true",
-            "NORMAL_TRADE_SIZE": 250.0,
-            "RECOVERY_TRADE_SIZE": 50.0,
+            "NORMAL_TRADE_PCT": 0.05,
+            "RECOVERY_TRADE_PCT": 0.02,
+            "MAX_TRADE_PCT": 0.08,
             "LADDER_ENABLED": "false",
             "PROBATION_RAMP_ENABLED": "true",
             "REQUIRE_AGREE_MOMENTUM": "true",
@@ -87,27 +95,22 @@ FORMATS: Dict[str, dict] = {
         },
     },
     "balanced": {
-        "display_name": "Balanced — Standard (current defaults)",
-        "blurb": "The shipped production posture, unchanged. Two-tier Recovery + "
-                 "Probation sizing, ladder off, gates at doctrine defaults — and "
-                 "it does NOT touch your trade sizing.",
+        "display_name": "Balanced — Standard (default)",
+        "blurb": "The default posture. Moderate per-trade %, two-tier Recovery + "
+                 "Probation sizing, ladder off, doctrine-default gates.",
         "description": (
-            "The current v9.6 production configuration, preserved exactly. Every "
-            "value below equals the bot's existing default, so selecting "
-            "'balanced' (or running with no format set) behaves identically to "
-            "the bot before Trading Formats existed. Crucially it sets NO trade "
-            "size — sizing stays governed by your own NORMAL_TRADE_SIZE / "
-            "TRADE_SIZE_DOLLARS env vars exactly as today. The Probation ramp is "
-            "on, the Ladder overlay is off, momentum-AGREE is required, and the "
-            "doctrine entry thresholds apply (OB imbalance 0.70, R² 0.65, "
-            "confidence 65, edge 6%, win-prob 60%)."
+            "The shipped default. Stakes 10% of balance normally, drops to 3% "
+            "while clawing back a loss, and never exceeds 15% on any single trade. "
+            "The Probation ramp is on, the Ladder overlay is off, momentum-AGREE "
+            "is required, and the doctrine entry thresholds apply (OB imbalance "
+            "0.70, R² 0.65, confidence 65, edge 6%, win-prob 60%). A sensible "
+            "middle ground of frequency and variance for most customers."
         ),
-        # NOTE: deliberately omits NORMAL_TRADE_SIZE / RECOVERY_TRADE_SIZE so the
-        # default format is a guaranteed no-op on the existing bot's sizing.
-        # Every key here already equals the code default, so seeding it via
-        # setdefault changes nothing — it only documents the posture.
         "settings": {
             "DEMO_MODE": "true",
+            "NORMAL_TRADE_PCT": 0.10,
+            "RECOVERY_TRADE_PCT": 0.03,
+            "MAX_TRADE_PCT": 0.15,
             "LADDER_ENABLED": "false",
             "PROBATION_RAMP_ENABLED": "true",
             "REQUIRE_AGREE_MOMENTUM": "true",
@@ -125,21 +128,22 @@ FORMATS: Dict[str, dict] = {
     },
     "aggressive": {
         "display_name": "Aggressive — Edge Hunter",
-        "blurb": "More trades, bigger stake, Ladder overlay on (up to 2×). "
+        "blurb": "More trades, larger % of balance, Ladder overlay on (up to 2×). "
                  "Higher throughput and higher variance.",
         "description": (
-            "Relaxes the entry gates (lower OB imbalance, R², confidence, edge "
-            "and win-prob floors), allows two concurrent positions, raises the "
-            "loss-streak pause threshold, and turns the performance-driven "
-            "Ladder overlay ON so a hot win rate scales the stake up to 2×. "
-            "Larger base stake. Highest trade frequency and variance — only the "
-            "always-on guardrails (streak pause, session stop, ladder drawdown "
-            "caps) remain."
+            "Relaxes the entry gates (lower OB imbalance, R², confidence, edge and "
+            "win-prob floors), allows two concurrent positions, raises the "
+            "loss-streak pause threshold, and turns the performance-driven Ladder "
+            "overlay ON so a hot win rate scales the stake up toward the max. "
+            "Stakes 20% of balance normally with a 30% hard ceiling. Highest trade "
+            "frequency and variance — only the always-on guardrails (streak pause, "
+            "session stop, ladder drawdown caps, MAX_TRADE_PCT) remain."
         ),
         "settings": {
             "DEMO_MODE": "true",
-            "NORMAL_TRADE_SIZE": 750.0,
-            "RECOVERY_TRADE_SIZE": 150.0,
+            "NORMAL_TRADE_PCT": 0.20,
+            "RECOVERY_TRADE_PCT": 0.05,
+            "MAX_TRADE_PCT": 0.30,
             "LADDER_ENABLED": "true",
             "PROBATION_RAMP_ENABLED": "true",
             "REQUIRE_AGREE_MOMENTUM": "true",
@@ -155,48 +159,17 @@ FORMATS: Dict[str, dict] = {
             "YES_BREAKEVEN_PRICE": 70,
         },
     },
-    "recovery_first": {
-        "display_name": "Recovery-First — Drawdown Guard",
-        "blurb": "Smallest stake, strict gates, recovery + probation emphasized, "
-                 "ladder off. Designed to claw back and stay small.",
-        "description": (
-            "A drawdown-defensive posture: small base stake, strict entry gates, "
-            "Ladder off, and the Recovery/Probation graduated re-entry "
-            "emphasized — with a longer post-recovery ladder pause so the edge "
-            "must re-prove itself on fresh data before any size-up. One position "
-            "at a time and an early session-stop. Best for rebuilding after a "
-            "rough stretch."
-        ),
-        "settings": {
-            "DEMO_MODE": "true",
-            "NORMAL_TRADE_SIZE": 200.0,
-            "RECOVERY_TRADE_SIZE": 50.0,
-            "LADDER_ENABLED": "false",
-            "PROBATION_RAMP_ENABLED": "true",
-            "RECOVERY_LADDER_PAUSE_TRADES": 8,
-            "REQUIRE_AGREE_MOMENTUM": "true",
-            "OB_IMBALANCE_THRESH": 0.72,
-            "MIN_OB_DEPTH_DOLLARS": 100.0,
-            "R2_TREND_THRESHOLD": 0.68,
-            "MIN_CONFIDENCE": 68,
-            "MIN_EDGE_PCT": 0.07,
-            "MIN_WIN_PROB": 0.61,
-            "MAX_CONCURRENT_POS": 1,
-            "MAX_CONSEC_LOSSES": 2,
-            "SESSION_STOP_FRACTION": 0.60,
-            "YES_BREAKEVEN_PRICE": 65,
-        },
-    },
 }
 
 
-# Trading parameters that may be overridden per account (e.g. via the Telegram
-# /set command). Curated allowlist: tunable strategy knobs only — never
+# Trading parameters that may be overridden per account (e.g. via a future
+# dashboard/command). Curated allowlist: tunable strategy knobs only — never
 # DEMO_MODE (paper safety), credentials, or state-file paths. Each maps to a
 # coercion so values are validated before they reach a worker's env.
 ALLOWED_PARAM_KEYS = {
-    "NORMAL_TRADE_SIZE": float,
-    "RECOVERY_TRADE_SIZE": float,
+    "NORMAL_TRADE_PCT": float,
+    "RECOVERY_TRADE_PCT": float,
+    "MAX_TRADE_PCT": float,
     "OB_IMBALANCE_THRESH": float,
     "MIN_OB_DEPTH_DOLLARS": float,
     "R2_TREND_THRESHOLD": float,
@@ -214,10 +187,16 @@ ALLOWED_PARAM_KEYS = {
     "REQUIRE_AGREE_MOMENTUM": "bool",
 }
 
+# Keys that are fractions of balance in [0, 1]; a percentage override is
+# range-checked so a fat-fingered "50" can never mean 5000% of the account.
+_FRACTION_KEYS = {"NORMAL_TRADE_PCT", "RECOVERY_TRADE_PCT", "MAX_TRADE_PCT",
+                  "SESSION_STOP_FRACTION", "MIN_EDGE_PCT", "MIN_WIN_PROB",
+                  "OB_IMBALANCE_THRESH", "R2_TREND_THRESHOLD"}
+
 
 def coerce_param(key: str, value: str) -> str:
-    """Validate a /set override. Returns the normalized string to store in env.
-    Raises ValueError on an unknown key or unparseable value."""
+    """Validate a parameter override. Returns the normalized string to store in
+    env. Raises ValueError on an unknown key or unparseable/out-of-range value."""
     key = (key or "").strip().upper()
     if key not in ALLOWED_PARAM_KEYS:
         raise ValueError(
@@ -230,9 +209,14 @@ def coerce_param(key: str, value: str) -> str:
             raise ValueError(f"{key} must be true/false.")
         return "true" if raw.lower() in ("true", "1", "yes") else "false"
     try:
-        return str(kind(raw))  # float(...) / int(...)
+        num = kind(raw)  # float(...) / int(...)
     except (TypeError, ValueError):
         raise ValueError(f"{key} must be a {kind.__name__}.")
+    if key in _FRACTION_KEYS and not (0.0 <= float(num) <= 1.0):
+        raise ValueError(
+            f"{key} is a fraction of balance and must be between 0 and 1 "
+            f"(e.g. 0.10 for 10%). Got {raw}.")
+    return str(num)
 
 
 def _resolve(name: str) -> str:
@@ -278,18 +262,18 @@ def list_formats() -> List[dict]:
 
 def print_formats() -> None:
     """Human-readable listing for `python formats.py` / `bot.py --list-formats`."""
-    print("MarkeyMachine — Trading Formats\n")
+    print("FlipPulse — Trading Formats (all sizing is % of current balance)\n")
     for spec in list_formats():
         star = "  (default)" if spec["is_default"] else ""
+        s = spec["settings"]
         print(f"  {spec['name']}{star}")
         print(f"      {spec['display_name']}")
         print(f"      {spec['blurb']}")
-        size = spec["settings"].get("NORMAL_TRADE_SIZE")
-        size_str = f"${size}" if size is not None else "operator-set (unchanged)"
-        ladder = spec["settings"].get("LADDER_ENABLED")
-        print(f"      base={size_str} ladder={ladder} "
-              f"OB≥{spec['settings'].get('OB_IMBALANCE_THRESH')} "
-              f"R²≥{spec['settings'].get('R2_TREND_THRESHOLD')}\n")
+        print(f"      normal={s['NORMAL_TRADE_PCT']*100:.0f}% "
+              f"recovery={s['RECOVERY_TRADE_PCT']*100:.0f}% "
+              f"max={s['MAX_TRADE_PCT']*100:.0f}% "
+              f"ladder={s['LADDER_ENABLED']} "
+              f"OB≥{s['OB_IMBALANCE_THRESH']} R²≥{s['R2_TREND_THRESHOLD']}\n")
     print("Select with:  TRADING_FORMAT=<name> python bot.py")
     print("Explicit env vars always override a format's defaults.")
 
