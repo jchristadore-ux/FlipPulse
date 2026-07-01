@@ -245,6 +245,8 @@ deploy the form as its own Railway service.
 
 ### 9b. (Later) re-enabling a performance fee — currently DISABLED
 
+> Full step-by-step: [`REENABLE_PERFORMANCE_FEE.md`](REENABLE_PERFORMANCE_FEE.md).
+
 The performance-fee engine is still in the code but **switched off** (`PERF_FEE_PCT`
 defaults to `0`, so the bot computes/reports nothing). **Do not enable it without a
 compliance review** — charging a percentage of trading profits on accounts your software
