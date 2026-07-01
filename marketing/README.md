@@ -16,7 +16,7 @@ Two cuts, both vertical (1080×1920, 9:16), silent so they play clean muted in f
 4. **Smart sizing** — a % of your balance, auto-compounding (Conservative/Balanced/Aggressive).
 5. **Built-in safety** — recovery mode, paper mode first, funds stay on Kalshi.
 6. **You stay in control** — live Telegram alerts, one-tap pause.
-7. **CTA** — "Pulse the markets." $99 setup · $99/mo + 20% of profits.
+7. **CTA** — "Pulse the markets." $99 setup · $99/mo.
 
 ## Regenerate / edit
 

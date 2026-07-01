@@ -81,9 +81,10 @@ ws.cell(row=2, column=1,
 put(4,  "REVENUE", section=True)
 put(5,  "Startup fee per new customer", 150, fmt=USD)
 put(6,  "Monthly subscription per customer", 99, fmt=USD)
-put(7,  "Performance fee (% of customer monthly profit)", 0.20, fmt=PCT)
+put(7,  "Performance fee (% of customer monthly profit)", 0.0, fmt=PCT,
+        note="PLACEHOLDER — temporarily removed / not currently charged. Set e.g. 0.20 to re-enable.")
 put(8,  "Include performance fee in headline totals? (1=yes, 0=no)", 0,
-        note="Kept OFF by default — it's an illustrative upside, and needs compliance review.")
+        note="Leave 0 while the fee is on hold; needs compliance review before enabling.")
 
 put(10, "PERFORMANCE-FEE ASSUMPTIONS  (illustrative — UNPROVEN)", section=True)
 put(11, "Avg funded balance per customer", 2000, fmt=USD,
@@ -190,7 +191,7 @@ for j in (6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16):
 m.cell(row=tr, column=17, value=f"={Q}{first+11}").font = Font(bold=True)
 m.cell(row=tr, column=17).number_format = USD
 m.cell(row=tr+1, column=1,
-       value="* Perf fee is illustrative (needs compliance review) and is OFF in totals unless Inputs!B8 = 1."
+       value="* Performance fee is a PLACEHOLDER — currently 0% (not charged). Set Inputs!B7 + B8 to re-enable."
        ).font = Font(italic=True, color="6B7890", size=9)
 
 # ═══════════════════════════════════════════════════════════════ SUMMARY ══════
@@ -258,8 +259,8 @@ srow(26, "Hardware total", "=Inputs!$B$33")
 srow(27, "Covered by profits?  (should be TRUE)",
      "=IF(B25>=B26,\"YES — funded from profit\",\"NO — push purchase later\")", fmt="General", bold=True)
 
-srow(29, "PERFORMANCE-FEE UPSIDE  (illustrative, not in totals above)", section=True)
-srow(30, "Annual performance-fee revenue (if it holds)",
+srow(29, "PERFORMANCE-FEE UPSIDE  (PLACEHOLDER — currently 0%, not charged)", section=True)
+srow(30, "Annual performance-fee revenue (0 while on hold)",
      "=(SUMPRODUCT(('Monthly Model'!B3:B14+'Monthly Model'!C3:C14)/2))*Inputs!$B$11*Inputs!$B$12*Inputs!$B$7",
      bold=True)
 srow(31, "Total revenue INCL. perf-fee upside",
@@ -267,8 +268,9 @@ srow(31, "Total revenue INCL. perf-fee upside",
 srow(32, "Net profit INCL. perf-fee upside",
      "=SUM('Monthly Model'!P3:P14)+B30", bold=True)
 s.cell(row=33, column=1,
-       value="Upside assumes every active customer nets Inputs!B12 per month on Inputs!B11 of capital. "
-             "Unproven — treat as a ceiling, not a forecast.").font = Font(italic=True, color="6B7890", size=9)
+       value="Performance fee is temporarily removed (Inputs!B7 = 0), so this reads $0. Set a % on the "
+             "Inputs sheet to model it as an upside — unproven, so treat as a ceiling, not a forecast."
+       ).font = Font(italic=True, color="6B7890", size=9)
 
 # ═════════════════════════════════════════════════════════════ COST NOTES ═════
 n = wb.create_sheet("Cost Notes")

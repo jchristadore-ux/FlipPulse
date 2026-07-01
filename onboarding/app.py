@@ -8,8 +8,8 @@ A small Flask app that serves the branded onboarding form and, on submit:
      "backend admin file" the operator opens to deploy (see admin_cli.py).
   3. Alerts the operator over Telegram (non-secret summary only).
   4. If Stripe is configured, launches Checkout to collect the one-time SETUP fee
-     and start the MONTHLY subscription, saving the card on file so the monthly
-     performance fee can be invoiced later. Otherwise it shows a local success page.
+     and start the MONTHLY subscription (card kept on file for future invoices).
+     Otherwise it shows a local success page.
 
 Design notes
 ------------
@@ -59,7 +59,7 @@ PUBLIC_BASE_URL     = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
 # Display-only pricing (kept in sync with the docs / Stripe prices).
 PRICE_SETUP   = os.environ.get("ONBOARDING_PRICE_SETUP", "99")
 PRICE_MONTHLY = os.environ.get("ONBOARDING_PRICE_MONTHLY", "99")
-PERF_PCT      = os.environ.get("ONBOARDING_PERF_PCT", "20")
+PERF_PCT      = os.environ.get("ONBOARDING_PERF_PCT", "0")   # placeholder — fee not shown/charged
 
 VALID_FORMATS = ("conservative", "balanced", "aggressive")
 SECRET_FIELDS = ("kalshi_api_key_id", "kalshi_private_key_pem", "telegram_bot_token")
@@ -172,7 +172,7 @@ def _start_stripe_checkout(sub: dict):
         client_reference_id=sub["id"],
         metadata={"submission_id": sub["id"], "handle": sub["handle"],
                   "trading_format": sub["trading_format"]},
-        payment_method_collection="always",     # save the card for perf-fee invoices
+        payment_method_collection="always",     # keep the card on file for future invoices
         success_url=f"{base}{url_for('success')}?sid={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{base}{url_for('cancelled')}?submission={sub['id']}",
     )

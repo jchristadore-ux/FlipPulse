@@ -503,15 +503,14 @@ PROBATION_RUNG_STEP_PCT      = _env_float("PROBATION_RUNG_STEP_PCT", 0.035)
 # a standalone `python bot.py` run is completely unaffected.
 STATUS_SNAPSHOT_PATH = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip()
 
-# ── Performance-fee billing (high-water mark) ─────────────────────────────────
-# The service charges a performance fee = PERF_FEE_PCT of each customer's NEW
-# monthly profit, measured against an all-time high-water mark (HWM) so the same
-# gains are never billed twice after a drawdown-and-recovery. This is
-# OBSERVABILITY ONLY — the bot never moves money; it just tracks the numbers and,
-# at each UTC month rollover, reports the exact fee to invoice (operator Telegram
-# + optional billing log). Funds stay on Kalshi; you bill the fee separately
-# (e.g. Stripe). Set PERF_FEE_PCT=0 to disable the report entirely.
-PERF_FEE_PCT       = _env_float("PERF_FEE_PCT", 0.20)
+# ── Performance-fee billing (high-water mark) — PLACEHOLDER, DISABLED ──────────
+# TEMPORARILY REMOVED: the performance fee is not currently charged, so this
+# defaults to 0.0 (a placeholder) and the monthly billing report stays dormant
+# (maybe_month_rollover no-ops while PERF_FEE_PCT <= 0). The whole engine below is
+# left intact so the fee can be switched back on in ONE place later — set
+# PERF_FEE_PCT (env) to e.g. 0.20. When >0 it reports (never charges) the fee on
+# each customer's NEW monthly profit above their all-time high-water mark.
+PERF_FEE_PCT       = _env_float("PERF_FEE_PCT", 0.0)   # placeholder — fee not charged
 BILLING_STATE_PATH = os.environ.get("BILLING_STATE_PATH", "billing_state.json").strip()
 BILLING_LOG_PATH   = os.environ.get("BILLING_LOG_PATH", "").strip()
 BILLING_PERSIST    = _env_bool("BILLING_PERSIST", True)
