@@ -73,21 +73,31 @@ you as the deployer:
 
 ---
 
-## 2. Create the Railway project from the template
+## 2. Create the Railway service for the bot
 
-Pick one and stay consistent:
+Each customer bot is just **another Railway service pointed at the FlipPulse repo** — the
+code is identical for everyone; only the Variables (step 4) differ. You do **not** need a
+separate repo per customer.
 
-**Option A — GitHub template repo (recommended):**
-1. On GitHub, use this repo as a template ("Use this template" → new repo named
-   `flippulse-<customer>`), or clone it into the customer's own repo.
-2. In Railway: **New Project → Deploy from GitHub repo →** pick `flippulse-<customer>`.
+1. In Railway: **New Project → Deploy from GitHub repo →** pick **`FlipPulse`** (the repo
+   that actually has the code). Name the service after the customer.
+2. Service → **Settings → Source → Root Directory → leave it BLANK/empty.**
 
-**Option B — Railway template:**
-1. In Railway: **New Project → Deploy from Template →** select the saved FlipPulse
-   template.
+> ⚠️ **Root Directory is the make-or-break setting, and it's the OPPOSITE of the sign-up
+> site.** A **customer bot** = Root Directory **blank** → Railway reads the repo-root
+> `railway.toml` → runs `python bot.py` (the trader). The **onboarding form** = Root
+> Directory `onboarding` → runs the website. Don't mix them up.
+>
+> **Do NOT** create a new empty GitHub repo (e.g. `Bird_Bot`) and point Railway at it —
+> an empty repo has no `main` branch, which is why Railway shows *"Connected branch does
+> not exist."* Always deploy from the **FlipPulse** repo.
 
-Railway reads `railway.toml`, builds with Nixpacks, and runs `python bot.py`. It will
-crash-loop on first boot until env vars are set (step 4) — that's expected.
+Railway builds with Nixpacks and runs `python bot.py`. It will crash-loop on first boot
+until env vars are set (step 4) — that's expected.
+
+*(If you truly want a dedicated repo per customer, make it via GitHub's **Use this
+template** on the FlipPulse repo — never an empty "New repository" — so it ships with the
+code and a `main` branch.)*
 
 ---
 
@@ -264,6 +274,37 @@ When (and only when) you're cleared to turn it on:
 2. You then raise it in Stripe as an **invoice item** on that customer's subscription
    (Dashboard → Customer → *Add invoice item*), charged against the card on file. Re-add
    the performance-fee line to the form/PDF/one-pager copy before you advertise it.
+
+---
+
+## Troubleshooting
+
+**"Connected branch does not exist" when creating the service.**
+The repo you picked is **empty** (no `main` branch). Deploy from the **FlipPulse** repo
+instead (Settings → Source → Disconnect → reconnect to `FlipPulse`, branch `main`), and
+leave **Root Directory blank**. See §2.
+
+**Deploy crash-loops with `Could not read KALSHI_PRIVATE_KEY_PEM …` (or the older
+`Unable to load PEM file … InvalidPadding`).**
+The private-key variable is **incomplete or altered** — almost always a copy/paste slip.
+Fix the value (no code change needed):
+1. Get a clean copy of the key: the customer's original `.pem` file opened in a plain
+   text editor, or the **PEM box on your `/admin` deploy view** (it preserves the line
+   breaks).
+2. In Railway → the bot service → **Variables → `KALSHI_PRIVATE_KEY_PEM`** → paste the
+   **entire** key, from the `-----BEGIN …-----` line through the `-----END …-----` line,
+   with nothing cut off. Railway's **Raw Editor** is the most reliable way to paste a
+   multi-line value.
+3. Checklist for a good paste: starts with `-----BEGIN`, ends with `-----END-----`, has
+   the base64 block in the middle, **no** surrounding quotes, **no** literal `\n`, and
+   **nothing truncated**.
+4. Redeploy → the logs should show `✅ RSA private key loaded.`
+   *(The bot auto-repairs escaped `\n`, spaces, and wrapping quotes — so if it still
+   fails, the key body itself is missing characters; re-copy the whole thing.)*
+
+**Booted but `/status` doesn't answer.** Confirm `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
+are this customer's, the volume is mounted at `/data`, and the deploy logs show a clean
+Kalshi auth + Telegram connect.
 
 ---
 
