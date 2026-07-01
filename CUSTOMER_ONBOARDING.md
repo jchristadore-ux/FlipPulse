@@ -4,7 +4,16 @@ FlipPulse onboarding is split into a **customer-facing** part and an
 **administrator (deployment)** part. This file used to hold the deployment runbook;
 that content now lives in the administrator guide below.
 
-## For the customer (send these)
+## The signup flow (digital form)
+
+Customers sign up through the **digital onboarding form** —
+[`onboarding/`](onboarding/README.md) (Flask). On submit it encrypts their keys into a
+backend submission file, alerts you on Telegram, and takes payment via Stripe ($99 setup
++ $99/mo, card on file for the 20% performance fee). You then run
+`onboarding/admin_cli.py show <id>` to get the deploy variables — see the administrator
+guide.
+
+## For the customer (branded leave-behind)
 
 - **[`docs/FlipPulse_Customer_Onboarding.pdf`](docs/FlipPulse_Customer_Onboarding.pdf)**
   — how FlipPulse works, the feature/why/pricing overview, and the **Trading Format**

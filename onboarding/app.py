@@ -1,0 +1,249 @@
+"""
+FlipPulse — digital customer onboarding service.
+
+A small Flask app that serves the branded onboarding form and, on submit:
+  1. Validates the intake.
+  2. ENCRYPTS the customer's secrets (Kalshi PEM + API key id, Telegram bot token)
+     at rest with Fernet, and writes a submission file to SUBMISSIONS_DIR — the
+     "backend admin file" the operator opens to deploy (see admin_cli.py).
+  3. Alerts the operator over Telegram (non-secret summary only).
+  4. If Stripe is configured, launches Checkout to collect the one-time SETUP fee
+     and start the MONTHLY subscription, saving the card on file so the monthly
+     performance fee can be invoiced later. Otherwise it shows a local success page.
+
+Design notes
+------------
+* Secrets are NEVER logged and NEVER sent to Telegram — only the encrypted
+  submission file holds them, and only the holder of ONBOARDING_FERNET_KEY can
+  read them back.
+* Run behind HTTPS (Railway terminates TLS for you). The form collects a private
+  key, so a plain-HTTP deployment is not acceptable.
+* This service is standalone — it does not import the trading bot.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
+from flask import (Flask, redirect, render_template, request, url_for)
+
+log = logging.getLogger("flippulse.onboarding")
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s │ %(levelname)-7s │ %(message)s")
+
+app = Flask(__name__)
+
+# ── Config (all via env) ──────────────────────────────────────────────────────
+SUBMISSIONS_DIR = Path(os.environ.get("SUBMISSIONS_DIR", Path(__file__).parent / "submissions"))
+FERNET_KEY      = os.environ.get("ONBOARDING_FERNET_KEY", "").strip()
+
+TG_BOT_TOKEN    = os.environ.get("ONBOARDING_TELEGRAM_BOT_TOKEN", "").strip()
+TG_CHAT_ID      = os.environ.get("ONBOARDING_TELEGRAM_CHAT_ID", "").strip()
+
+STRIPE_SECRET_KEY   = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+STRIPE_SETUP_PRICE  = os.environ.get("STRIPE_SETUP_PRICE_ID", "").strip()
+STRIPE_MONTHLY_PRICE= os.environ.get("STRIPE_MONTHLY_PRICE_ID", "").strip()
+PUBLIC_BASE_URL     = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+# Display-only pricing (kept in sync with the docs / Stripe prices).
+PRICE_SETUP   = os.environ.get("ONBOARDING_PRICE_SETUP", "99")
+PRICE_MONTHLY = os.environ.get("ONBOARDING_PRICE_MONTHLY", "99")
+PERF_PCT      = os.environ.get("ONBOARDING_PERF_PCT", "20")
+
+VALID_FORMATS = ("conservative", "balanced", "aggressive")
+SECRET_FIELDS = ("kalshi_api_key_id", "kalshi_private_key_pem", "telegram_bot_token")
+
+
+def _fernet():
+    """Return a Fernet cipher, or None if no key is configured (secrets then
+    cannot be stored and the form refuses submission)."""
+    if not FERNET_KEY:
+        return None
+    from cryptography.fernet import Fernet
+    return Fernet(FERNET_KEY.encode())
+
+
+def _encrypt(value: str) -> str:
+    f = _fernet()
+    if f is None:
+        raise RuntimeError("ONBOARDING_FERNET_KEY is not set — cannot store secrets.")
+    return f.encrypt((value or "").encode()).decode()
+
+
+def _slug(text: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return s or "customer"
+
+
+def _notify_operator(sub: dict) -> None:
+    """Telegram alert to the operator. Non-secret summary ONLY."""
+    if not (TG_BOT_TOKEN and TG_CHAT_ID):
+        log.info("Operator Telegram not configured — skipping alert.")
+        return
+    text = (
+        "🔔 New FlipPulse signup\n"
+        f"Name: {sub['full_name']}\n"
+        f"Email: {sub['email']}\n"
+        f"Handle: {sub['handle']}\n"
+        f"Format: {sub['trading_format']}\n"
+        f"Starting balance: ${sub['starting_balance']:,.2f}\n"
+        f"Submission: {sub['id']}\n"
+        "Run:  python admin_cli.py show " + sub["id"]
+    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TG_CHAT_ID, "text": text}, timeout=10)
+    except Exception as e:                      # alerting must not break signup
+        log.warning("Operator alert failed: %s", e)
+
+
+def _start_stripe_checkout(sub: dict):
+    """Create a Stripe Checkout session (setup fee + monthly subscription, card on
+    file). Returns the redirect URL, or None if Stripe is not configured."""
+    if not (STRIPE_SECRET_KEY and STRIPE_MONTHLY_PRICE):
+        return None
+    import stripe
+    stripe.api_key = STRIPE_SECRET_KEY
+    line_items = [{"price": STRIPE_MONTHLY_PRICE, "quantity": 1}]
+    if STRIPE_SETUP_PRICE:                      # one-time setup fee on the first invoice
+        line_items.append({"price": STRIPE_SETUP_PRICE, "quantity": 1})
+    base = PUBLIC_BASE_URL or request.host_url.rstrip("/")
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        line_items=line_items,
+        customer_email=sub["email"],
+        client_reference_id=sub["id"],
+        metadata={"submission_id": sub["id"], "handle": sub["handle"],
+                  "trading_format": sub["trading_format"]},
+        payment_method_collection="always",     # save the card for perf-fee invoices
+        success_url=f"{base}{url_for('success')}?sid={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{base}{url_for('cancelled')}?submission={sub['id']}",
+    )
+    return session.url
+
+
+@app.get("/")
+def form():
+    return render_template("form.html", formats=VALID_FORMATS,
+                           price_setup=PRICE_SETUP, price_monthly=PRICE_MONTHLY,
+                           perf_pct=PERF_PCT, error=request.args.get("error"))
+
+
+@app.post("/submit")
+def submit():
+    f = request.form
+    required = ["full_name", "email", "starting_balance", "trading_format",
+                "kalshi_api_key_id", "kalshi_private_key_pem",
+                "telegram_bot_token", "telegram_chat_id"]
+    missing = [k for k in required if not (f.get(k) or "").strip()]
+    if missing:
+        return redirect(url_for("form", error="Please complete: " + ", ".join(missing)))
+    if f.get("trading_format") not in VALID_FORMATS:
+        return redirect(url_for("form", error="Pick a trading format."))
+    if not f.get("agree"):
+        return redirect(url_for("form", error="Please accept the terms to continue."))
+    try:
+        balance = float(str(f.get("starting_balance")).replace(",", "").replace("$", ""))
+        if balance <= 0:
+            raise ValueError
+    except ValueError:
+        return redirect(url_for("form", error="Enter a valid starting balance."))
+
+    if _fernet() is None:
+        log.error("ONBOARDING_FERNET_KEY not set — refusing to store secrets.")
+        return redirect(url_for("form",
+            error="Onboarding is temporarily unavailable — please contact us."))
+
+    now = datetime.now(timezone.utc)
+    handle = _slug(f.get("full_name"))
+    sub_id = f"{now.strftime('%Y%m%d-%H%M%S')}_{handle}_{uuid.uuid4().hex[:6]}"
+    submission = {
+        "id": sub_id,
+        "created_at": now.isoformat(),
+        "full_name": f.get("full_name").strip(),
+        "email": f.get("email").strip(),
+        "handle": handle,
+        "trading_format": f.get("trading_format"),
+        "starting_balance": round(balance, 2),
+        "telegram_chat_id": f.get("telegram_chat_id").strip(),
+        "payment_status": "pending",
+        # secrets — encrypted at rest, decryptable only with ONBOARDING_FERNET_KEY
+        "secrets_encrypted": {
+            "kalshi_api_key_id": _encrypt(f.get("kalshi_api_key_id").strip()),
+            "kalshi_private_key_pem": _encrypt(f.get("kalshi_private_key_pem")),
+            "telegram_bot_token": _encrypt(f.get("telegram_bot_token").strip()),
+        },
+    }
+
+    SUBMISSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    path = SUBMISSIONS_DIR / f"{sub_id}.json"
+    path.write_text(json.dumps(submission, indent=2))
+    os.chmod(path, 0o600)                        # least-privilege on the secret file
+    log.info("Stored submission %s (secrets encrypted).", sub_id)
+
+    _notify_operator(submission)
+
+    try:
+        checkout_url = _start_stripe_checkout(submission)
+    except Exception as e:
+        log.warning("Stripe checkout failed (submission still saved): %s", e)
+        checkout_url = None
+    if checkout_url:
+        return redirect(checkout_url, code=303)
+    return redirect(url_for("success"))
+
+
+@app.get("/success")
+def success():
+    return render_template("success.html", price_monthly=PRICE_MONTHLY, perf_pct=PERF_PCT)
+
+
+@app.get("/cancelled")
+def cancelled():
+    return render_template("cancelled.html")
+
+
+@app.post("/stripe/webhook")
+def stripe_webhook():
+    """Optional: mark a submission paid once Checkout completes. Requires
+    STRIPE_WEBHOOK_SECRET; otherwise a harmless no-op acknowledgement."""
+    secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        return ("", 200)
+    import stripe
+    try:
+        event = stripe.Webhook.construct_event(
+            request.get_data(), request.headers.get("Stripe-Signature", ""), secret)
+    except Exception as e:
+        log.warning("Bad Stripe webhook: %s", e)
+        return ("", 400)
+    if event["type"] == "checkout.session.completed":
+        sid = event["data"]["object"].get("client_reference_id")
+        p = SUBMISSIONS_DIR / f"{sid}.json"
+        if sid and p.exists():
+            d = json.loads(p.read_text())
+            d["payment_status"] = "paid"
+            d["stripe_customer"] = event["data"]["object"].get("customer")
+            d["stripe_subscription"] = event["data"]["object"].get("subscription")
+            p.write_text(json.dumps(d, indent=2))
+            log.info("Submission %s marked paid.", sid)
+    return ("", 200)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "stripe": bool(STRIPE_SECRET_KEY),
+            "encryption": bool(FERNET_KEY)}
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8080"))
+    app.run(host="0.0.0.0", port=port)

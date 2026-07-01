@@ -503,6 +503,19 @@ PROBATION_RUNG_STEP_PCT      = _env_float("PROBATION_RUNG_STEP_PCT", 0.035)
 # a standalone `python bot.py` run is completely unaffected.
 STATUS_SNAPSHOT_PATH = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip()
 
+# ── Performance-fee billing (high-water mark) ─────────────────────────────────
+# The service charges a performance fee = PERF_FEE_PCT of each customer's NEW
+# monthly profit, measured against an all-time high-water mark (HWM) so the same
+# gains are never billed twice after a drawdown-and-recovery. This is
+# OBSERVABILITY ONLY — the bot never moves money; it just tracks the numbers and,
+# at each UTC month rollover, reports the exact fee to invoice (operator Telegram
+# + optional billing log). Funds stay on Kalshi; you bill the fee separately
+# (e.g. Stripe). Set PERF_FEE_PCT=0 to disable the report entirely.
+PERF_FEE_PCT       = _env_float("PERF_FEE_PCT", 0.20)
+BILLING_STATE_PATH = os.environ.get("BILLING_STATE_PATH", "billing_state.json").strip()
+BILLING_LOG_PATH   = os.environ.get("BILLING_LOG_PATH", "").strip()
+BILLING_PERSIST    = _env_bool("BILLING_PERSIST", True)
+
 
 def _probation_rungs() -> "list[float]":
     """Ascending list of sub-full base FRACTIONS the ramp climbs through. Each is
@@ -1252,6 +1265,153 @@ class BucketStats:
 
 
 bucket_stats = BucketStats(BUCKET_STATS_PATH, BUCKET_PERSIST)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERFORMANCE-FEE BILLING  (high-water-mark monthly profit share)
+#
+# Tracks the account's all-time high-water mark (peak month-end balance) and, at
+# each UTC month boundary, reports the performance fee to invoice:
+#     billable_profit = max(0, month_end_balance − HWM_before)
+#     fee             = PERF_FEE_PCT × billable_profit
+# then advances HWM = max(HWM, month_end_balance). Because the fee is only ever
+# charged on balance ABOVE the previous peak, a customer who dips and recovers is
+# never billed twice for the same dollars. The bot does NOT move money — it emits
+# the number (operator Telegram + optional billing log + status snapshot) so the
+# operator can raise the invoice (Stripe). Mutated IN-PLACE only.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BillingState:
+    """Persistent high-water mark + current-month anchor for the performance fee."""
+
+    SCHEMA = 1
+
+    def __init__(self, path: str, persist: bool) -> None:
+        self.hwm:                 float = 0.0   # all-time peak month-end balance
+        self.month:               str   = ""    # current UTC month, "YYYY-MM"
+        self.month_start_balance: float = 0.0   # balance at the start of `month`
+        self._path    = path
+        self._persist = persist
+        if self._persist:
+            self._load()
+
+    @staticmethod
+    def _now_month() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m")
+
+    def reconcile_on_boot(self, balance: float) -> None:
+        """Seed the anchor on first ever run so the initial deposit is never billed
+        as profit. A restart that crossed a month boundary is settled by the normal
+        per-cycle rollover check (persisted month != current month)."""
+        if self.month == "":
+            self.month               = self._now_month()
+            self.month_start_balance = round(float(balance), 2)
+            if self.hwm <= 0.0:
+                self.hwm = round(float(balance), 2)
+            self._save()
+            log.info("Billing boot │ seeded HWM $%.2f, month %s.", self.hwm, self.month)
+
+    def maybe_month_rollover(self, balance: float) -> bool:
+        """At each UTC month change, compute the performance fee for the month that
+        just ended and advance the high-water mark. Returns True on a real rollover.
+        Never raises — billing observability must not break trading."""
+        if PERF_FEE_PCT <= 0.0:
+            return False
+        try:
+            now_month = self._now_month()
+            if self.month == "":
+                self.reconcile_on_boot(balance)
+                return False
+            if now_month == self.month:
+                return False
+
+            ended          = self.month
+            hwm_before     = self.hwm
+            gross_change   = round(balance - self.month_start_balance, 2)
+            billable       = round(max(0.0, balance - hwm_before), 2)
+            fee            = round(PERF_FEE_PCT * billable, 2)
+
+            self.hwm                 = round(max(hwm_before, balance), 2)
+            self.month               = now_month
+            self.month_start_balance = round(float(balance), 2)
+            self._save()
+
+            log.warning("💵 BILLING │ %s closed │ end $%.2f │ month Δ $%+.2f │ "
+                        "billable(HWM) $%.2f │ fee(%.0f%%) $%.2f │ new HWM $%.2f",
+                        ended, balance, gross_change, billable,
+                        PERF_FEE_PCT * 100, fee, self.hwm)
+            self._append_log({
+                "month": ended, "closed_at": datetime.now(timezone.utc).isoformat(),
+                "end_balance": round(balance, 2), "month_change": gross_change,
+                "hwm_before": hwm_before, "billable_profit": billable,
+                "perf_fee_pct": PERF_FEE_PCT, "performance_fee": fee,
+                "hwm_after": self.hwm, "demo_mode": DEMO_MODE,
+            })
+            mode = "PAPER (not billable)" if DEMO_MODE else "LIVE"
+            tg.send_telegram_message(
+                f"💵 MONTHLY BILLING — {ended} [{mode}]\n"
+                f"End balance: ${balance:,.2f}\n"
+                f"Month change: ${gross_change:+,.2f}\n"
+                f"Billable new profit (above HWM ${hwm_before:,.2f}): ${billable:,.2f}\n"
+                f"Performance fee ({PERF_FEE_PCT*100:.0f}%): ${fee:,.2f}\n"
+                f"New high-water mark: ${self.hwm:,.2f}"
+                + ("" if not DEMO_MODE else "\n(paper mode — informational only)")
+            )
+            return True
+        except Exception as e:            # never let billing break the trade loop
+            log.warning("Billing rollover error: %s", e)
+            return False
+
+    def snapshot(self, balance: float) -> dict:
+        """Live billing view for the status snapshot / dashboard."""
+        billable = max(0.0, balance - self.hwm)
+        return {
+            "hwm": round(self.hwm, 2),
+            "month": self.month,
+            "month_change": round(balance - self.month_start_balance, 2),
+            "billable_profit": round(billable, 2),
+            "perf_fee_pct": PERF_FEE_PCT,
+            "accrued_perf_fee": round(PERF_FEE_PCT * billable, 2),
+        }
+
+    # ── persistence (atomic JSON write) ────────────────────────────────────────
+    def _append_log(self, row: dict) -> None:
+        if not BILLING_LOG_PATH:
+            return
+        try:
+            with open(BILLING_LOG_PATH, "a") as f:
+                f.write(json.dumps(row) + "\n")
+        except OSError as e:
+            log.warning("Billing │ log append failed: %s", e)
+
+    def _save(self) -> None:
+        if not self._persist:
+            return
+        try:
+            tmp = f"{self._path}.tmp"
+            with open(tmp, "w") as f:
+                json.dump({
+                    "schema":              self.SCHEMA,
+                    "hwm":                 self.hwm,
+                    "month":               self.month,
+                    "month_start_balance": self.month_start_balance,
+                }, f)
+            os.replace(tmp, self._path)   # atomic on POSIX
+        except OSError as e:
+            log.warning("Billing │ state save failed: %s", e)
+
+    def _load(self) -> None:
+        try:
+            with open(self._path) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            return
+        self.hwm                 = float(d.get("hwm", 0.0) or 0.0)
+        self.month               = str(d.get("month", "") or "")
+        self.month_start_balance = float(d.get("month_start_balance", 0.0) or 0.0)
+
+
+billing = BillingState(BILLING_STATE_PATH, BILLING_PERSIST)
 
 
 def active_trade_fraction() -> float:
@@ -2620,6 +2780,7 @@ def write_status_snapshot(balance: float) -> None:
             "active_mode": active_mode,
             "active_trade_pct": round(active_trade_fraction() * 100, 2),
             "active_trade_size": round(active_trade_size(balance), 2),
+            "billing": billing.snapshot(balance),
             "open_positions": len(open_orders),
             "open_tickers": [o.get("ticker", "") for o in open_orders.values()],
             "session_state": session_state.value,
@@ -2947,6 +3108,7 @@ def main() -> None:
         session_stop_threshold = paper_balance * SESSION_STOP_FRACTION
         recovery.reconcile_on_boot(paper_balance)
         probation.reconcile_on_boot()
+        billing.reconcile_on_boot(paper_balance)
         telegram_boot(paper_balance)
     else:
         try:
@@ -2969,6 +3131,7 @@ def main() -> None:
         live_daily_realized = 0.0
         recovery.reconcile_on_boot(bal)
         probation.reconcile_on_boot()
+        billing.reconcile_on_boot(bal)
         telegram_boot(bal)
 
     resolve_cycle = 0
@@ -3024,6 +3187,9 @@ def main() -> None:
             # or there is no sub-full room, in which case sizing resumes normal).
             if recovery.maybe_exit(current_balance):
                 probation.start(_probation_rungs(), NORMAL_TRADE_PCT)
+            # Performance-fee billing: close the month + report the fee at the UTC
+            # month boundary (observability only; never moves money).
+            billing.maybe_month_rollover(current_balance)
             run_decision(market, current_balance)
             write_status_snapshot(current_balance)
 

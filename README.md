@@ -37,8 +37,11 @@ FlipPulse/
 ├── railway.toml                 # Railway deploy config (python bot.py)
 ├── .env.example                 # annotated per-customer env vars
 ├── .gitignore
-├── ADMINISTRATOR_ONBOARDING.md  # deploy-a-new-customer runbook (admin)
+├── ADMINISTRATOR_ONBOARDING.md  # deploy-a-new-customer runbook (admin) + billing/Stripe
 ├── CUSTOMER_ONBOARDING.md       # map of the onboarding docs
+├── onboarding/                  # digital signup form (Flask): form → encrypted
+│                                #   submission + Telegram alert + Stripe checkout
+│   ├── app.py · admin_cli.py · templates/ · README.md
 └── docs/
     ├── FlipPulse_Customer_Onboarding.pdf   # customer: how it works + pick a format
     ├── FlipPulse_Customer_Onboarding.html  # (source for the PDF)

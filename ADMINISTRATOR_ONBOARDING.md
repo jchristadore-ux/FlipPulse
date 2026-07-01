@@ -5,32 +5,46 @@ FlipPulse. Every customer gets their own Railway project, their own Kalshi key, 
 their own Telegram bot. There is no shared dashboard, no signup, and no multi-tenant
 supervisor — one repo/template → one Railway project → one bot per customer.
 
-> **Customer-facing doc:** the customer fills out
+> **Customer-facing intake:** customers sign up through the **digital onboarding
+> form** (the Flask service in [`onboarding/`](onboarding/README.md)) — it collects
+> their details + chosen Trading Format, encrypts their keys, takes payment via
+> Stripe, and alerts you. The
 > [`docs/FlipPulse_Customer_Onboarding.pdf`](docs/FlipPulse_Customer_Onboarding.pdf)
-> (how it works + **picks a Trading Format**) and sends you their setup details via
-> [`docs/FlipPulse_Customer_Setup.pdf`](docs/FlipPulse_Customer_Setup.pdf). This
-> runbook is what **you** do with those details.
+> is the branded leave-behind (how it works, formats, pricing). This runbook is what
+> **you** do once a submission lands.
 
 Every customer starts in **paper mode** (`DEMO_MODE=true`). Going live is a separate,
 deliberate step (last section). Budget ~15 minutes per customer.
 
 ---
 
-## 0. Prerequisites — collect from the customer first
+## 0. A signup lands (from the digital form)
 
-From the two customer PDFs you should have:
+When a customer completes the onboarding form you get a **Telegram alert** and a
+**submission file** in the onboarding service's `submissions/` inbox. Pull the deploy
+values out of it:
 
-- [ ] **Kalshi API Key ID** and the **RSA private key PEM** (customer creates these in
-      Kalshi → Account → Security → Create Key, or you create them on their account).
-- [ ] **Telegram bot token** (from BotFather) and their **chat id** (from
-      `@userinfobot`) — or you create the bot for them in step 4.
-- [ ] **Starting balance** they will fund — this becomes `PAPER_BALANCE` and, because
-      sizing is percentage-based, it is the only number that scales their stakes.
-- [ ] **Chosen Trading Format** — `conservative`, `balanced`, or `aggressive` (the box
-      they ticked on the onboarding PDF). Balanced if they didn't pick.
-- [ ] A short customer handle for naming, e.g. `acme`.
+```bash
+cd onboarding
+ONBOARDING_FERNET_KEY=<your key> python admin_cli.py list          # find the id
+ONBOARDING_FERNET_KEY=<your key> python admin_cli.py show <id>     # decrypt → env vars
+```
+
+`show` prints the ready-to-paste Railway variables (decrypted Kalshi key + PEM,
+Telegram token/chat id, `PAPER_BALANCE` = their starting balance, `TRADING_FORMAT` =
+their pick). That is everything you need for the steps below. Confirm `payment_status`
+is `paid` (see §9 Billing) before you deploy live.
+
+> Doing it manually instead (no form)? You just need the same items: Kalshi API Key ID +
+> RSA private-key PEM, Telegram bot token + chat id, starting balance, chosen format
+> (`conservative`/`balanced`/`aggressive`, default balanced), and a short handle.
 
 ---
+
+## 1. How sizing works (why you don't set dollar amounts per customer)
+
+FlipPulse sizes **every trade as a percentage of the current balance**, resolved to
+dollars at one place in the code (`active_trade_size` in `bot.py`). Consequences for
 
 ## 1. How sizing works (why you don't set dollar amounts per customer)
 
@@ -189,11 +203,76 @@ Do **not** do this during initial onboarding. When the customer is ready:
 
 ---
 
+## 9. Billing — pricing, Stripe, and the performance fee
+
+**Pricing (the numbers baked into the form + PDF):**
+
+| Charge | Amount | When | How |
+|---|---|---|---|
+| **Setup fee** | **$99** | Once, at signup | Stripe (first invoice) |
+| **Subscription** | **$99 / month** | Monthly | Stripe recurring |
+| **Performance fee** | **20% of new monthly profit** | Monthly, only in profitable months | Stripe invoice item (you add it) |
+
+> **⚠️ Compliance first.** Charging a percentage of trading profits on accounts your
+> software trades can trigger investment-adviser / CTA rules, and performance fees are
+> specifically regulated (e.g. SEC Rule 205‑3 "qualified client" thresholds; CFTC CTA/CPO
+> rules since Kalshi is CFTC-regulated). The flat setup + subscription is ordinary SaaS.
+> **Get the performance fee reviewed by a lawyer/compliance before enabling it.** This is
+> not legal advice.
+
+> **You never touch customer funds.** Money stays on Kalshi; you bill separately via
+> Stripe with a **card on file**. The bot only *reports* the fee amount — it never moves
+> money.
+
+### 9a. One-time Stripe setup
+
+1. Create a **Stripe account** and grab your secret key (`sk_live_...`).
+2. **Products & Prices:**
+   - Product "FlipPulse Membership" → recurring **Price $99/month** → copy its
+     `price_...` id → `STRIPE_MONTHLY_PRICE_ID`.
+   - Product "FlipPulse Setup" → one-time **Price $99** → copy its id →
+     `STRIPE_SETUP_PRICE_ID`.
+3. In the **onboarding service** (`onboarding/`) set `STRIPE_SECRET_KEY`,
+   `STRIPE_MONTHLY_PRICE_ID`, `STRIPE_SETUP_PRICE_ID`, and `PUBLIC_BASE_URL` (its public
+   https URL). The form then runs Checkout in `subscription` mode: the setup fee lands on
+   the first invoice, the subscription recurs monthly, and the **card is saved** for the
+   performance-fee invoices.
+4. *(Optional)* Add a Stripe webhook to `POST /stripe/webhook` for
+   `checkout.session.completed` and set `STRIPE_WEBHOOK_SECRET` — the submission is then
+   auto-marked `paid`.
+
+See [`onboarding/README.md`](onboarding/README.md) for the full env-var list and how to
+deploy the form as its own Railway service.
+
+### 9b. Charging the monthly performance fee (with high-water mark)
+
+The bot computes the fee for you. At each **UTC month rollover** it reports, per customer:
+
+- the month's balance change,
+- the **billable profit** = balance above their all-time **high-water mark** (so a
+  dip-and-recover is never billed twice), and
+- the **fee** = `PERF_FEE_PCT` (default **20%**) × billable profit.
+
+You receive it three ways: the **operator Telegram** message (`💵 MONTHLY BILLING …`),
+the append-only **`BILLING_LOG_PATH`** file (`/data/billing.log`, one JSON line per
+month), and the live `billing` block in the status snapshot. Then, once a month:
+
+1. Read each customer's fee from the billing log / Telegram (paper months are marked
+   informational — don't bill those).
+2. In Stripe, add an **invoice item** to that customer's subscription for the fee amount
+   (Dashboard → Customer → *Add invoice item*, or the API
+   `stripe.InvoiceItem.create(customer=…, amount=<cents>, currency="usd", description="FlipPulse performance fee — <month>")`).
+   It's charged on their next monthly invoice against the card on file.
+
+Tune the rate with `PERF_FEE_PCT` (e.g. `0.20`), or set it to `0` to disable the report.
+
+---
+
 ## Out of scope (by design)
 
-- Signup / login
 - Multi-tenant supervisor or running many bots on one box
 - Central monitoring dashboard
-- Billing
+- In-app fund custody (funds always stay on Kalshi; you bill via Stripe)
 
-One customer = one repo/template clone = one Railway project = one bot.
+One customer = one repo/template clone = one Railway project = one bot; signups arrive
+via the onboarding form and billing runs through Stripe.
