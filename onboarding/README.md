@@ -43,6 +43,7 @@ Environment variables:
 | `STRIPE_MONTHLY_PRICE_ID` | for payment | Recurring $99/mo Price id (`price_...`). |
 | `STRIPE_SETUP_PRICE_ID` | for payment | One-time $99 setup Price id. |
 | `STRIPE_WEBHOOK_SECRET` | optional | Verify `checkout.session.completed` to mark a submission **paid**. |
+| `ADMIN_TOKEN` | optional | Enables the operator dashboard at `/admin`. Unset = dashboard disabled (routes 404). |
 | `PUBLIC_BASE_URL` | optional | Public https URL (for Stripe success/cancel redirects). Defaults to the request host. |
 | `SUBMISSIONS_DIR` | optional | Where submission files are written (default `./submissions`; put on a Railway volume to persist). |
 | `ONBOARDING_PRICE_SETUP` / `ONBOARDING_PRICE_MONTHLY` / `ONBOARDING_PERF_PCT` | optional | Display-only pricing on the form (default `99` / `99` / `20`). |
@@ -66,14 +67,21 @@ submissions survive redeploys.
 
 ## 3. Process a signup
 
+**Operator dashboard (easiest).** Set `ADMIN_TOKEN` and open
+`https://<your-host>/admin?token=<ADMIN_TOKEN>` — that sets an httponly cookie, lists
+every signup with its payment status, and each row links to a **deploy view** that shows
+the ready-to-paste Railway variables (decrypted server-side). Operator-only; the routes
+404 without the token.
+
+**CLI (equivalent).**
+
 ```bash
 ONBOARDING_FERNET_KEY=... python admin_cli.py list
 ONBOARDING_FERNET_KEY=... python admin_cli.py show 20260701-120000_jane_ab12cd
 ```
 
-`show` prints the ready-to-paste Railway variables (including the customer's
-`TRADING_FORMAT`, `PAPER_BALANCE`, and the decrypted keys). Follow the
-administrator runbook from there.
+Both print the ready-to-paste Railway variables (the customer's `TRADING_FORMAT`,
+`PAPER_BALANCE`, and the decrypted keys). Follow the administrator runbook from there.
 
 ## Security notes
 

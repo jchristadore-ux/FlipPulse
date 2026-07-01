@@ -23,6 +23,7 @@ Design notes
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -32,7 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
-from flask import (Flask, redirect, render_template, request, url_for)
+from flask import (Flask, abort, make_response, redirect, render_template,
+                   request, url_for)
 
 log = logging.getLogger("flippulse.onboarding")
 logging.basicConfig(level=logging.INFO,
@@ -46,6 +48,8 @@ FERNET_KEY      = os.environ.get("ONBOARDING_FERNET_KEY", "").strip()
 
 TG_BOT_TOKEN    = os.environ.get("ONBOARDING_TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID      = os.environ.get("ONBOARDING_TELEGRAM_CHAT_ID", "").strip()
+
+ADMIN_TOKEN         = os.environ.get("ADMIN_TOKEN", "").strip()
 
 STRIPE_SECRET_KEY   = os.environ.get("STRIPE_SECRET_KEY", "").strip()
 STRIPE_SETUP_PRICE  = os.environ.get("STRIPE_SETUP_PRICE_ID", "").strip()
@@ -75,6 +79,51 @@ def _encrypt(value: str) -> str:
     if f is None:
         raise RuntimeError("ONBOARDING_FERNET_KEY is not set — cannot store secrets.")
     return f.encrypt((value or "").encode()).decode()
+
+
+def _decrypt(token: str) -> str:
+    f = _fernet()
+    if f is None:
+        raise RuntimeError("ONBOARDING_FERNET_KEY is not set — cannot read secrets.")
+    return f.decrypt((token or "").encode()).decode()
+
+
+def _deploy_env(sub: dict) -> list:
+    """Ready-to-paste Railway variables for a submission (matches admin_cli.py).
+    Decrypts the stored secrets — callers must be operator-authorized."""
+    s = {k: _decrypt(v) for k, v in sub.get("secrets_encrypted", {}).items()}
+    return [
+        ("KALSHI_API_KEY_ID", s.get("kalshi_api_key_id", "")),
+        ("KALSHI_PRIVATE_KEY_PEM", s.get("kalshi_private_key_pem", "")),
+        ("DEMO_MODE", "true"),
+        ("PAPER_BALANCE", str(sub.get("starting_balance", ""))),
+        ("TRADING_FORMAT", sub.get("trading_format", "balanced")),
+        ("TELEGRAM_BOT_TOKEN", s.get("telegram_bot_token", "")),
+        ("TELEGRAM_CHAT_ID", sub.get("telegram_chat_id", "")),
+    ]
+
+
+def _load_submission(sub_id: str) -> "dict | None":
+    # sub_id is used as a filename — reject anything that isn't a bare id.
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", sub_id or ""):
+        return None
+    path = SUBMISSIONS_DIR / f"{sub_id}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _admin_authorized() -> bool:
+    """True when the request carries the operator token (cookie, header, or query)."""
+    if not ADMIN_TOKEN:
+        return False
+    supplied = (request.cookies.get("fp_admin")
+                or request.headers.get("X-Admin-Token")
+                or request.args.get("token") or "")
+    return hmac.compare_digest(supplied, ADMIN_TOKEN)
 
 
 def _slug(text: str) -> str:
@@ -238,10 +287,53 @@ def stripe_webhook():
     return ("", 200)
 
 
+@app.get("/admin")
+def admin_list():
+    """Operator dashboard — lists submissions. Disabled unless ADMIN_TOKEN is set."""
+    if not ADMIN_TOKEN:
+        abort(404)
+    # A valid ?token= establishes an httponly cookie so it isn't in every URL after.
+    q = request.args.get("token")
+    if q and hmac.compare_digest(q, ADMIN_TOKEN):
+        resp = make_response(redirect(url_for("admin_list")))
+        resp.set_cookie("fp_admin", ADMIN_TOKEN, httponly=True,
+                        samesite="Lax", secure=request.is_secure)
+        return resp
+    if not _admin_authorized():
+        abort(404)
+    subs = []
+    for p in sorted(SUBMISSIONS_DIR.glob("*.json"), reverse=True):
+        try:
+            subs.append(json.loads(p.read_text()))
+        except (OSError, ValueError):
+            continue
+    return render_template("admin_list.html", subs=subs)
+
+
+@app.get("/admin/<sub_id>")
+def admin_detail(sub_id: str):
+    if not _admin_authorized():
+        abort(404)
+    sub = _load_submission(sub_id)
+    if sub is None:
+        abort(404)
+    try:
+        env_pairs = _deploy_env(sub)
+    except Exception as e:                       # bad key / corrupt secret
+        log.warning("admin detail decrypt failed for %s: %s", sub_id, e)
+        env_pairs = None
+    env_text = "\n".join(
+        f"{k}={v}" if k != "KALSHI_PRIVATE_KEY_PEM" else f"{k}=<multi-line, below>"
+        for k, v in (env_pairs or []))
+    pem = dict(env_pairs or []).get("KALSHI_PRIVATE_KEY_PEM", "")
+    return render_template("admin_detail.html", sub=sub, env_text=env_text, pem=pem,
+                           has_env=env_pairs is not None)
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "stripe": bool(STRIPE_SECRET_KEY),
-            "encryption": bool(FERNET_KEY)}
+            "encryption": bool(FERNET_KEY), "admin_dashboard": bool(ADMIN_TOKEN)}
 
 
 if __name__ == "__main__":

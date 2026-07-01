@@ -21,16 +21,19 @@ deliberate step (last section). Budget ~15 minutes per customer.
 ## 0. A signup lands (from the digital form)
 
 When a customer completes the onboarding form you get a **Telegram alert** and a
-**submission file** in the onboarding service's `submissions/` inbox. Pull the deploy
-values out of it:
+**submission file** in the onboarding service's `submissions/` inbox. Two ways to pull the
+deploy values out of it:
 
-```bash
-cd onboarding
-ONBOARDING_FERNET_KEY=<your key> python admin_cli.py list          # find the id
-ONBOARDING_FERNET_KEY=<your key> python admin_cli.py show <id>     # decrypt → env vars
-```
+- **Operator dashboard:** open `https://<onboarding-host>/admin?token=<ADMIN_TOKEN>` — it
+  lists every signup and each links to a deploy view with the ready-to-paste variables.
+- **CLI:**
+  ```bash
+  cd onboarding
+  ONBOARDING_FERNET_KEY=<your key> python admin_cli.py list          # find the id
+  ONBOARDING_FERNET_KEY=<your key> python admin_cli.py show <id>     # decrypt → env vars
+  ```
 
-`show` prints the ready-to-paste Railway variables (decrypted Kalshi key + PEM,
+Either one gives the ready-to-paste Railway variables (decrypted Kalshi key + PEM,
 Telegram token/chat id, `PAPER_BALANCE` = their starting balance, `TRADING_FORMAT` =
 their pick). That is everything you need for the steps below. Confirm `payment_status`
 is `paid` (see §9 Billing) before you deploy live.

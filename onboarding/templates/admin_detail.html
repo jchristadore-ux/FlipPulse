@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlipPulse — Deploy {{ sub.handle }}</title>
+<style>
+  body { margin:0; font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+    background:#080c15; color:#c9d3e2; padding:26px 18px; }
+  .wrap { max-width:760px; margin:0 auto; }
+  a.back { color:#35cee6; text-decoration:none; font-size:12.5px; }
+  h1 { color:#fff; font-size:21px; margin:8px 0 2px; }
+  .meta { color:#7c8aa3; font-size:12.5px; margin-bottom:16px; }
+  .badge { font-size:10px; font-weight:800; padding:2px 8px; border-radius:20px; }
+  .paid { background:#153a2a; color:#7ef2a0; } .pending { background:#3a2f15; color:#f2b06a; }
+  h2 { font-size:11.5px; text-transform:uppercase; letter-spacing:1px; color:#8fa0ba; margin:20px 0 8px; }
+  textarea { width:100%; background:#0e1a2b; border:1px solid #24405f; border-radius:8px;
+    color:#eaf2ff; font-family:"SF Mono",Consolas,monospace; font-size:12px; padding:12px; }
+  .warn { background:rgba(126,242,160,0.05); border:1px solid #24463a; border-radius:8px;
+    padding:10px 14px; font-size:11.5px; color:#a7c3b3; margin-top:14px; }
+  .err { background:rgba(242,90,90,0.10); border:1px solid #5a2a2a; color:#f2a6a6;
+    border-radius:8px; padding:12px 14px; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="{{ url_for('admin_list') }}">← all signups</a>
+  <h1>{{ sub.full_name }}
+    <span class="badge {{ 'paid' if sub.payment_status=='paid' else 'pending' }}">{{ sub.payment_status }}</span>
+  </h1>
+  <div class="meta">{{ sub.email }} · format <b style="color:#7ef2a0;">{{ sub.trading_format }}</b> ·
+    starting ${{ '{:,.0f}'.format(sub.starting_balance) }} · {{ sub.created_at[:16].replace('T',' ') }}</div>
+
+  {% if has_env %}
+  <h2>Railway variables (paste into the service)</h2>
+  <textarea rows="8" readonly onclick="this.select()">{{ env_text }}</textarea>
+
+  <h2>KALSHI_PRIVATE_KEY_PEM (one multi-line variable)</h2>
+  <textarea rows="10" readonly onclick="this.select()">{{ pem }}</textarea>
+
+  <div class="warn">Also add the <code>/data</code> <code>*_STATE_PATH</code>,
+    <code>STATUS_SNAPSHOT_PATH</code>, <code>HEALTH_LOG_PATH</code>, and
+    <code>BILLING_LOG_PATH</code> values from <code>.env.example</code>. Then follow the
+    administrator runbook. These fields contain live secrets — this page is operator-only.</div>
+  {% else %}
+  <div class="err">Could not decrypt this submission's secrets. Check that
+    <code>ONBOARDING_FERNET_KEY</code> matches the key used when the form saved it.</div>
+  {% endif %}
+</div>
+</body>
+</html>
