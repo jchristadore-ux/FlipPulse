@@ -14,15 +14,15 @@ then print the HTML to PDF with headless Chromium.
 | Sheet | What it does |
 |---|---|
 | **Inputs** | All editable assumptions — pricing, per-customer costs, fixed costs, Stripe fees, churn, growth ramp, and hardware. Edit the yellow cells. |
-| **Monthly Model** | 12-month P&L: customers (start/new/churn/end), revenue (setup + subscription + optional performance fee), costs (Claude, Railway, Stripe, misc), hardware capex, net & cumulative profit. |
-| **Summary** | Quarterly + annual rollups, key metrics (ending MRR/ARR, gross margin, cumulative profit), a hardware-affordability check, and the illustrative performance-fee upside. |
+| **Monthly Model** | 12-month P&L: customers (start/new/churn/end), revenue (setup + subscription; performance fee is a placeholder at 0%), costs (Claude, Railway, Stripe, misc), hardware capex, net & cumulative profit. |
+| **Summary** | Quarterly + annual rollups, key metrics (ending MRR/ARR, gross margin, cumulative profit), a hardware-affordability check, and a performance-fee upside slot (currently 0). |
 | **Cost Notes** | The researched pricing behind the defaults, with sources. |
 
 ## Assumptions baked in (all editable)
 
-- **Pricing:** $150 startup + $99/month per customer. Optional 20% performance fee is
-  kept **out** of headline totals (toggle `Inputs!B8=1` to include it — see the compliance
-  note in the admin guide first).
+- **Pricing:** $150 startup + $99/month per customer. The performance fee is a
+  **placeholder at 0%** (temporarily removed / not charged) — set `Inputs!B7` to a % and
+  `Inputs!B8=1` to model it later, after a compliance review.
 - **Growth:** slow ramp to **100 customers by month 6** and **500 by month 12** (the
   `Cust. end` column on *Monthly Model* is editable if your curve differs), with 4% monthly
   churn.
@@ -42,11 +42,11 @@ then print the HTML to PDF with headless Chromium.
 | Total operating costs | ~$21K |
 | **Net profit (after hardware)** | **~$247K** |
 | Gross margin | ~92% |
-| Performance-fee upside (illustrative) | +~$38K |
+| Performance-fee upside | $0 (placeholder — on hold) |
 
-> Numbers move the moment you change an input. The performance-fee upside assumes an
-> average account size and monthly return you set on the Inputs sheet — it is **unproven**;
-> treat it as a ceiling, not a forecast.
+> Numbers move the moment you change an input. The performance fee is a placeholder at 0%
+> right now (temporarily removed); set a % on the Inputs sheet to model it as an upside later
+> — it's unproven, so treat it as a ceiling, not a forecast.
 
 ## Regenerate
 

@@ -206,7 +206,7 @@ Do **not** do this during initial onboarding. When the customer is ready:
 
 ---
 
-## 9. Billing — pricing, Stripe, and the performance fee
+## 9. Billing — pricing & Stripe
 
 **Pricing (the numbers baked into the form + PDF):**
 
@@ -214,18 +214,14 @@ Do **not** do this during initial onboarding. When the customer is ready:
 |---|---|---|---|
 | **Setup fee** | **$99** | Once, at signup | Stripe (first invoice) |
 | **Subscription** | **$99 / month** | Monthly | Stripe recurring |
-| **Performance fee** | **20% of new monthly profit** | Monthly, only in profitable months | Stripe invoice item (you add it) |
+| ~~Performance fee~~ | **— on hold (not charged)** | — | Placeholder — see §9b to re-enable later |
 
-> **⚠️ Compliance first.** Charging a percentage of trading profits on accounts your
-> software trades can trigger investment-adviser / CTA rules, and performance fees are
-> specifically regulated (e.g. SEC Rule 205‑3 "qualified client" thresholds; CFTC CTA/CPO
-> rules since Kalshi is CFTC-regulated). The flat setup + subscription is ordinary SaaS.
-> **Get the performance fee reviewed by a lawyer/compliance before enabling it.** This is
-> not legal advice.
+> **Performance fee is temporarily removed.** It's a placeholder set to 0% everywhere
+> (`PERF_FEE_PCT=0`), so nothing about profit share is shown to customers or billed. Only
+> the flat **setup + subscription** run today — ordinary SaaS.
 
 > **You never touch customer funds.** Money stays on Kalshi; you bill separately via
-> Stripe with a **card on file**. The bot only *reports* the fee amount — it never moves
-> money.
+> Stripe with a **card on file**.
 
 ### 9a. One-time Stripe setup
 
@@ -238,8 +234,8 @@ Do **not** do this during initial onboarding. When the customer is ready:
 3. In the **onboarding service** (`onboarding/`) set `STRIPE_SECRET_KEY`,
    `STRIPE_MONTHLY_PRICE_ID`, `STRIPE_SETUP_PRICE_ID`, and `PUBLIC_BASE_URL` (its public
    https URL). The form then runs Checkout in `subscription` mode: the setup fee lands on
-   the first invoice, the subscription recurs monthly, and the **card is saved** for the
-   performance-fee invoices.
+   the first invoice, the subscription recurs monthly, and the **card is saved** on file
+   for any future invoices.
 4. *(Optional)* Add a Stripe webhook to `POST /stripe/webhook` for
    `checkout.session.completed` and set `STRIPE_WEBHOOK_SECRET` — the submission is then
    auto-marked `paid`.
@@ -247,27 +243,25 @@ Do **not** do this during initial onboarding. When the customer is ready:
 See [`onboarding/README.md`](onboarding/README.md) for the full env-var list and how to
 deploy the form as its own Railway service.
 
-### 9b. Charging the monthly performance fee (with high-water mark)
+### 9b. (Later) re-enabling a performance fee — currently DISABLED
 
-The bot computes the fee for you. At each **UTC month rollover** it reports, per customer:
+The performance-fee engine is still in the code but **switched off** (`PERF_FEE_PCT`
+defaults to `0`, so the bot computes/reports nothing). **Do not enable it without a
+compliance review** — charging a percentage of trading profits on accounts your software
+trades can trigger investment-adviser / CTA rules (e.g. SEC Rule 205‑3 "qualified client"
+thresholds; CFTC CTA/CPO rules since Kalshi is CFTC-regulated). *Not legal advice.*
 
-- the month's balance change,
-- the **billable profit** = balance above their all-time **high-water mark** (so a
-  dip-and-recover is never billed twice), and
-- the **fee** = `PERF_FEE_PCT` (default **20%**) × billable profit.
+When (and only when) you're cleared to turn it on:
 
-You receive it three ways: the **operator Telegram** message (`💵 MONTHLY BILLING …`),
-the append-only **`BILLING_LOG_PATH`** file (`/data/billing.log`, one JSON line per
-month), and the live `billing` block in the status snapshot. Then, once a month:
-
-1. Read each customer's fee from the billing log / Telegram (paper months are marked
-   informational — don't bill those).
-2. In Stripe, add an **invoice item** to that customer's subscription for the fee amount
-   (Dashboard → Customer → *Add invoice item*, or the API
-   `stripe.InvoiceItem.create(customer=…, amount=<cents>, currency="usd", description="FlipPulse performance fee — <month>")`).
-   It's charged on their next monthly invoice against the card on file.
-
-Tune the rate with `PERF_FEE_PCT` (e.g. `0.20`), or set it to `0` to disable the report.
+1. Set `PERF_FEE_PCT` (e.g. `0.20`) on each bot service. The bot then reports — never
+   charges — at each **UTC month rollover**, per customer: the month's balance change, the
+   **billable profit** (balance above their all-time **high-water mark**, so a
+   dip-and-recover is never billed twice), and the **fee** = `PERF_FEE_PCT` × billable
+   profit. It arrives via operator Telegram (`💵 MONTHLY BILLING …`), the
+   `BILLING_LOG_PATH` file, and the status snapshot's `billing` block.
+2. You then raise it in Stripe as an **invoice item** on that customer's subscription
+   (Dashboard → Customer → *Add invoice item*), charged against the card on file. Re-add
+   the performance-fee line to the form/PDF/one-pager copy before you advertise it.
 
 ---
 

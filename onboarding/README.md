@@ -8,8 +8,7 @@ submit it:
    admin file you open to deploy.
 2. **Alerts you** (the operator) on Telegram with a non-secret summary.
 3. Launches **Stripe Checkout** to collect the **$99 setup fee** and start the
-   **$99/mo subscription**, saving the card on file so the monthly **20%
-   performance fee** can be invoiced later.
+   **$99/mo subscription**, keeping the card on file for any future invoices.
 
 You then run `admin_cli.py show <id>` to get the exact env vars and deploy the
 bot per [`../ADMINISTRATOR_ONBOARDING.md`](../ADMINISTRATOR_ONBOARDING.md).
@@ -46,7 +45,8 @@ Environment variables:
 | `ADMIN_TOKEN` | optional | Enables the operator dashboard at `/admin`. Unset = dashboard disabled (routes 404). |
 | `PUBLIC_BASE_URL` | optional | Public https URL (for Stripe success/cancel redirects). Defaults to the request host. |
 | `SUBMISSIONS_DIR` | optional | Where submission files are written (default `./submissions`; put on a Railway volume to persist). |
-| `ONBOARDING_PRICE_SETUP` / `ONBOARDING_PRICE_MONTHLY` / `ONBOARDING_PERF_PCT` | optional | Display-only pricing on the form (default `99` / `99` / `20`). |
+| `ONBOARDING_PRICE_SETUP` / `ONBOARDING_PRICE_MONTHLY` | optional | Display-only pricing on the form (default `99` / `99`). |
+| `ONBOARDING_PERF_PCT` | optional | Placeholder for a future performance fee; default `0` and **not shown** on the form. |
 
 If Stripe is not configured the form still works — it stores the submission,
 alerts you, and shows a local success page (you collect payment manually).

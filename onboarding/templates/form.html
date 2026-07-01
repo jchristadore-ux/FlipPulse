@@ -63,10 +63,9 @@
       <div class="pricing">
         <div class="b"><div class="amt">${{ price_setup }}</div><div class="lab">one-time setup</div></div>
         <div class="b"><div class="amt">${{ price_monthly }}</div><div class="lab">per month</div></div>
-        <div class="b"><div class="amt">{{ perf_pct }}%</div><div class="lab">of monthly profit</div></div>
       </div>
-      <div class="hint" style="margin-top:10px;">The {{ perf_pct }}% performance fee applies only to
-        <b>new profit above your previous high</b> (high-water mark) — never charged twice, never on a losing month.</div>
+      <div class="hint" style="margin-top:10px;">Simple pricing: a one-time setup fee plus your
+        monthly subscription. <b>Cancel anytime.</b> Your funds always stay on Kalshi.</div>
     </div>
 
     <div class="card">
@@ -113,9 +112,8 @@
     <div class="card">
       <label class="agree"><input type="checkbox" name="agree" value="1">
         <span>I authorize FlipPulse to deploy an automated trading bot on my Kalshi account with the
-          settings above, and I agree to the ${{ price_setup }} setup fee, ${{ price_monthly }}/month
-          subscription, and {{ perf_pct }}% performance fee on new monthly profit. I understand trading
-          involves risk of loss and I start in paper mode.</span></label>
+          settings above, and I agree to the ${{ price_setup }} setup fee and ${{ price_monthly }}/month
+          subscription. I understand trading involves risk of loss and I start in paper mode.</span></label>
       <button class="btn" type="submit">Continue to Secure Payment →</button>
     </div>
   </form>
