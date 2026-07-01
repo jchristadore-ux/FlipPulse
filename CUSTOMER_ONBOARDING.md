@@ -51,8 +51,10 @@ they survive redeploys.
 2. Mount path: **`/data`**.
 3. Small is fine (1 GB).
 
-The `*_STATE_PATH` env vars default to `/data/...`, so no extra config is needed
-as long as the mount path is exactly `/data`.
+The `.env.example` `*_STATE_PATH` variables are already pointed at `/data/...`,
+so as long as the mount path is exactly `/data` you just copy them in (step 3)
+and state persists. (If you leave them unset, the bot falls back to a
+container-local file that is wiped on every redeploy — so keep them set.)
 
 ---
 
@@ -70,9 +72,12 @@ for the full annotated list):
 | `TRADING_FORMAT` | The format this customer runs (see `docs/LADDER_STRATEGY.md`) |
 | `TELEGRAM_BOT_TOKEN` | From BotFather in step 4 |
 | `TELEGRAM_CHAT_ID` | The customer's chat id (step 4) |
+| `TELEGRAM_OPERATOR_CHAT_ID` | *(optional)* your own chat id to also receive every alert — see step 6 |
 
-The `*_STATE_PATH` variables can be left unset — they default to `/data`. Only
-set them if you mounted the volume somewhere other than `/data`.
+Copy the `*_STATE_PATH`, `STATUS_SNAPSHOT_PATH`, and `HEALTH_LOG_PATH` values
+from `.env.example` as-is (they point at `/data`). Do **not** leave them blank —
+the code's fallback writes to a container-local file that is lost on redeploy.
+Only change them if you mounted the volume somewhere other than `/data`.
 
 ---
 
@@ -102,19 +107,25 @@ Each customer gets a dedicated bot so their alerts and commands are isolated.
 1. After setting all variables, trigger a redeploy (Railway → **Deploy**).
 2. Watch the deploy logs until the bot boots cleanly (Kalshi auth OK, Telegram
    connected, no crash loop).
-3. In the customer's Telegram chat, run the self-monitoring check:
-   - **`/status`** — should return the bot's current state (mode, balance,
-     open positions / ladder state, last tick).
-   - **`/health-log`** — should tail the recent health/activity log.
+3. In the customer's Telegram chat, run the self-monitoring check. The bot
+   answers these commands (added in `command_bot.py`, which `bot.py` starts on
+   boot):
+   - **`/status`** — current mode (paper/live), trading format, balance and
+     session PnL, win/loss record, ladder/recovery/probation mode and trade
+     size, open positions (with tickers), session state, last signal, and the
+     last-tick time. Reads the JSON snapshot the bot writes to
+     `STATUS_SNAPSHOT_PATH` each cycle.
+   - **`/health-log [n]`** — tails the last *n* lines (default 20, max 40) of the
+     health/activity log at `HEALTH_LOG_PATH`.
+   - **`/help`** — lists the commands.
 
-   > ⚠️ Confirm these two commands exist in `bot.py` before promising them to a
-   > customer. If the current `bot.py` doesn't answer `/status` / `/health-log`,
-   > they need to be added (see the repo README "Code status" note). Whatever
-   > commands the bot *does* answer, list them here so onboarding stays honest.
+   > The bot only *answers* these read-only commands; it also *sends* alerts on
+   > its own (boot, 15-min heartbeat, trade entry, win/loss, daily summary). It
+   > does **not** accept any command that changes trading — there is no way to
+   > place a trade or flip `DEMO_MODE` from Telegram, by design.
 
-4. You should see a startup/heartbeat message arrive in Telegram. If you added
-   yourself as a second recipient (Operator oversight), confirm it reached you
-   too.
+4. You should see a startup/heartbeat message arrive in Telegram. If you set
+   `TELEGRAM_OPERATOR_CHAT_ID` (Operator oversight), confirm it reached you too.
 
 A green verify = bot booted, Kalshi authenticated in paper mode, and Telegram
 `/status` responds.
@@ -128,19 +139,17 @@ customer's Telegram alerts too.**
 
 Pick one:
 
-- **Second chat id (simplest):** if the bot supports a comma-separated
-  `TELEGRAM_CHAT_ID` (or a `TELEGRAM_OPERATOR_CHAT_ID`), add your own chat id so
-  alerts fan out to both the customer and you.
+- **Operator chat id (simplest, recommended):** set `TELEGRAM_OPERATOR_CHAT_ID`
+  to your own chat id (comma-separated for several operators). `telegram_utils.py`
+  fans every alert out to the customer chat *and* each operator chat — no shared
+  group needed. Your operator commands (`/status`, `/health-log`) are answered
+  too, since operator chat ids are authorized alongside the customer's.
 - **Shared group:** create a Telegram group per customer, add the customer's
   bot and both of you, and set `TELEGRAM_CHAT_ID` to the group's id. All alerts
   land in the shared group.
 
-Either way, `/status` and trade alerts reach you, so you can eyeball every
-customer's bot from your own Telegram without any extra infrastructure.
-
-> Note: whether the bot currently accepts multiple/operator chat ids depends on
-> `bot.py`. If it only sends to a single `TELEGRAM_CHAT_ID`, use the shared-group
-> option, or add operator fan-out to `telegram_utils.py`.
+Either way, alerts and `/status` reach you, so you can eyeball every customer's
+bot from your own Telegram without any extra infrastructure.
 
 ---
 
