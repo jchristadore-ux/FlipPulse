@@ -1,0 +1,19 @@
+# Railway deploy config — FlipPulse ONBOARDING web form (the sign-up site).
+#
+# This is a SEPARATE service from the customer trading bots. Deploy it by pointing
+# a Railway service's "Root Directory" (Settings → Source) at this `onboarding`
+# folder. Railway then reads THIS file instead of the repo-root railway.toml, so
+# it runs the Flask web app with gunicorn (not `python bot.py`).
+#
+# Nixpacks installs onboarding/requirements.txt (flask, gunicorn, stripe,
+# cryptography, requests). Set the env vars from onboarding/README.md in the
+# service's Variables tab, and attach a volume at /data with
+# SUBMISSIONS_DIR=/data/submissions so sign-ups survive redeploys.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "gunicorn app:app --bind 0.0.0.0:$PORT"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
