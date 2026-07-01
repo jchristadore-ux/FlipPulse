@@ -42,6 +42,12 @@ FlipPulse/
 ├── onboarding/                  # digital signup form (Flask): form → encrypted
 │                                #   submission + Telegram alert + Stripe checkout
 │   ├── app.py · admin_cli.py · templates/ · README.md
+├── business/                    # operating/budget model
+│   ├── FlipPulse_Business_Model.xlsx   # editable, formula-driven P&L
+│   └── build_model.py · README.md
+├── marketing/                   # social assets
+│   ├── FlipPulse_Demo.mp4               # ~40s vertical explainer
+│   └── build_demo.py · README.md
 └── docs/
     ├── FlipPulse_Customer_Onboarding.pdf   # customer: how it works + pick a format
     ├── FlipPulse_Customer_Onboarding.html  # (source for the PDF)
