@@ -32,16 +32,15 @@
     starting ${{ '{:,.0f}'.format(sub.starting_balance) }} · {{ sub.created_at[:16].replace('T',' ') }}</div>
 
   {% if has_env %}
-  <h2>Railway variables (paste into the service)</h2>
-  <textarea rows="8" readonly onclick="this.select()">{{ env_text }}</textarea>
+  <h2>Railway variables (paste the whole block into the service)</h2>
+  <textarea rows="9" readonly onclick="this.select()">{{ env_text }}</textarea>
 
-  <h2>KALSHI_PRIVATE_KEY_PEM (one multi-line variable)</h2>
-  <textarea rows="10" readonly onclick="this.select()">{{ pem }}</textarea>
-
-  <div class="warn">Also add the <code>/data</code> <code>*_STATE_PATH</code>,
-    <code>STATUS_SNAPSHOT_PATH</code>, <code>HEALTH_LOG_PATH</code>, and
-    <code>BILLING_LOG_PATH</code> values from <code>.env.example</code>. Then follow the
-    administrator runbook. These fields contain live secrets — this page is operator-only.</div>
+  <div class="warn">The Kalshi key is the single-line <code>KALSHI_PRIVATE_KEY_PEM_B64</code>
+    value above &mdash; paste it as-is (no reformatting, nothing to trim). Also add the
+    <code>/data</code> <code>*_STATE_PATH</code>, <code>STATUS_SNAPSHOT_PATH</code>,
+    <code>HEALTH_LOG_PATH</code>, and <code>BILLING_LOG_PATH</code> values from
+    <code>.env.example</code>, then follow the administrator runbook. These fields contain
+    live secrets &mdash; this page is operator-only.</div>
   {% else %}
   <div class="err">Could not decrypt this submission's secrets. Check that
     <code>ONBOARDING_FERNET_KEY</code> matches the key used when the form saved it.</div>

@@ -314,6 +314,7 @@ import logging
 import math
 import os
 import random
+import re
 import signal
 import sys
 import time
@@ -410,7 +411,28 @@ for _arg in sys.argv[1:]:
 TRADING_FORMAT = apply_format(os.environ.get("TRADING_FORMAT", "balanced"))
 
 KALSHI_API_KEY_ID   = _require("KALSHI_API_KEY_ID")
-_RAW_PEM            = _require("KALSHI_PRIVATE_KEY_PEM")
+
+
+def _load_raw_pem() -> str:
+    """The private key, from either input:
+      • KALSHI_PRIVATE_KEY_PEM_B64 — the whole PEM base64-encoded into ONE line
+        (recommended: a single line of A–Z/a–z/0–9/+// can't be mangled by the
+        newline/space/quote problems that break a pasted multi-line PEM), or
+      • KALSHI_PRIVATE_KEY_PEM — the raw multi-line PEM (still supported).
+    The B64 form wins when both are set."""
+    b64 = os.environ.get("KALSHI_PRIVATE_KEY_PEM_B64", "").strip().strip('"').strip("'")
+    if b64:
+        try:
+            return base64.b64decode(re.sub(r"\s+", "", b64)).decode("utf-8")
+        except Exception as e:
+            raise ValueError(
+                "KALSHI_PRIVATE_KEY_PEM_B64 is set but is not valid base64 of a key. "
+                "Copy the whole single-line value from your onboarding /admin deploy view "
+                f"(nothing cut off). Underlying error: {e}") from e
+    return _require("KALSHI_PRIVATE_KEY_PEM")
+
+
+_RAW_PEM            = _load_raw_pem()
 DEMO_MODE           = _env_bool("DEMO_MODE", True)
 POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
 
@@ -663,7 +685,11 @@ RECOVERY_MAX_SECS     = _env_int("RECOVERY_MAX_SECS", 3600)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _normalize_pem(raw: str) -> str:
-    pem = raw.replace("\\n", "\n").replace("\\r", "").replace("\r", "")
+    # Tolerate the common paste mistakes: surrounding quotes, literal "\n", spaces
+    # or missing line breaks. Anything left after this that still won't parse means
+    # the key body is genuinely incomplete/altered (see the load error below).
+    pem = raw.strip().strip('"').strip("'")
+    pem = pem.replace("\\n", "\n").replace("\\r", "").replace("\r", "")
     if "\n" not in pem:
         for tag in ["PRIVATE KEY", "RSA PRIVATE KEY"]:
             pem = pem.replace(f"-----BEGIN {tag}-----", f"-----BEGIN {tag}-----\n")
@@ -672,8 +698,11 @@ def _normalize_pem(raw: str) -> str:
     header = next((l for l in lines if l.startswith("-----BEGIN")), None)
     footer = next((l for l in lines if l.startswith("-----END")),   None)
     if not header or not footer:
-        raise ValueError("KALSHI_PRIVATE_KEY_PEM invalid — missing header/footer.")
-    body    = "".join(l for l in lines if not l.startswith("-----"))
+        raise ValueError(
+            "KALSHI_PRIVATE_KEY_PEM is missing its '-----BEGIN ...-----' / "
+            "'-----END ...-----' lines. Paste the WHOLE key file, header to footer.")
+    # Base64 body only, all whitespace removed, then re-wrapped at 64 cols.
+    body    = re.sub(r"\s+", "", "".join(l for l in lines if not l.startswith("-----")))
     wrapped = "\n".join(body[i:i+64] for i in range(0, len(body), 64))
     return f"{header}\n{wrapped}\n{footer}\n"
 
@@ -686,7 +715,11 @@ try:
     )
     log.info("✅ RSA private key loaded.")
 except Exception as e:
-    raise ValueError(f"Failed to load PEM key: {e}") from e
+    raise ValueError(
+        "Could not read KALSHI_PRIVATE_KEY_PEM — the key value looks incomplete or "
+        "altered (a common copy/paste problem). Re-paste the ENTIRE private key, every "
+        "line from '-----BEGIN' through '-----END-----', with nothing cut off, no extra "
+        f"characters, and no surrounding quotes. Underlying error: {e}") from e
 
 
 def _sign(method: str, path: str) -> tuple:
