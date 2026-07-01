@@ -1,0 +1,22 @@
+# Secrets / local env
+.env
+*.pem
+
+# Bot state (lives on the Railway volume, never in git)
+/data/
+*_state.json
+bucket_stats.json
+status_snapshot.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
