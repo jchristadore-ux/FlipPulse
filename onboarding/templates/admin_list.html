@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlipPulse — Operator</title>
+<style>
+  body { margin:0; font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+    background:#080c15; color:#c9d3e2; padding:26px 18px; }
+  .wrap { max-width:920px; margin:0 auto; }
+  h1 { color:#fff; font-size:22px; margin:0 0 4px; }
+  .sub { color:#7c8aa3; font-size:12.5px; margin-bottom:18px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid #17233a; }
+  th { color:#7c8aa3; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  td a { color:#35cee6; font-weight:700; text-decoration:none; }
+  .fmt { color:#7ef2a0; font-weight:700; }
+  .paid { color:#7ef2a0; } .pending { color:#f2b06a; }
+  .empty { color:#6b7890; padding:30px 0; text-align:center; }
+  .brand { font-weight:800; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="brand" style="color:#7ef2a0;">FlipPulse</span> — Signups</h1>
+  <div class="sub">{{ subs|length }} submission(s). Click one to get the deploy variables.</div>
+  {% if subs %}
+  <table>
+    <tr><th>When</th><th>Name</th><th>Email</th><th>Format</th><th>Balance</th><th>Payment</th><th></th></tr>
+    {% for s in subs %}
+    <tr>
+      <td>{{ s.created_at[:16].replace('T',' ') }}</td>
+      <td>{{ s.full_name }}</td>
+      <td>{{ s.email }}</td>
+      <td class="fmt">{{ s.trading_format }}</td>
+      <td>${{ '{:,.0f}'.format(s.starting_balance) }}</td>
+      <td class="{{ 'paid' if s.payment_status == 'paid' else 'pending' }}">{{ s.payment_status }}</td>
+      <td><a href="{{ url_for('admin_detail', sub_id=s.id) }}">deploy →</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">No submissions yet.</div>
+  {% endif %}
+</div>
+</body>
+</html>

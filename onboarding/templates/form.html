@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlipPulse — Get Started</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background:
+      radial-gradient(1100px 480px at 78% -8%, rgba(51,206,230,0.12), transparent 60%),
+      radial-gradient(900px 420px at 8% 108%, rgba(126,242,160,0.08), transparent 55%),
+      #080c15;
+    color: #c9d3e2; line-height: 1.5; padding: 28px 16px; }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  .brand { font-size: 30px; font-weight: 800; color: #fff; letter-spacing: -0.6px; }
+  .tagline { color: #7c8aa3; font-size: 13px; margin: 4px 0 20px; }
+  .card { background: rgba(255,255,255,0.02); border: 1px solid #1e3350; border-radius: 12px;
+    padding: 20px 22px; margin-bottom: 18px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 14px;
+    background: linear-gradient(90deg, #7ef2a0, #35cee6); -webkit-background-clip: text;
+    background-clip: text; color: transparent; font-weight: 800; }
+  label { display: block; font-size: 12.5px; color: #aeb9cc; margin: 12px 0 5px; font-weight: 600; }
+  .req { color: #7ef2a0; }
+  input[type=text], input[type=email], input[type=number], textarea, select {
+    width: 100%; background: #0e1a2b; border: 1px solid #24405f; border-radius: 7px;
+    padding: 10px 12px; color: #eaf2ff; font-size: 14px; font-family: inherit; }
+  textarea { min-height: 120px; font-family: "SF Mono", Consolas, monospace; font-size: 12px; }
+  .hint { font-size: 11px; color: #6b7890; margin-top: 4px; }
+  .fmt { display: flex; gap: 10px; }
+  .fmt label { flex: 1; border: 1px solid #24405f; border-radius: 9px; padding: 11px; margin: 0;
+    cursor: pointer; background: #0d1725; }
+  .fmt input { margin-right: 6px; }
+  .fmt .n { color: #fff; font-weight: 700; font-size: 13px; }
+  .fmt .p { color: #7ef2a0; font-weight: 700; }
+  .fmt .d { color: #8fa0ba; font-size: 11px; }
+  .pricing { display: flex; gap: 12px; text-align: center; }
+  .pricing .b { flex: 1; border: 1px solid #22344f; border-radius: 9px; padding: 12px 8px; }
+  .pricing .amt { font-size: 20px; font-weight: 800; color: #7ef2a0; }
+  .pricing .lab { font-size: 10.5px; color: #8fa0ba; text-transform: uppercase; letter-spacing: .5px; }
+  .agree { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; color: #aeb9cc; margin-top: 6px; }
+  .btn { width: 100%; margin-top: 18px; border: none; border-radius: 26px; padding: 14px;
+    font-size: 15px; font-weight: 800; color: #06111a; cursor: pointer;
+    background: linear-gradient(135deg, #7ef2a0, #35cee6); }
+  .err { background: rgba(242,90,90,0.10); border: 1px solid #5a2a2a; color: #f2a6a6;
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .secure { background: rgba(126,242,160,0.05); border: 1px solid #24463a; border-radius: 8px;
+    padding: 10px 14px; font-size: 11.5px; color: #a7c3b3; margin-top: 6px; }
+  .secure b { color: #7ef2a0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">FlipPulse</div>
+  <div class="tagline">Automated 15-Minute BTC Up/Down Trading on Kalshi — get set up in one form.</div>
+
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/submit" autocomplete="off">
+
+    <div class="card">
+      <h2>Your Plan</h2>
+      <div class="pricing">
+        <div class="b"><div class="amt">${{ price_setup }}</div><div class="lab">one-time setup</div></div>
+        <div class="b"><div class="amt">${{ price_monthly }}</div><div class="lab">per month</div></div>
+        <div class="b"><div class="amt">{{ perf_pct }}%</div><div class="lab">of monthly profit</div></div>
+      </div>
+      <div class="hint" style="margin-top:10px;">The {{ perf_pct }}% performance fee applies only to
+        <b>new profit above your previous high</b> (high-water mark) — never charged twice, never on a losing month.</div>
+    </div>
+
+    <div class="card">
+      <h2>About You</h2>
+      <label>Full name <span class="req">*</span></label>
+      <input type="text" name="full_name" required>
+      <label>Email <span class="req">*</span></label>
+      <input type="email" name="email" required>
+      <label>Starting balance you'll fund (USD) <span class="req">*</span></label>
+      <input type="text" name="starting_balance" placeholder="e.g. 1000" required>
+      <div class="hint">Sizing is a % of your balance, so any amount works and it compounds as you grow.</div>
+    </div>
+
+    <div class="card">
+      <h2>Choose Your Trading Format</h2>
+      <div class="fmt">
+        <label><input type="radio" name="trading_format" value="conservative">
+          <span class="n">Conservative</span> <span class="p">5%</span>
+          <div class="d">Capital preservation, strictest gates.</div></label>
+        <label><input type="radio" name="trading_format" value="balanced" checked>
+          <span class="n">Balanced</span> <span class="p">10%</span>
+          <div class="d">Recommended middle ground.</div></label>
+        <label><input type="radio" name="trading_format" value="aggressive">
+          <span class="n">Aggressive</span> <span class="p">20%</span>
+          <div class="d">More trades, higher variance.</div></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Connect Kalshi &amp; Telegram</h2>
+      <label>Kalshi API Key ID <span class="req">*</span></label>
+      <input type="text" name="kalshi_api_key_id" required>
+      <label>Kalshi private key (PEM) <span class="req">*</span></label>
+      <textarea name="kalshi_private_key_pem" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----" required></textarea>
+      <label>Telegram bot token <span class="req">*</span></label>
+      <input type="text" name="telegram_bot_token" placeholder="123456:ABC-..." required>
+      <label>Telegram chat ID <span class="req">*</span></label>
+      <input type="text" name="telegram_chat_id" required>
+      <div class="secure"><b>Encrypted &amp; private.</b> Your keys are encrypted the moment they're
+        received and are only ever decrypted by us to deploy your bot. Your funds stay on Kalshi — we
+        never hold your money.</div>
+    </div>
+
+    <div class="card">
+      <label class="agree"><input type="checkbox" name="agree" value="1">
+        <span>I authorize FlipPulse to deploy an automated trading bot on my Kalshi account with the
+          settings above, and I agree to the ${{ price_setup }} setup fee, ${{ price_monthly }}/month
+          subscription, and {{ perf_pct }}% performance fee on new monthly profit. I understand trading
+          involves risk of loss and I start in paper mode.</span></label>
+      <button class="btn" type="submit">Continue to Secure Payment →</button>
+    </div>
+  </form>
+</div>
+</body>
+</html>

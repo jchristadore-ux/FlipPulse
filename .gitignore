@@ -7,6 +7,10 @@
 *_state.json
 bucket_stats.json
 status_snapshot.json
+billing_state.json
+
+# Onboarding submissions — contain ENCRYPTED customer secrets, never commit
+onboarding/submissions/*.json
 
 # Python
 __pycache__/
