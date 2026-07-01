@@ -24,7 +24,8 @@ FlipPulse/
 ├── bot.py                  # entrypoint — Railway runs `python bot.py`   [from markeymachine]
 ├── ladder.py               # ladder strategy engine                      [from markeymachine]
 ├── formats.py              # trading format definitions                  [from markeymachine]
-├── telegram_utils.py       # Telegram alerts + command handling          [from markeymachine]
+├── telegram_utils.py       # Telegram alerts (+ operator fan-out)         [from markeymachine]
+├── command_bot.py          # /status + /health-log command listener       ✅ in this repo
 ├── requirements.txt        # Python deps                                 [from markeymachine]
 ├── railway.toml            # Railway deploy config (python bot.py)       ✅ in this repo
 ├── .env.example            # annotated per-customer env vars             ✅ in this repo
@@ -44,24 +45,39 @@ The bot reads everything from environment variables. See
 - `DEMO_MODE` (`true` = paper, default), `PAPER_BALANCE`
 - `TRADING_FORMAT`
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — the customer's own Telegram bot
-- `*_STATE_PATH` vars — default to the `/data` Railway volume
+- `TELEGRAM_OPERATOR_CHAT_ID` — optional; also fans alerts out to you (operator)
+- `*_STATE_PATH`, `STATUS_SNAPSHOT_PATH`, `HEALTH_LOG_PATH` — pre-pointed at the
+  `/data` Railway volume so state, the status snapshot, and the health log
+  persist across redeploys (keep them set; the code's unset fallback is
+  ephemeral)
 
 ## Self-monitoring
 
-Each customer's bot sends its own trade alerts via Telegram and should answer
-`/status` (current mode/balance/positions) and `/health-log` (recent activity
-tail). Operator oversight is just: add yourself as a second alert recipient on
-each customer's bot — see the "Operator oversight" section in the onboarding
+Each customer's bot sends its own alerts via Telegram (boot, 15-min heartbeat,
+trade entry, win/loss, daily summary) and answers three read-only commands
+(`command_bot.py`, started by `bot.py` on boot):
+
+- **`/status`** — mode (paper/live), format, balance, session PnL, W/L record,
+  ladder/recovery/probation mode + size, open positions, session state, last
+  signal, and last-tick time.
+- **`/health-log [n]`** — tails the recent health/activity log.
+- **`/help`** — lists the commands.
+
+The commands never change trading — no order placement, no `DEMO_MODE` flip.
+Operator oversight is just setting `TELEGRAM_OPERATOR_CHAT_ID` to your own chat
+id so every alert also reaches you — see "Operator oversight" in the onboarding
 runbook. No central dashboard required.
 
 ## Code status
 
 > **The trading code (`bot.py`, `ladder.py`, `formats.py`, `telegram_utils.py`,
-> `requirements.txt`, and the two docs) is copied unchanged from the
-> `markeymachine` repo (branch `main`), leaving everything under `dashboard/`
-> behind.** Once those files are in place, confirm which Telegram commands
-> `bot.py` already answers and, if `/status` / `/health-log` aren't present,
-> add them (and list the real command set in CUSTOMER_ONBOARDING.md step 5).
+> `requirements.txt`, and `docs/TRADING_DOCTRINE.md` + `docs/LADDER_STRATEGY.md`)
+> is copied unchanged from the `markeymachine` repo (branch `main`), leaving
+> everything under `dashboard/` behind.** On top of that copy, this repo adds a
+> thin single-customer layer: `command_bot.py` (answers `/status` and
+> `/health-log`, started from `bot.py`'s entrypoint) and operator fan-out in
+> `telegram_utils.py` (`TELEGRAM_OPERATOR_CHAT_ID`). Paper-only by default
+> (`DEMO_MODE=true`); nothing here enables live trading.
 
 ## Out of scope (by design)
 

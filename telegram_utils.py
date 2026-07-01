@@ -1,0 +1,224 @@
+"""
+telegram_utils.py — Telegram notification module for MarkeyMachine
+
+Responsibilities:
+  - Validate credentials at startup
+  - Send messages with up to 2 retries
+  - Fire WIN trade alerts, heartbeat, entry, halt, daily summary
+
+Design rules:
+  - Never raises — all errors logged and swallowed
+  - All credentials from env vars, nothing hardcoded
+  - _telegram_enabled flag gates everything after validation
+"""
+
+import logging
+import os
+import time
+from datetime import datetime, timezone
+from typing import Optional
+
+import requests
+
+log = logging.getLogger("MarkeyMachine.telegram")
+
+# ── Module state ──────────────────────────────────────────────────────────────
+_telegram_enabled: bool = False
+_bot_token: str = ""
+_chat_id:   str = ""          # primary (customer) chat — kept for compatibility
+_recipients: list = []        # ordered fan-out list: customer chat + operator(s)
+
+
+def _parse_recipients(chat: str, operator: str) -> list:
+    """Build the ordered, de-duplicated fan-out list: the customer chat id(s)
+    first, then any operator chat id(s). Both fields may be comma-separated so a
+    single-customer deploy can also copy the operator (you) on every alert
+    without a shared group — see TELEGRAM_OPERATOR_CHAT_ID in .env.example."""
+    out: list = []
+    for raw in (chat or "", operator or ""):
+        for cid in raw.split(","):
+            cid = cid.strip()
+            if cid and cid not in out:
+                out.append(cid)
+    return out
+
+
+# ── Public API ─────────────────────────────────────────────────────────────────
+
+def validate_telegram_connection() -> bool:
+    """Validate credentials and send a connectivity test. Call once at boot."""
+    global _telegram_enabled, _bot_token, _chat_id, _recipients
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat  = os.environ.get("TELEGRAM_CHAT_ID",   "").strip()
+
+    if not token or not chat:
+        log.warning("Telegram disabled — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.")
+        _telegram_enabled = False
+        return False
+
+    _bot_token  = token
+    _chat_id    = chat
+    _recipients = _parse_recipients(chat, os.environ.get("TELEGRAM_OPERATOR_CHAT_ID", ""))
+    if len(_recipients) > 1:
+        log.info("Telegram fan-out to %d recipients (customer + operator).", len(_recipients))
+
+    ok = _send_raw("🤖 MarkeyMachine connected to Telegram.\nCredentials validated ✅ — alerts active.")
+
+    if ok:
+        log.info("✅ Telegram validated — notifications enabled.")
+        _telegram_enabled = True
+    else:
+        log.warning("⚠️  Telegram validation failed — notifications disabled.")
+        _telegram_enabled = False
+
+    return _telegram_enabled
+
+
+def send_telegram_message(text: str) -> bool:
+    """Send an arbitrary message. No-op if Telegram is disabled."""
+    if not _telegram_enabled:
+        return False
+    return _send_raw(text)
+
+
+def send_heartbeat(balance: float, session_pnl: float, open_count: int,
+                   trades_today: int, last_signal: str) -> None:
+    """
+    15-minute heartbeat. Confirms bot is alive and scanning.
+    Sent regardless of whether trades are firing.
+    """
+    if not _telegram_enabled:
+        return
+    now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    pnl_sign = "+" if session_pnl >= 0 else ""
+    msg = (
+        f"💓 Heartbeat — {now}\n"
+        f"💵 Balance:     ${balance:,.2f}\n"
+        f"📊 Session PnL: {pnl_sign}${session_pnl:.2f}\n"
+        f"📂 Open orders: {open_count}\n"
+        f"🔁 Trades today:{trades_today}\n"
+        f"🔍 Last signal: {last_signal}"
+    )
+    send_telegram_message(msg)
+
+
+def send_trade_entry_notification(ticker: str, direction: str, cost: float,
+                                   price_cents: int, balance: float,
+                                   ob_pct: float = 0.0, edge_pct: float = 0.0,
+                                   timestamp: Optional[datetime] = None) -> None:
+    """Send a trade entry alert. Fires on every order placed."""
+    if not _telegram_enabled:
+        return
+    ts  = (timestamp or datetime.now(timezone.utc)).strftime("%H:%M UTC")
+    pos = "🟢 YES" if direction.upper() == "YES" else "🔴 NO"
+    msg = (
+        f"📈 TRADE ENTERED — {ts}\n"
+        f"📍 {pos}  │  {ticker[-15:]}\n"
+        f"💵 Cost: ${cost:.2f}  │  Price: {price_cents}¢\n"
+        f"🎯 OB: {ob_pct:.0f}%  │  Edge: {edge_pct:.1f}%\n"
+        f"🏦 Balance: ${balance:,.2f}"
+    )
+    send_telegram_message(msg)
+
+
+def send_win_notification(profit: float, balance: float, daily_pnl: float,
+                           ticker: str, direction: str,
+                           wins: int = 0, losses: int = 0,
+                           timestamp: Optional[datetime] = None) -> None:
+    """Send a WIN alert on every settled winning trade."""
+    if not _telegram_enabled:
+        return
+    if profit <= 0:
+        log.debug("send_win_notification called with profit=%.4f — suppressed.", profit)
+        return
+    ts       = (timestamp or datetime.now(timezone.utc)).strftime("%H:%M UTC")
+    pos      = "YES" if direction.upper() == "YES" else "NO"
+    pnl_sign = "+" if daily_pnl >= 0 else ""
+    tally    = f"{wins}W / {losses}L" if (wins + losses) > 0 else "—"
+    msg = (
+        f"✅ TRADE SETTLED — WIN  {ts}\n"
+        f"📍 {pos}  │  {ticker[-15:]}\n"
+        f"💰 Profit: +${profit:.2f}\n"
+        f"📊 Today's Tally: {tally}  │  PnL: {pnl_sign}${daily_pnl:.2f}\n"
+        f"🏦 Balance: ${balance:,.2f}"
+    )
+    send_telegram_message(msg)
+
+
+def send_loss_notification(loss: float, balance: float, daily_pnl: float,
+                            ticker: str, direction: str, streak: int,
+                            wins: int = 0, losses: int = 0) -> None:
+    """Send a LOSS alert on every settled losing trade."""
+    if not _telegram_enabled:
+        return
+    ts         = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    pos        = "YES" if direction.upper() == "YES" else "NO"
+    pnl_sign   = "+" if daily_pnl >= 0 else ""
+    streak_str = f"  │  Streak: {streak}" if streak > 1 else ""
+    tally      = f"{wins}W / {losses}L" if (wins + losses) > 0 else "—"
+    msg = (
+        f"❌ TRADE SETTLED — LOSS  {ts}\n"
+        f"📍 {pos}  │  {ticker[-15:]}{streak_str}\n"
+        f"💸 Loss: -${loss:.2f}\n"
+        f"📊 Today's Tally: {tally}  │  PnL: {pnl_sign}${daily_pnl:.2f}\n"
+        f"🏦 Balance: ${balance:,.2f}"
+    )
+    send_telegram_message(msg)
+
+
+# ── Internal helpers ───────────────────────────────────────────────────────────
+
+def _send_raw(text: str) -> bool:
+    """Low-level send with up to 2 retries (3 total attempts) per recipient.
+
+    Fans out to every configured recipient (customer chat + any operator chat
+    ids). Returns True if the message reached at least one of them."""
+    token = _bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    recipients = _recipients or _parse_recipients(
+        _chat_id or os.environ.get("TELEGRAM_CHAT_ID", ""),
+        os.environ.get("TELEGRAM_OPERATOR_CHAT_ID", ""),
+    )
+
+    if not token or not recipients:
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    any_ok = False
+    for chat in recipients:
+        for attempt in range(3):
+            try:
+                r = requests.post(url, json={"chat_id": chat, "text": text}, timeout=8)
+                if r.status_code == 200:
+                    any_ok = True
+                    break
+                log.debug("Telegram HTTP %d (attempt %d, chat %s): %s",
+                          r.status_code, attempt + 1, chat, r.text[:120])
+            except Exception as exc:
+                log.debug("Telegram send error (attempt %d, chat %s): %s",
+                          attempt + 1, chat, exc)
+            if attempt < 2:
+                time.sleep(2)
+
+    if not any_ok:
+        log.warning("Telegram: all send attempts failed for %d recipient(s).",
+                    len(recipients))
+    return any_ok
+
+
+def notify(token: str, chat_id: str, text: str) -> bool:
+    """Stateless one-shot Telegram send to an explicit token/chat — used by the
+    dashboard watchdog for OPERATOR alerts, independent of the bot's module-level
+    credentials. Never raises; returns True on a 200 from Telegram."""
+    token = (token or "").strip()
+    chat_id = (chat_id or "").strip()
+    if not token or not chat_id:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        r = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=8)
+        return r.status_code == 200
+    except Exception as exc:  # pragma: no cover - network failure path
+        log.debug("Telegram notify error: %s", exc)
+        return False
