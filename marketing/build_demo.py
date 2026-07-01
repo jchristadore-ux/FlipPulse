@@ -104,9 +104,9 @@ def render_png(html: str, png: str) -> None:
                     f"--screenshot={png}", html_path],
                    check=True, capture_output=True)
 
-def make_clip(png: str, clip: str, zoom_in: bool) -> None:
+def make_clip(png: str, clip: str, zoom_in: bool, dur: float = DUR) -> None:
     # Canonical Ken Burns: ONE input image expanded to `frames` frames by zoompan.
-    frames = int(DUR * FPS)
+    frames = int(dur * FPS)
     if zoom_in:
         z = "min(zoom+0.00060,1.11)"
     else:
@@ -119,40 +119,38 @@ def make_clip(png: str, clip: str, zoom_in: bool) -> None:
                     "-crf", "20", "-pix_fmt", "yuv420p", clip],
                    check=True, capture_output=True)
 
-def main() -> None:
+def assemble(scenes, out, dur: float = DUR, xf: float = XF) -> float:
+    """Render each scene → Ken-Burns clip → crossfade into `out`. Returns seconds."""
     tmp = tempfile.mkdtemp()
     clips = []
-    for i, html in enumerate(SCENES):
+    for i, html in enumerate(scenes):
         png = os.path.join(tmp, f"s{i}.png")
         clip = os.path.join(tmp, f"c{i}.mp4")
         render_png(html, png)
-        make_clip(png, clip, zoom_in=(i % 2 == 0))
+        make_clip(png, clip, zoom_in=(i % 2 == 0), dur=dur)
         clips.append(clip)
-        print(f"  scene {i+1}/{len(SCENES)} rendered")
+        print(f"  scene {i+1}/{len(scenes)} rendered")
 
-    # crossfade chain
     inputs = []
     for c in clips:
         inputs += ["-i", c]
     trans = ["fade", "smoothleft", "fade", "smoothup", "fade", "fadegrays"]
     fc, prev = [], "0"
     for j in range(1, len(clips)):
-        off = round(j * (DUR - XF), 3)
-        lbl = f"v{j}"
-        src = f"[{prev}]" if j == 1 else f"[{prev}]"
-        t = trans[(j - 1) % len(trans)]
-        fc.append(f"{src}[{j}]xfade=transition={t}:duration={XF}:offset={off}[{lbl}]")
-        prev = lbl
-    filtergraph = ";".join(fc)
-    total = round(len(clips) * DUR - (len(clips) - 1) * XF, 2)
-    cmd = [FFMPEG, "-y", *inputs, "-filter_complex", filtergraph,
-           "-map", f"[{prev}]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-r", str(FPS), str(OUT)]
+        off = round(j * (dur - xf), 3)
+        fc.append(f"[{prev}][{j}]xfade=transition={trans[(j-1)%len(trans)]}:duration={xf}:offset={off}[v{j}]")
+        prev = f"v{j}"
+    total = round(len(clips) * dur - (len(clips) - 1) * xf, 2)
+    cmd = [FFMPEG, "-y", *inputs]
+    if len(clips) > 1:
+        cmd += ["-filter_complex", ";".join(fc), "-map", f"[{prev}]"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-r", str(FPS), str(out)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
-        sys.stderr.write(r.stderr[-2000:])
-        raise SystemExit("ffmpeg xfade failed")
-    print(f"wrote {OUT}  (~{total}s, {W}x{H})")
+        sys.stderr.write(r.stderr[-2000:]); raise SystemExit("ffmpeg xfade failed")
+    print(f"wrote {out}  (~{total}s, {W}x{H})")
+    return total
 
 if __name__ == "__main__":
-    main()
+    assemble(SCENES, str(OUT))

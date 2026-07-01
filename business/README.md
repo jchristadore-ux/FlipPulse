@@ -4,6 +4,11 @@
 formula-driven operating/budget model. Change the shaded **Inputs** cells and every
 output on the other sheets recalculates.
 
+**[`FlipPulse_OnePager.pdf`](FlipPulse_OnePager.pdf)** is a one-page investor/partner
+brief summarizing the same model (product, revenue model, unit economics, 12-month
+projection + chart, key metrics). Regenerate with `python business/build_onepager.py`
+then print the HTML to PDF with headless Chromium.
+
 ## Sheets
 
 | Sheet | What it does |
