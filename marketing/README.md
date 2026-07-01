@@ -1,3 +1,13 @@
+# FlipPulse — Marketing
+
+## 90-day social media & marketing blitz
+
+**[`blitz/00_START_HERE.md`](blitz/00_START_HERE.md)** — the complete, execution-ready
+90-day marketing operating manual (master plan, day-by-day content calendar, every
+post pre-written, 30 video scripts, AI graphics prompts, scheduler + automation
+setup, daily checklist, KPI dashboard, scaling plan, and the compliance kit that
+governs all of it). Start there.
+
 # FlipPulse — Video
 
 Two cuts, both vertical (1080×1920, 9:16), silent so they play clean muted in feeds:
