@@ -61,9 +61,21 @@ python app.py                      # http://localhost:8080
 gunicorn app:app --bind 0.0.0.0:$PORT
 ```
 
-Deploy it as its **own** Railway service (separate from each customer's bot).
-Mount a volume at, say, `/data` and set `SUBMISSIONS_DIR=/data/submissions` so
-submissions survive redeploys.
+Deploy it as its **own** Railway service (separate from each customer's bot):
+
+1. **New Project → Deploy from GitHub repo →** pick the FlipPulse repo.
+2. Service → **Settings → Source → Root Directory** = `onboarding`. Railway then
+   reads [`onboarding/railway.toml`](railway.toml) (which sets the gunicorn start
+   command) instead of the repo-root `railway.toml` that runs `python bot.py`.
+3. **Variables** tab → add the env vars from the table above.
+4. **Networking → Generate Domain** for a public https URL; set `PUBLIC_BASE_URL`
+   to it.
+5. Mount a **Volume** at `/data` and set `SUBMISSIONS_DIR=/data/submissions` so
+   submissions survive redeploys.
+
+> Because `onboarding/railway.toml` sets the start command, you do **not** need to
+> type a Custom Start Command in the Railway UI (that field is otherwise locked by
+> the repo-root config).
 
 ## 3. Process a signup
 
