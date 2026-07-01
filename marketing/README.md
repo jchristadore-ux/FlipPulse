@@ -1,8 +1,12 @@
-# FlipPulse — Demo Video
+# FlipPulse — Video
 
-**[`FlipPulse_Demo.mp4`](FlipPulse_Demo.mp4)** — a ~40-second vertical (1080×1920,
-9:16) explainer for socials (Reels / TikTok / Shorts) and the landing page. No audio,
-so it plays fine muted in feeds; add a music track in your editor if you want sound.
+Two cuts, both vertical (1080×1920, 9:16), silent so they play clean muted in feeds:
+
+- **[`FlipPulse_Demo.mp4`](FlipPulse_Demo.mp4)** — ~40s full explainer for socials and the
+  landing page.
+- **[`FlipPulse_Ad_15s.mp4`](FlipPulse_Ad_15s.mp4)** — ~15s fast-cut ad (hook → value →
+  trust → CTA) for paid placements / Stories. Build it with `python marketing/build_ad.py`
+  (it reuses the scene styling + assembler from `build_demo.py`).
 
 ## Scenes
 
