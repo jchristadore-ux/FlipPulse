@@ -148,6 +148,54 @@ def _pem_looks_valid(pem: str) -> bool:
         return False
 
 
+def _validate_telegram_setup(token: str, chat_id: str) -> "str | None":
+    """Confirm the customer's OWN Telegram bot actually works before we store the
+    submission — so a wrong token or an unreachable chat id can never reach a
+    deployed bot and silently kill every alert. Returns None if everything checks
+    out, otherwise a customer-friendly error string.
+
+    'chat not found' at deploy time is the #1 onboarding failure: the customer
+    pastes a chat id from a different bot, mistypes it, or never presses Start on
+    their bot. We catch all three here by validating the token (getMe) and then
+    doing exactly what the bot will do in production — send a real message — so a
+    green signup guarantees a green deploy. Network hiccups are NOT treated as a
+    failure (we don't want to block signups on a transient blip); only definitive
+    rejections from Telegram are."""
+    token = (token or "").strip()
+    chat_id = (chat_id or "").strip()
+    base = f"https://api.telegram.org/bot{token}"
+    try:
+        me = requests.get(f"{base}/getMe", timeout=10).json()
+    except Exception as exc:
+        log.warning("Telegram getMe unreachable during signup (allowing): %s", exc)
+        return None  # transient — don't block the customer on our network
+    if not me.get("ok"):
+        return ("That Telegram bot token was rejected by Telegram. Copy it again "
+                "from @BotFather — it looks like 123456789:AA... — and re-submit.")
+
+    bot_name = me.get("result", {}).get("username", "your bot")
+    try:
+        r = requests.post(f"{base}/sendMessage", timeout=10, json={
+            "chat_id": chat_id,
+            "text": "✅ FlipPulse connected to your Telegram — this is where your "
+                    "trade alerts will arrive.",
+        })
+        body = r.json()
+    except Exception as exc:
+        log.warning("Telegram sendMessage unreachable during signup (allowing): %s", exc)
+        return None  # transient — don't block the customer on our network
+    if body.get("ok"):
+        return None
+    code = body.get("error_code")
+    if code in (400, 403):
+        return (f"We couldn't reach that chat ID with your bot @{bot_name}. "
+                f"Open Telegram, press Start (or send any message) to @{bot_name}, "
+                "then make sure the chat ID matches. Tip: message @userinfobot to "
+                "get your numeric chat ID, then re-submit.")
+    return (f"Telegram rejected the test message ({body.get('description', code)}). "
+            "Please double-check your bot token and chat ID, then re-submit.")
+
+
 def _slug(text: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
     return s or "customer"
@@ -233,6 +281,13 @@ def submit():
         return redirect(url_for("form", error=(
             "That Kalshi private key looks incomplete — please paste the ENTIRE key file, "
             "every line from '-----BEGIN' through '-----END-----', with nothing cut off.")))
+
+    # Validate the customer's Telegram bot end-to-end (token + reachable chat) so a
+    # broken config is caught here at signup instead of silently killing alerts on
+    # the deployed bot. A green signup sends the customer a real confirmation msg.
+    tg_error = _validate_telegram_setup(f.get("telegram_bot_token"), f.get("telegram_chat_id"))
+    if tg_error:
+        return redirect(url_for("form", error=tg_error))
 
     if _fernet() is None:
         log.error("ONBOARDING_FERNET_KEY not set — refusing to store secrets.")
