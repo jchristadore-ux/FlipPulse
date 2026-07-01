@@ -23,6 +23,7 @@ Design notes
 
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import logging
@@ -90,11 +91,14 @@ def _decrypt(token: str) -> str:
 
 def _deploy_env(sub: dict) -> list:
     """Ready-to-paste Railway variables for a submission (matches admin_cli.py).
+    The Kalshi private key is emitted as a single-line base64 blob
+    (KALSHI_PRIVATE_KEY_PEM_B64) so it can't be mangled by a multi-line paste.
     Decrypts the stored secrets — callers must be operator-authorized."""
     s = {k: _decrypt(v) for k, v in sub.get("secrets_encrypted", {}).items()}
+    pem_b64 = base64.b64encode(s.get("kalshi_private_key_pem", "").encode()).decode()
     return [
         ("KALSHI_API_KEY_ID", s.get("kalshi_api_key_id", "")),
-        ("KALSHI_PRIVATE_KEY_PEM", s.get("kalshi_private_key_pem", "")),
+        ("KALSHI_PRIVATE_KEY_PEM_B64", pem_b64),
         ("DEMO_MODE", "true"),
         ("PAPER_BALANCE", str(sub.get("starting_balance", ""))),
         ("TRADING_FORMAT", sub.get("trading_format", "balanced")),
@@ -124,6 +128,24 @@ def _admin_authorized() -> bool:
                 or request.headers.get("X-Admin-Token")
                 or request.args.get("token") or "")
     return hmac.compare_digest(supplied, ADMIN_TOKEN)
+
+
+def _pem_looks_valid(pem: str) -> bool:
+    """True only if the pasted text is a COMPLETE, loadable RSA private key — so a
+    truncated/mangled key is rejected at signup instead of crash-looping a bot later."""
+    try:
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        s = (pem or "").strip().strip('"').strip("'").replace("\\n", "\n")
+        m = re.search(r"-----BEGIN ([A-Z ]+?)-----(.*?)-----END \1-----", s, re.DOTALL)
+        if not m:
+            return False
+        body = re.sub(r"\s+", "", m.group(2))
+        wrapped = "\n".join(body[i:i + 64] for i in range(0, len(body), 64))
+        norm = f"-----BEGIN {m.group(1)}-----\n{wrapped}\n-----END {m.group(1)}-----\n"
+        load_pem_private_key(norm.encode(), password=None)
+        return True
+    except Exception:
+        return False
 
 
 def _slug(text: str) -> str:
@@ -205,6 +227,12 @@ def submit():
             raise ValueError
     except ValueError:
         return redirect(url_for("form", error="Enter a valid starting balance."))
+    # Reject an incomplete/mangled Kalshi key at signup so it can never reach (and
+    # crash-loop) a deployed bot.
+    if not _pem_looks_valid(f.get("kalshi_private_key_pem")):
+        return redirect(url_for("form", error=(
+            "That Kalshi private key looks incomplete — please paste the ENTIRE key file, "
+            "every line from '-----BEGIN' through '-----END-----', with nothing cut off.")))
 
     if _fernet() is None:
         log.error("ONBOARDING_FERNET_KEY not set — refusing to store secrets.")
@@ -322,11 +350,9 @@ def admin_detail(sub_id: str):
     except Exception as e:                       # bad key / corrupt secret
         log.warning("admin detail decrypt failed for %s: %s", sub_id, e)
         env_pairs = None
-    env_text = "\n".join(
-        f"{k}={v}" if k != "KALSHI_PRIVATE_KEY_PEM" else f"{k}=<multi-line, below>"
-        for k, v in (env_pairs or []))
-    pem = dict(env_pairs or []).get("KALSHI_PRIVATE_KEY_PEM", "")
-    return render_template("admin_detail.html", sub=sub, env_text=env_text, pem=pem,
+    # Every value (incl. the base64 key) is a single line — paste the whole block as-is.
+    env_text = "\n".join(f"{k}={v}" for k, v in (env_pairs or []))
+    return render_template("admin_detail.html", sub=sub, env_text=env_text,
                            has_env=env_pairs is not None)
 
 

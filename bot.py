@@ -411,7 +411,28 @@ for _arg in sys.argv[1:]:
 TRADING_FORMAT = apply_format(os.environ.get("TRADING_FORMAT", "balanced"))
 
 KALSHI_API_KEY_ID   = _require("KALSHI_API_KEY_ID")
-_RAW_PEM            = _require("KALSHI_PRIVATE_KEY_PEM")
+
+
+def _load_raw_pem() -> str:
+    """The private key, from either input:
+      • KALSHI_PRIVATE_KEY_PEM_B64 — the whole PEM base64-encoded into ONE line
+        (recommended: a single line of A–Z/a–z/0–9/+// can't be mangled by the
+        newline/space/quote problems that break a pasted multi-line PEM), or
+      • KALSHI_PRIVATE_KEY_PEM — the raw multi-line PEM (still supported).
+    The B64 form wins when both are set."""
+    b64 = os.environ.get("KALSHI_PRIVATE_KEY_PEM_B64", "").strip().strip('"').strip("'")
+    if b64:
+        try:
+            return base64.b64decode(re.sub(r"\s+", "", b64)).decode("utf-8")
+        except Exception as e:
+            raise ValueError(
+                "KALSHI_PRIVATE_KEY_PEM_B64 is set but is not valid base64 of a key. "
+                "Copy the whole single-line value from your onboarding /admin deploy view "
+                f"(nothing cut off). Underlying error: {e}") from e
+    return _require("KALSHI_PRIVATE_KEY_PEM")
+
+
+_RAW_PEM            = _load_raw_pem()
 DEMO_MODE           = _env_bool("DEMO_MODE", True)
 POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
 

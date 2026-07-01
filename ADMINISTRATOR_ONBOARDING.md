@@ -119,13 +119,17 @@ redeploy — so keep them set.
 
 ## 4. Set the environment variables
 
-In the Railway service → **Variables**, set the following (see `.env.example` for the
-full annotated list):
+**Easiest:** copy the whole block from the customer's `/admin` deploy view (or
+`admin_cli.py show <id>`) and paste it into Railway's **Variables → Raw Editor**. Every
+value is a single line — including the key — so nothing can get mangled. Then add the
+`/data` path variables from `.env.example`.
+
+Set the following (see `.env.example` for the full annotated list):
 
 | Variable | Value |
 |---|---|
 | `KALSHI_API_KEY_ID` | The customer's Kalshi API Key ID |
-| `KALSHI_PRIVATE_KEY_PEM` | The full PEM, pasted as a multi-line value (include BEGIN/END lines) |
+| `KALSHI_PRIVATE_KEY_PEM_B64` | The customer's key as a **single-line base64 blob** (from the `/admin` deploy view / `admin_cli.py`). Foolproof — a single line can't be mangled by a multi-line paste. |
 | `DEMO_MODE` | `true` (always start in paper) |
 | `PAPER_BALANCE` | The customer's starting balance, e.g. `1000` |
 | `TRADING_FORMAT` | `conservative` \| `balanced` \| `aggressive` — the format they chose |
@@ -286,21 +290,21 @@ leave **Root Directory blank**. See §2.
 
 **Deploy crash-loops with `Could not read KALSHI_PRIVATE_KEY_PEM …` (or the older
 `Unable to load PEM file … InvalidPadding`).**
-The private-key variable is **incomplete or altered** — almost always a copy/paste slip.
-Fix the value (no code change needed):
-1. Get a clean copy of the key: the customer's original `.pem` file opened in a plain
-   text editor, or the **PEM box on your `/admin` deploy view** (it preserves the line
-   breaks).
-2. In Railway → the bot service → **Variables → `KALSHI_PRIVATE_KEY_PEM`** → paste the
-   **entire** key, from the `-----BEGIN …-----` line through the `-----END …-----` line,
-   with nothing cut off. Railway's **Raw Editor** is the most reliable way to paste a
-   multi-line value.
-3. Checklist for a good paste: starts with `-----BEGIN`, ends with `-----END-----`, has
-   the base64 block in the middle, **no** surrounding quotes, **no** literal `\n`, and
-   **nothing truncated**.
-4. Redeploy → the logs should show `✅ RSA private key loaded.`
-   *(The bot auto-repairs escaped `\n`, spaces, and wrapping quotes — so if it still
-   fails, the key body itself is missing characters; re-copy the whole thing.)*
+The private-key value is **incomplete or altered** — almost always a multi-line paste
+that got truncated (`InvalidPadding` = the key body is literally missing characters). Fix
+it with the **foolproof single-line** method (no code change needed):
+1. Open the customer's **`/admin` deploy view** and copy the **`KALSHI_PRIVATE_KEY_PEM_B64`**
+   line — it's one long line of base64 that can't be mangled.
+2. In Railway → the bot service → **Variables** → **delete any old
+   `KALSHI_PRIVATE_KEY_PEM`** and add **`KALSHI_PRIVATE_KEY_PEM_B64`** = that value (Raw
+   Editor is easiest). Make sure the whole line copied — nothing cut off.
+3. Redeploy → the logs should show `✅ RSA private key loaded.`
+   *(As a safety net the bot also auto-repairs escaped `\n`, spaces, and wrapping quotes on
+   a raw `KALSHI_PRIVATE_KEY_PEM`; but the B64 var avoids the problem entirely. New signups
+   are also validated at the form, so a truncated key is rejected before it ever reaches a
+   bot.)*
+   If it still fails, the key the customer provided is itself incomplete — have them
+   **rotate the Kalshi key** and re-submit.
 
 **Booted but `/status` doesn't answer.** Confirm `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
 are this customer's, the volume is mounted at `/data`, and the deploy logs show a clean
