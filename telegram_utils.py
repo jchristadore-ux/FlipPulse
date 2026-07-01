@@ -107,6 +107,7 @@ def validate_telegram_connection() -> bool:
         log.error(
             "⚠️  Telegram DISABLED — configuration error: %s. Fix the env var and "
             "redeploy; alerts stay off until then.", _last_error)
+        _log_config_diagnostic(token)
     return False
 
 
@@ -221,6 +222,53 @@ def _describe_http(status: int, body: str) -> Tuple[str, bool]:
     if status >= 500:
         return (f"HTTP {status} — Telegram server error (transient). {body}", True)
     return (f"HTTP {status} — {body}", True)
+
+
+def _log_config_diagnostic(token: str) -> None:
+    """On a hard config failure (bad token / 'chat not found'), tell the operator
+    exactly how to fix it instead of leaving them to guess. Calls getMe (confirms
+    the token and which @bot it belongs to) and getUpdates (lists the chat ids
+    that have actually messaged this bot — the valid values for TELEGRAM_CHAT_ID).
+
+    'chat not found' almost always means the configured chat id belongs to a
+    *different* bot, or the recipient never pressed Start on this one. Best-effort
+    and never raises — diagnostics must not break boot."""
+    base = f"https://api.telegram.org/bot{token}"
+    try:
+        me = requests.get(f"{base}/getMe", timeout=8).json()
+        if me.get("ok"):
+            bot = me["result"]
+            log.error("Telegram token is valid and belongs to @%s (%s). The "
+                      "configured chat id was rejected by THIS bot.",
+                      bot.get("username", "?"), bot.get("first_name", "?"))
+        else:
+            log.error("Telegram getMe failed (%s) — the TELEGRAM_BOT_TOKEN itself "
+                      "looks wrong.", me.get("description", me))
+            return
+    except Exception as exc:  # pragma: no cover - network
+        log.debug("getMe diagnostic error: %s", exc)
+        return
+
+    try:
+        upd = requests.get(f"{base}/getUpdates", params={"timeout": 0}, timeout=8).json()
+        chats = {}
+        for u in upd.get("result", []) if upd.get("ok") else []:
+            msg = u.get("message") or u.get("edited_message") or {}
+            c = msg.get("chat") or {}
+            if c.get("id") is not None:
+                who = c.get("username") or c.get("title") or c.get("first_name") or "?"
+                chats[str(c["id"])] = who
+        if chats:
+            listing = ", ".join(f"{cid} ({who})" for cid, who in chats.items())
+            log.error("Chats that have messaged @%s: %s. Set TELEGRAM_CHAT_ID to "
+                      "the correct id from this list and redeploy.",
+                      me["result"].get("username", "this bot"), listing)
+        else:
+            log.error("No chats have messaged this bot yet — open Telegram, find "
+                      "@%s, press Start (or send it any message), then redeploy so "
+                      "it can reach you.", me["result"].get("username", "the bot"))
+    except Exception as exc:  # pragma: no cover - network
+        log.debug("getUpdates diagnostic error: %s", exc)
 
 
 def _send_raw(text: str) -> bool:

@@ -117,3 +117,28 @@ def test_disabled_gate_blocks_sends(monkeypatch):
     tg._telegram_enabled = False
     monkeypatch.setattr(tg, "_send_raw", lambda *_: pytest.fail("should not send when disabled"))
     assert tg.send_telegram_message("nope") is False
+
+
+class JsonResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def test_config_diagnostic_lists_reachable_chats(monkeypatch, caplog):
+    """On a 'chat not found' failure the bot should name its @username and the
+    chat ids that HAVE messaged it — handing the operator the correct value."""
+    def fake_get(url, **k):
+        if url.endswith("/getMe"):
+            return JsonResp({"ok": True, "result": {"username": "CustBot", "first_name": "Cust"}})
+        return JsonResp({"ok": True, "result": [
+            {"message": {"chat": {"id": 42, "username": "realuser"}}}]})
+
+    monkeypatch.setattr(tg.requests, "get", fake_get)
+    with caplog.at_level("ERROR"):
+        tg._log_config_diagnostic("token123")
+    text = caplog.text
+    assert "CustBot" in text
+    assert "42" in text and "realuser" in text
