@@ -13,6 +13,13 @@
   .meta { color:#7c8aa3; font-size:12.5px; margin-bottom:16px; }
   .badge { font-size:10px; font-weight:800; padding:2px 8px; border-radius:20px; }
   .paid { background:#153a2a; color:#7ef2a0; } .pending { background:#3a2f15; color:#f2b06a; }
+  .prov { border:1px solid #24405f; border-radius:8px; padding:12px 14px; font-size:13px;
+    background:#0e1a2b; }
+  .prov .st { font-weight:800; } .st.ok { color:#7ef2a0; } .st.bad { color:#f2a6a6; }
+  .st.run { color:#f2b06a; } .st.none { color:#8fa0ba; }
+  .prov a { color:#35cee6; }
+  button.go { background:#153a2a; color:#7ef2a0; border:1px solid #24463a; border-radius:8px;
+    padding:8px 16px; font-weight:800; font-size:13px; cursor:pointer; margin-top:10px; }
   h2 { font-size:11.5px; text-transform:uppercase; letter-spacing:1px; color:#8fa0ba; margin:20px 0 8px; }
   textarea { width:100%; background:#0e1a2b; border:1px solid #24405f; border-radius:8px;
     color:#eaf2ff; font-family:"SF Mono",Consolas,monospace; font-size:12px; padding:12px; }
@@ -31,8 +38,33 @@
   <div class="meta">{{ sub.email }} · format <b style="color:#7ef2a0;">{{ sub.trading_format }}</b> ·
     starting ${{ '{:,.0f}'.format(sub.starting_balance) }} · {{ sub.created_at[:16].replace('T',' ') }}</div>
 
+  <h2>Automated deployment</h2>
+  <div class="prov">
+    {% if prov.status == 'provisioned' %}
+      <span class="st ok">✅ PROVISIONED</span> — bot deployed and verified in paper mode.
+      <a href="https://railway.app/project/{{ prov.project_id }}" target="_blank">Open Railway project →</a>
+    {% elif prov.status == 'in_progress' %}
+      <span class="st run">⏳ IN PROGRESS</span> — step: {{ prov.step or 'starting' }}.
+      Refresh this page; the result also arrives on operator Telegram.
+    {% elif prov.status == 'failed' %}
+      <span class="st bad">❌ FAILED</span> at step <b>{{ prov.step }}</b>: {{ prov.error }}
+      {% if prov.project_id %}<br>Partial project kept for inspection:
+      <a href="https://railway.app/project/{{ prov.project_id }}" target="_blank">open in Railway →</a>{% endif %}
+    {% elif prov.status == 'deprovisioned' %}
+      <span class="st none">🗑 DEPROVISIONED</span> — the Railway project was deleted.
+    {% else %}
+      <span class="st none">— not provisioned yet</span>
+      {% if not railway_ready %} (set <code>RAILWAY_API_TOKEN</code> to enable automation){% endif %}
+    {% endif %}
+    {% if railway_ready and prov.status != 'in_progress' and prov.status != 'provisioned' %}
+    <form method="post" action="{{ url_for('admin_provision', sub_id=sub.id) }}">
+      <button class="go" type="submit">{{ '↻ Retry provisioning' if prov.status == 'failed' else '🚀 Provision bot now' }}</button>
+    </form>
+    {% endif %}
+  </div>
+
   {% if has_env %}
-  <h2>Railway variables (paste the whole block into the service)</h2>
+  <h2>Railway variables (manual fallback — paste the whole block into the service)</h2>
   <textarea rows="9" readonly onclick="this.select()">{{ env_text }}</textarea>
 
   <div class="warn">The Kalshi key is the single-line <code>KALSHI_PRIVATE_KEY_PEM_B64</code>

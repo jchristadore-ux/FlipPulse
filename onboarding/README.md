@@ -9,14 +9,20 @@ submit it:
 2. **Alerts you** (the operator) on Telegram with a non-secret summary.
 3. Launches **Stripe Checkout** to collect the **$99 setup fee** and start the
    **$99/mo subscription**, keeping the card on file for any future invoices.
+4. **Provisions the customer's bot automatically** once Stripe confirms payment:
+   the built-in provisioner (`provisioner.py`) creates the Railway project,
+   service, `/data` volume, injects every variable, deploys, and verifies the
+   boot logs — then tells you on Telegram. See
+   [`../AUTOMATED_PROVISIONING.md`](../AUTOMATED_PROVISIONING.md).
 
-You then run `admin_cli.py show <id>` to get the exact env vars and deploy the
-bot per [`../ADMINISTRATOR_ONBOARDING.md`](../ADMINISTRATOR_ONBOARDING.md).
+Manual fallback: `admin_cli.py show <id>` still prints the exact env vars for
+deploying by hand per [`../ADMINISTRATOR_ONBOARDING.md`](../ADMINISTRATOR_ONBOARDING.md).
 
 ```
 onboarding/
 ├── app.py            # Flask server (form + submit + Stripe + operator alert)
-├── admin_cli.py      # list/show/env — turn a submission into deploy env vars
+├── provisioner.py    # automated Railway provisioning (webhook → running bot)
+├── admin_cli.py      # list/show/env/provision/status/deprovision
 ├── templates/        # form.html, success.html, cancelled.html
 ├── submissions/      # runtime submission files (git-ignored, encrypted)
 └── requirements.txt
@@ -47,6 +53,14 @@ Environment variables:
 | `SUBMISSIONS_DIR` | optional | Where submission files are written (default `./submissions`; put on a Railway volume to persist). |
 | `ONBOARDING_PRICE_SETUP` / `ONBOARDING_PRICE_MONTHLY` | optional | Display-only pricing on the form (default `99` / `99`). |
 | `ONBOARDING_PERF_PCT` | optional | Placeholder for a future performance fee; default `0` and **not shown** on the form. |
+| `RAILWAY_API_TOKEN` | for auto-provisioning | Railway account/workspace token — enables zero-touch bot deployment on payment. |
+| `RAILWAY_TEAM_ID` | if workspace token | Workspace to create customer projects in. |
+| `AUTO_PROVISION` | optional (default `true`) | Provision automatically on `checkout.session.completed`. `false` = use the `/admin` button or CLI. |
+| `PROVISION_REPO` / `PROVISION_REPO_BRANCH` | optional | Repo/branch every customer bot deploys from (default `jchristadore-ux/FlipPulse` @ `main`). |
+| `BOT_OPERATOR_CHAT_ID` | recommended | Injected into every provisioned bot as `TELEGRAM_OPERATOR_CHAT_ID` so all customer-bot alerts fan out to you. |
+
+Full provisioning reference (all knobs, failure handling, architecture):
+[`../AUTOMATED_PROVISIONING.md`](../AUTOMATED_PROVISIONING.md).
 
 If Stripe is not configured the form still works — it stores the submission,
 alerts you, and shows a local success page (you collect payment manually).

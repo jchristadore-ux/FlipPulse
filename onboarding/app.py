@@ -37,6 +37,11 @@ import requests
 from flask import (Flask, abort, make_response, redirect, render_template,
                    request, send_from_directory, url_for)
 
+try:
+    import provisioner                     # gunicorn/app run from onboarding/
+except ImportError:                        # imported as the onboarding.* package
+    from onboarding import provisioner
+
 log = logging.getLogger("flippulse.onboarding")
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s │ %(levelname)-7s │ %(message)s")
@@ -56,6 +61,11 @@ STRIPE_SECRET_KEY   = os.environ.get("STRIPE_SECRET_KEY", "").strip()
 STRIPE_SETUP_PRICE  = os.environ.get("STRIPE_SETUP_PRICE_ID", "").strip()
 STRIPE_MONTHLY_PRICE= os.environ.get("STRIPE_MONTHLY_PRICE_ID", "").strip()
 PUBLIC_BASE_URL     = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+# Auto-provision a customer's Railway bot as soon as Stripe confirms payment.
+# Requires RAILWAY_API_TOKEN (see provisioner.py / AUTOMATED_PROVISIONING.md).
+# Set to "false" to fall back to the manual runbook / the /admin button.
+AUTO_PROVISION = os.environ.get("AUTO_PROVISION", "true").strip().lower() in ("1", "true", "yes")
 
 # Display-only pricing (kept in sync with the docs / Stripe prices).
 PRICE_SETUP   = os.environ.get("ONBOARDING_PRICE_SETUP", "99")
@@ -367,6 +377,16 @@ def stripe_webhook():
             d["stripe_subscription"] = event["data"]["object"].get("subscription")
             p.write_text(json.dumps(d, indent=2))
             log.info("Submission %s marked paid.", sid)
+            # Payment confirmed → provision the customer's Railway bot with no
+            # operator action. Queued in the background so Stripe gets its 200
+            # immediately; the provisioning result lands on operator Telegram.
+            if AUTO_PROVISION and provisioner.is_configured():
+                already = (d.get("provisioning") or {}).get("status")
+                if already not in ("in_progress", "provisioned"):
+                    provisioner.enqueue(sid)
+            elif AUTO_PROVISION:
+                log.warning("AUTO_PROVISION is on but RAILWAY_API_TOKEN is not set — "
+                            "submission %s needs manual deployment.", sid)
     return ("", 200)
 
 
@@ -408,7 +428,26 @@ def admin_detail(sub_id: str):
     # Every value (incl. the base64 key) is a single line — paste the whole block as-is.
     env_text = "\n".join(f"{k}={v}" for k, v in (env_pairs or []))
     return render_template("admin_detail.html", sub=sub, env_text=env_text,
-                           has_env=env_pairs is not None)
+                           has_env=env_pairs is not None,
+                           prov=sub.get("provisioning") or {},
+                           railway_ready=provisioner.is_configured())
+
+
+@app.post("/admin/<sub_id>/provision")
+def admin_provision(sub_id: str):
+    """Operator button: provision (or retry) this customer's Railway bot now.
+    Skips the paid gate — clicking it IS the operator's authorization (covers
+    manually-billed customers and Stripe-less installs)."""
+    if not _admin_authorized():
+        abort(404)
+    sub = _load_submission(sub_id)
+    if sub is None:
+        abort(404)
+    if not provisioner.is_configured():
+        return redirect(url_for("admin_detail", sub_id=sub_id))
+    if (sub.get("provisioning") or {}).get("status") != "in_progress":
+        provisioner.enqueue(sub_id, require_paid=False)
+    return redirect(url_for("admin_detail", sub_id=sub_id))
 
 
 # ── Pre-onboarding guide (static landing page + step-by-step guide) ───────────
@@ -439,7 +478,8 @@ def welcome_file(filename: str):
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "stripe": bool(STRIPE_SECRET_KEY),
-            "encryption": bool(FERNET_KEY), "admin_dashboard": bool(ADMIN_TOKEN)}
+            "encryption": bool(FERNET_KEY), "admin_dashboard": bool(ADMIN_TOKEN),
+            "railway": provisioner.is_configured(), "auto_provision": AUTO_PROVISION}
 
 
 if __name__ == "__main__":
