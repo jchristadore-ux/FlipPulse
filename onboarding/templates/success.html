@@ -17,11 +17,20 @@
 </head>
 <body>
   <div class="card">
+    {% if payment_pending %}
+    <div class="tick">📩</div>
+    <h1>Almost there!</h1>
+    <p>Thanks for joining <span class="brand">FlipPulse</span>. We've securely received your details —
+       but the payment step couldn't be started just now. <b>No card was charged.</b> We'll email you a
+       payment link shortly; your bot deploys as soon as payment completes, starting in
+       <b>paper (practice) mode</b>.</p>
+    {% else %}
     <div class="tick">✅</div>
     <h1>You're all set!</h1>
     <p>Thanks for joining <span class="brand">FlipPulse</span>. We've received your details and your
        payment. We'll deploy your bot and confirm it's live in your Telegram shortly — you'll start in
        <b>paper (practice) mode</b>.</p>
+    {% endif %}
     <p style="font-size:12px;color:#6b7890;">Your subscription is ${{ price_monthly }}/month. Cancel anytime.</p>
   </div>
 </body>

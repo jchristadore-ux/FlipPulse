@@ -1,5 +1,5 @@
 """
-telegram_utils.py — Telegram notification module for MarkeyMachine
+telegram_utils.py — Telegram notification module for FlipPulse
 
 Responsibilities:
   - Validate credentials at startup
@@ -39,13 +39,6 @@ _last_error_transient: bool = True   # True → network/5xx/429 (retryable); Fal
 # turn themselves on once connectivity returns — no redeploy needed.
 _self_heal_thread: Optional[threading.Thread] = None
 _self_heal_lock = threading.Lock()
-
-
-def _int_env(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, "").strip() or default)
-    except (TypeError, ValueError):
-        return default
 
 
 def _float_env(name: str, default: float) -> float:
@@ -133,7 +126,7 @@ def send_heartbeat(balance: float, session_pnl: float, open_count: int,
         f"💵 Balance:     ${balance:,.2f}\n"
         f"📊 Session PnL: {pnl_sign}${session_pnl:.2f}\n"
         f"📂 Open orders: {open_count}\n"
-        f"🔁 Trades today:{trades_today}\n"
+        f"🔁 Session trades: {trades_today}\n"
         f"🔍 Last signal: {last_signal}"
     )
     send_telegram_message(msg)
@@ -363,20 +356,3 @@ def _self_heal_loop() -> None:
             return
     log.warning("Telegram self-heal gave up after %.0f min (last error: %s); "
                 "alerts remain disabled for this run.", max_minutes, _last_error)
-
-
-def notify(token: str, chat_id: str, text: str) -> bool:
-    """Stateless one-shot Telegram send to an explicit token/chat — used by the
-    dashboard watchdog for OPERATOR alerts, independent of the bot's module-level
-    credentials. Never raises; returns True on a 200 from Telegram."""
-    token = (token or "").strip()
-    chat_id = (chat_id or "").strip()
-    if not token or not chat_id:
-        return False
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        r = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=8)
-        return r.status_code == 200
-    except Exception as exc:  # pragma: no cover - network failure path
-        log.debug("Telegram notify error: %s", exc)
-        return False

@@ -1,0 +1,5 @@
+# Development / test dependencies (CI + local): the bot runtime, the onboarding
+# service deps (its tests import onboarding.app), and pytest.
+-r requirements.txt
+-r onboarding/requirements.txt
+pytest>=7.0.0
