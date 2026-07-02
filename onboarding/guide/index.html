@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get Started with FlipPulse</title>
+<meta name="description" content="Set up your FlipPulse trading bot in about 10–15 minutes. Create your Kalshi account, install Telegram, follow the guided setup, then complete the onboarding form.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-in">
+    <span class="logo">Flip<span class="dot">Pulse</span></span>
+    <span class="spacer"></span>
+    <a class="navlink" href="guide.html">Setup Guide</a>
+    <a class="navlink" href="checklist.html">Checklist</a>
+    <a class="navlink" href="/">Onboarding Form</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="badges" style="margin-bottom:20px">
+    <span class="pill">⏱ About 10–15 minutes</span>
+    <span class="pill cyan">✓ You only do this once</span>
+  </div>
+  <h1>Let's get you <span class="grad">set up</span>.</h1>
+  <p class="sub">Four short steps and you're done. No technical experience needed —
+     every step has a picture, and we handle the rest automatically after you finish.</p>
+  <div class="btnrow" style="justify-content:center">
+    <a class="btn btn-primary btn-lg" href="guide.html">Start the guided setup →</a>
+    <a class="btn btn-ghost btn-lg" href="checklist.html">Print the checklist</a>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- welcome / overview -->
+  <section>
+    <div class="card">
+      <span class="eyebrow deep">Before you begin</span>
+      <h2 style="margin:6px 0 10px;font-size:26px">Here's the whole picture</h2>
+      <p style="color:var(--muted);margin-top:0">
+        FlipPulse is an automated trading bot that runs on <b>Kalshi</b> (a
+        regulated US exchange) and texts you updates through <b>Telegram</b> (a
+        free messaging app). To connect it to <i>your</i> account, you'll collect
+        <b>four things</b> below and paste them into one form at the end. That's it.
+      </p>
+      <table class="tbl">
+        <tr><th>You'll collect</th><th>From</th><th>In</th></tr>
+        <tr><td>Kalshi API Key ID</td><td>Kalshi website</td><td>Step 1 + Guide</td></tr>
+        <tr><td>Kalshi PEM file</td><td>Kalshi website</td><td>Step 1 + Guide</td></tr>
+        <tr><td>Telegram Bot Token</td><td>Telegram (BotFather)</td><td>Step 2 + Guide</td></tr>
+        <tr><td>Telegram Chat ID</td><td>Telegram (@userinfobot)</td><td>Step 2 + Guide</td></tr>
+      </table>
+      <div class="callout ok" style="margin-bottom:0">
+        <span class="ct">🔒 Your money stays yours</span>
+        <p>The API key only lets the bot place trades on your own Kalshi account —
+           it <b>cannot</b> withdraw funds. Your money never touches us.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- steps -->
+  <section>
+    <span class="eyebrow deep">4 steps</span>
+    <h2 style="margin:6px 0 4px;font-size:28px">What you'll do</h2>
+
+    <!-- Step 1 -->
+    <div class="lstep">
+      <div class="snum">1</div>
+      <div>
+        <h3>Create your Kalshi account</h3>
+        <p>Kalshi is the regulated exchange where your trades happen. Create and
+           verify your account first. (Already have one? Just log in and move on.)</p>
+        <div class="btnrow">
+          <a class="btn btn-primary"
+             href="https://kalshi.com/sign-up/?referral=050de962-49d6-4213-b04a-6609e6e4277a&m=true&utm_source=mobile_app&utm_medium=copy&utm_campaign=referral&utm_content=referral_qr_sheet"
+             target="_blank" rel="noopener">Create your Kalshi account →</a>
+        </div>
+        <p style="font-size:14.5px;color:var(--faint);margin:12px 0 0">
+          Opening Kalshi from this button links your account to FlipPulse so we can support you.</p>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="lstep">
+      <div class="snum">2</div>
+      <div>
+        <h3>Install Telegram</h3>
+        <p>Telegram is the free app your bot uses to text you alerts. Install it
+           on your phone or computer — whichever you'll check for updates.</p>
+        <div class="devices">
+          <a class="device" target="_blank" rel="noopener" href="https://telegram.org/dl/desktop/win64">
+            <span class="ic">🪟</span>Windows<small>telegram.org</small></a>
+          <a class="device" target="_blank" rel="noopener" href="https://apps.apple.com/app/telegram/id747648890">
+            <span class="ic"></span>macOS<small>App Store</small></a>
+          <a class="device" target="_blank" rel="noopener" href="https://telegram.org/dl/desktop/linux">
+            <span class="ic">🐧</span>Linux<small>telegram.org</small></a>
+          <a class="device" target="_blank" rel="noopener" href="https://apps.apple.com/app/telegram-messenger/id686449807">
+            <span class="ic">📱</span>iPhone<small>App Store</small></a>
+          <a class="device" target="_blank" rel="noopener" href="https://play.google.com/store/apps/details?id=org.telegram.messenger">
+            <span class="ic">▶</span>Android<small>Google Play</small></a>
+        </div>
+        <div class="callout tip" style="margin-bottom:0">
+          <span class="ct">🟡 Get the genuine app</span>
+          <p>The real Telegram has a <b>blue paper-plane</b> icon and is by
+             "Telegram FZ-LLC." Avoid look-alikes.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="lstep">
+      <div class="snum">3</div>
+      <div>
+        <h3>Follow the setup guide</h3>
+        <p>Our step-by-step guide walks you through generating your Kalshi API key,
+           creating your Telegram bot, and finding your Chat ID — with a picture
+           for every screen. Keep the checklist handy as you go.</p>
+        <div class="btnrow">
+          <a class="btn btn-dark" href="guide.html">Open the setup guide →</a>
+          <a class="btn btn-ghost" href="checklist.html">Printable checklist</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="lstep">
+      <div class="snum">4</div>
+      <div>
+        <h3>Complete the onboarding form</h3>
+        <p>Once you've collected your four items, paste them into the onboarding
+           form and upload your PEM file. Submit, and we provision your bot in
+           <b>paper mode</b> (practice with fake money) automatically.</p>
+        <div class="btnrow">
+          <a class="btn btn-primary" href="/">Continue to Customer Onboarding →</a>
+        </div>
+        <p style="font-size:14.5px;color:var(--faint);margin:12px 0 0">
+          Finish the guide first so you have all four items ready.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="cta-box">
+    <h2 style="margin-top:0">Ready?</h2>
+    <p style="color:#cbd8ea;max-width:520px;margin:0 auto 22px">
+      Do Step&nbsp;1 and Step&nbsp;2 above, then open the guide. Most people finish
+      in under 15 minutes.</p>
+    <a class="btn btn-primary btn-lg" href="guide.html">Start the guided setup →</a>
+  </div>
+
+</main>
+
+<footer class="foot">
+  FlipPulse · Your keys are sent over a secure connection, encrypted at rest, and never shared.
+  Funds always remain in your own Kalshi account.
+</footer>
+
+</body>
+</html>

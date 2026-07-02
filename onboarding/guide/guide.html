@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlipPulse Setup Guide — step by step</title>
+<meta name="description" content="A beginner-friendly, picture-by-picture guide to setting up your FlipPulse trading bot: Kalshi account + API key, Telegram bot, and Chat ID.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="logo" href="index.html" style="text-decoration:none">Flip<span class="dot">Pulse</span></a>
+    <span class="spacer"></span>
+    <a class="navlink" href="checklist.html">Checklist</a>
+    <a class="navlink no-print" href="FlipPulse_Setup_Guide.pdf">Download PDF</a>
+    <a class="navlink" href="/">Onboarding Form</a>
+  </div>
+</nav>
+
+<header class="hero" style="padding:56px 22px 64px">
+  <div class="badges" style="margin-bottom:18px">
+    <span class="pill">⏱ 10–15 minutes</span>
+    <span class="pill cyan">✓ One time only</span>
+    <span class="pill">🖼 A picture for every step</span>
+  </div>
+  <h1 style="font-size:clamp(30px,5.5vw,48px)">The complete <span class="grad">setup guide</span></h1>
+  <p class="sub">Follow along in order. By the end you'll have four things to paste
+     into the onboarding form — and your bot ready to go.</p>
+</header>
+
+<div class="layout">
+
+  <!-- table of contents -->
+  <aside class="toc no-print">
+    <p class="toc-h">Sections</p>
+    <ol>
+      <li><a href="#s1">Create a Kalshi account</a></li>
+      <li><a href="#s2">Generate API credentials</a></li>
+      <li><a href="#s3">Install Telegram</a></li>
+      <li><a href="#s4">Create a Telegram bot</a></li>
+      <li><a href="#s5">Name the bot</a></li>
+      <li><a href="#s6">Copy the bot token</a></li>
+      <li><a href="#s7">Open the bot</a></li>
+      <li><a href="#s8">Click Start</a></li>
+      <li><a href="#s9">Get your Chat ID</a></li>
+      <li><a href="#s10">Finish the form</a></li>
+      <li><a href="#faq">FAQ &amp; troubleshooting</a></li>
+    </ol>
+  </aside>
+
+  <main class="content">
+
+    <!-- intro -->
+    <div class="card" style="margin-bottom:8px">
+      <span class="eyebrow deep">The goal</span>
+      <h2 style="margin:6px 0 10px;font-size:24px">Collect four things</h2>
+      <p style="margin-top:0;color:var(--muted)">Keep a note open (or the
+        <a href="checklist.html">printable checklist</a>) and paste each item as you find it.
+        Hand us these four, and the bot does the rest.</p>
+      <table class="tbl" style="margin-bottom:0">
+        <tr><th>#</th><th>Item</th><th>Where it comes from</th></tr>
+        <tr><td>1</td><td>Kalshi <b>API Key ID</b></td><td>Kalshi website — Section 2</td></tr>
+        <tr><td>2</td><td>Kalshi <b>PEM file</b></td><td>Kalshi website — Section 2</td></tr>
+        <tr><td>3</td><td>Telegram <b>Bot Token</b></td><td>BotFather — Section 6</td></tr>
+        <tr><td>4</td><td>Telegram <b>Chat ID</b></td><td>@userinfobot — Section 9</td></tr>
+      </table>
+    </div>
+
+    <!-- ============ SECTION 1 ============ -->
+    <section class="gsection" id="s1">
+      <div class="sec-head"><span class="sec-badge">1</span><h2>Create a Kalshi account</h2></div>
+      <p class="lede">Kalshi is the regulated exchange where your trades happen.</p>
+
+      <figure class="shot"><img src="assets/kalshi-01-signup.svg" alt="Kalshi create-account screen with the Create account button highlighted">
+        <figcaption>The Kalshi sign-up screen — enter your email and a password.</figcaption></figure>
+
+      <ol class="steps">
+        <li>Open the <b>Create Your Kalshi Account</b> button from the
+          <a href="index.html">start page</a> or your welcome email.</li>
+        <li>Enter your <b>email</b> and choose a <b>password</b>.</li>
+        <li>Click <b>Create account</b>.</li>
+      </ol>
+
+      <div class="callout info"><span class="ct">ℹ️ Already have Kalshi?</span>
+        <p>That's fine — just log in and skip to <a href="#s2">Section 2</a>.</p></div>
+
+      <h3 style="margin-top:26px">Verify your email</h3>
+      <figure class="shot"><img src="assets/kalshi-02-verify-email.svg" alt="Kalshi email verification screen">
+        <figcaption>Open the email from Kalshi and click the verify link.</figcaption></figure>
+      <ol class="steps" start="4">
+        <li>Find the <b>verification email</b> from Kalshi in your inbox and click the link inside it.</li>
+      </ol>
+      <div class="expect"><span class="chk">✓</span><p><b>What you should see:</b>
+        a "verified" confirmation, then you're returned to Kalshi, logged in.</p></div>
+
+      <h3 style="margin-top:26px">Identity verification (if asked)</h3>
+      <p>To trade real money, Kalshi may ask you to confirm your identity (name,
+        date of birth, last 4 of your SSN). Follow the prompts — this is Kalshi's
+        standard process for any US exchange, not ours.</p>
+      <div class="callout info"><span class="ct">ℹ️ You can keep going</span>
+        <p>You can finish this whole guide even while identity check is "pending."
+          It only needs to be approved before you fund and go live — a later step.</p></div>
+
+      <h3 style="margin-top:26px">Log in</h3>
+      <figure class="shot"><img src="assets/kalshi-03-login.svg" alt="Kalshi dashboard after login">
+        <figcaption>Your Kalshi dashboard. Next stop: Settings.</figcaption></figure>
+      <div class="expect"><span class="chk">✓</span><p><b>What you should see:</b>
+        the Kalshi dashboard with your balance (likely $0.00 — funding comes later).</p></div>
+    </section>
+
+    <!-- ============ SECTION 2 ============ -->
+    <section class="gsection" id="s2">
+      <div class="sec-head"><span class="sec-badge">2</span><h2>Generate Kalshi API credentials</h2></div>
+      <p class="lede">The most important section. You'll collect <b>Thing #1 (Key ID)</b>
+        and <b>Thing #2 (PEM file)</b> here.</p>
+
+      <h3>Open API settings</h3>
+      <figure class="shot"><img src="assets/kalshi-04-api-settings.svg" alt="Kalshi Settings with API Keys and Create API Key highlighted">
+        <figcaption>Settings › API Keys › Create API Key.</figcaption></figure>
+      <ol class="steps">
+        <li>Click <b>Settings</b> (or your profile menu), then find <b>API Keys</b>.</li>
+        <li>Click <b>Create API Key</b>.</li>
+      </ol>
+      <div class="callout tip"><span class="ct">💡 Can't find it?</span>
+        <p>It may live under <b>Settings → Security → API</b> or a
+          "Developers"/"API Access" menu. Look for the word <b>API</b>. On a phone,
+          use the Kalshi <b>website in a browser</b> — API keys are far easier there.</p></div>
+
+      <h3 style="margin-top:26px">Name and create the key</h3>
+      <figure class="shot"><img src="assets/kalshi-05-create-key.svg" alt="Kalshi new API key dialog with the name FlipPulse">
+        <figcaption>Name it <code>FlipPulse</code> so you'll recognise it.</figcaption></figure>
+      <ol class="steps" start="3">
+        <li>Give the key a name — we suggest <code>FlipPulse</code>.</li>
+        <li>Click <b>Create key</b>.</li>
+      </ol>
+
+      <h3 style="margin-top:26px">Copy the Key ID and download the PEM</h3>
+      <figure class="shot"><img src="assets/kalshi-06-download-pem.svg" alt="Kalshi key created screen: copy the Key ID and download the PEM file">
+        <figcaption>Copy the Key ID (Thing #1) and download the PEM (Thing #2).</figcaption></figure>
+      <ol class="steps" start="5">
+        <li><b>Copy the API Key ID</b> — a long code like
+          <code>a1b2c3d4-0000-4e5f-9a8b-1234567890ab</code>. Paste it into your note.
+          <em>(This is Thing #1.)</em></li>
+        <li><b>Download the PEM file</b>. A file like <code>kalshi-flippulse.pem</code>
+          saves to your <b>Downloads</b> folder. <em>(This is Thing #2.)</em></li>
+      </ol>
+      <div class="callout warn"><span class="ct">🔴 CRITICAL — the PEM downloads only once</span>
+        <p>Kalshi shows the private key a single time. If you leave this page without
+          downloading, you can't get the same one back — you'd have to make a new key.
+          <b>Download it now.</b></p></div>
+
+      <h3 style="margin-top:26px">Save the PEM safely</h3>
+      <p>Move the file somewhere you'll find it (e.g. a <code>FlipPulse</code> folder).
+        You'll simply <b>upload the file as-is</b> at the end. Don't rename its contents,
+        open it in Word/Notes and re-save, or copy the text out — that can corrupt it.</p>
+      <div class="expect"><span class="chk">✓</span><p><b>What you should see:</b>
+        the Key ID in your note, and a <code>.pem</code> file in your Downloads folder.</p></div>
+
+      <h3 style="margin-top:26px">If something goes wrong</h3>
+      <table class="tbl">
+        <tr><th>Problem</th><th>Fix</th></tr>
+        <tr><td>Can't find API settings</td><td>Use the Kalshi <b>website in a browser</b>; look under Settings → Security; search the page for "API".</td></tr>
+        <tr><td>PEM won't download</td><td>Try another browser (Chrome, Edge, Safari, Firefox); turn off pop-up/download blocking for kalshi.com.</td></tr>
+        <tr><td>Browser blocked it</td><td>Click the small "download blocked" icon in the address bar → <b>Keep/Allow</b>, then Download again.</td></tr>
+        <tr><td>Lost the PEM</td><td>It can't be re-downloaded — just <b>create a new API key</b> and use the new pair.</td></tr>
+        <tr><td>Made several keys</td><td>Make sure the <b>Key ID</b> matches the <b>PEM</b> from the <i>same</i> key. When in doubt, create one fresh key and use only that pair.</td></tr>
+      </table>
+    </section>
+
+    <!-- ============ SECTION 3 ============ -->
+    <section class="gsection" id="s3">
+      <div class="sec-head"><span class="sec-badge">3</span><h2>Install Telegram</h2></div>
+      <p class="lede">The free app your bot uses to text you alerts.</p>
+
+      <figure class="shot"><img src="assets/telegram-07-download.svg" alt="Install Telegram on Windows, macOS, Linux, iPhone or Android">
+        <figcaption>Install on whichever device you'll check for alerts.</figcaption></figure>
+
+      <div class="devices" style="margin:6px 0 18px">
+        <a class="device" target="_blank" rel="noopener" href="https://telegram.org/dl/desktop/win64"><span class="ic">🪟</span>Windows<small>telegram.org</small></a>
+        <a class="device" target="_blank" rel="noopener" href="https://apps.apple.com/app/telegram/id747648890"><span class="ic"></span>macOS<small>App Store</small></a>
+        <a class="device" target="_blank" rel="noopener" href="https://telegram.org/dl/desktop/linux"><span class="ic">🐧</span>Linux<small>telegram.org</small></a>
+        <a class="device" target="_blank" rel="noopener" href="https://apps.apple.com/app/telegram-messenger/id686449807"><span class="ic">📱</span>iPhone<small>App Store</small></a>
+        <a class="device" target="_blank" rel="noopener" href="https://play.google.com/store/apps/details?id=org.telegram.messenger"><span class="ic">▶</span>Android<small>Google Play</small></a>
+      </div>
+
+      <p><b>Desktop:</b> run the installer and click through Next → Install → Finish
+        (Windows), or drag Telegram to Applications and open it (macOS).<br>
+        <b>Mobile:</b> tap Get/Install in the App Store or Google Play.</p>
+
+      <h3 style="margin-top:24px">Set up your account</h3>
+      <figure class="shot"><img src="assets/telegram-08-account.svg" alt="Telegram phone-number sign-in screen">
+        <figcaption>Sign in with your phone number and the code Telegram texts you.</figcaption></figure>
+      <ol class="steps">
+        <li>Open Telegram and tap <b>Start Messaging</b>.</li>
+        <li>Enter your <b>phone number</b>; Telegram texts a <b>5-digit code</b>.</li>
+        <li>Type the code, add your <b>first name</b>, and you're in.</li>
+      </ol>
+      <div class="callout tip"><span class="ct">🟡 Get the real Telegram</span>
+        <p>The genuine app is by <b>"Telegram FZ-LLC"</b> with a <b>blue paper-plane</b>
+          icon. If you grabbed a copycat, delete it and use the links above.</p></div>
+      <div class="expect"><span class="chk">✓</span><p><b>What you should see:</b>
+        the Telegram home screen with a <b>search bar</b> at the top.</p></div>
+    </section>
+
+    <!-- ============ SECTION 4 ============ -->
+    <section class="gsection" id="s4">
+      <div class="sec-head"><span class="sec-badge">4</span><h2>Create your Telegram bot</h2></div>
+      <p class="lede">You'll make your personal alert bot by chatting with Telegram's
+        official bot-maker, <b>BotFather</b>.</p>
+
+      <figure class="shot"><img src="assets/telegram-09-search-botfather.svg" alt="Search for BotFather and tap the verified result">
+        <figcaption>Search <code>BotFather</code> and tap the one with the blue ✓.</figcaption></figure>
+      <ol class="steps">
+        <li>Tap the <b>search bar</b> and type <code>BotFather</code>.</li>
+        <li>Tap <b>BotFather</b> — the result with the <b>blue verified check (✓)</b>.
+          There are fakes; the checkmark is how you spot the real one.</li>
+      </ol>
+
+      <figure class="shot"><img src="assets/telegram-10-newbot.svg" alt="Send the /newbot command to BotFather">
+        <figcaption>Press Start, then type <code>/newbot</code> in the message box.</figcaption></figure>
+      <ol class="steps" start="3">
+        <li>Tap <b>Start</b> (or the <b>START</b> button at the bottom).</li>
+        <li>In the message box at the bottom, type <code>/newbot</code> and send it.</li>
+      </ol>
+      <div class="callout tip"><span class="ct">💡 Where do I type?</span>
+        <p>The <b>message box</b> is the long bar at the very bottom of the chat —
+          the same place you'd type "hello" to a friend. Type <code>/newbot</code> and
+          press the send arrow (➤).</p></div>
+    </section>
+
+    <!-- ============ SECTION 5 ============ -->
+    <section class="gsection" id="s5">
+      <div class="sec-head"><span class="sec-badge">5</span><h2>Name your bot</h2></div>
+      <p class="lede">BotFather asks two quick questions.</p>
+
+      <figure class="shot"><img src="assets/telegram-11-name-bot.svg" alt="BotFather asks for a bot name and a username ending in bot">
+        <figcaption>A friendly name, then a unique username ending in <code>bot</code>.</figcaption></figure>
+      <ol class="steps">
+        <li><b>Bot name</b> — a friendly label, e.g. <code>FlipPulse Alerts</code>. Send it.</li>
+        <li><b>Bot username</b> — a unique @handle that <b>must end in <code>bot</code></b>
+          and has no spaces.</li>
+      </ol>
+      <div class="gb">
+        <div class="col good"><h4>✅ Valid usernames</h4>
+          <ul><li><code>flippulse_jane_bot</code></li><li><code>janes_flippulse_bot</code></li>
+          <li><code>jane2026alertsbot</code></li></ul></div>
+        <div class="col bad"><h4>❌ Invalid usernames</h4>
+          <ul><li><code>flippulse_jane</code> — no "bot"</li><li><code>FlipPulse Jane bot</code> — spaces</li>
+          <li><code>flippulse_bot</code> — taken</li></ul></div>
+      </div>
+      <div class="callout tip"><span class="ct">💡 "Username already taken"?</span>
+        <p>Normal — just add numbers or your name until it's accepted,
+          e.g. <code>flippulse_jane_8391_bot</code>.</p></div>
+    </section>
+
+    <!-- ============ SECTION 6 ============ -->
+    <section class="gsection" id="s6">
+      <div class="sec-head"><span class="sec-badge">6</span><h2>Copy the bot token</h2></div>
+      <p class="lede">This is <b>Thing #3</b>. Treat it like a password.</p>
+
+      <figure class="shot"><img src="assets/telegram-12-copy-token.svg" alt="BotFather shows the bot token; tap to copy the whole token">
+        <figcaption>Tap the long token to copy it — the whole thing.</figcaption></figure>
+      <ol class="steps">
+        <li><b>Tap the token once</b> to copy it (on desktop, select the line and press
+          <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>⌘</kbd>+<kbd>C</kbd>).</li>
+        <li>Paste it into your note. <em>(This is Thing #3.)</em></li>
+      </ol>
+      <div class="callout warn"><span class="ct">🔴 Never share your bot token</span>
+        <p>Anyone with it can control your alert bot. We only ask for it inside the
+          secure form. FlipPulse staff will <b>never</b> ask for it by email, text, or phone.</p></div>
+      <div class="expect"><span class="chk">✓</span><p><b>What you should see:</b>
+        the full token in your note — a number, a colon <code>:</code>, then a long string
+        of letters. Make sure you copied <b>everything after the colon</b> too.</p></div>
+    </section>
+
+    <!-- ============ SECTION 7 ============ -->
+    <section class="gsection" id="s7">
+      <div class="sec-head"><span class="sec-badge">7</span><h2>Open your bot</h2></div>
+      <p class="lede">Open the bot you just made — this is <b>your</b> bot, not BotFather.</p>
+      <ol class="steps">
+        <li>In BotFather's message there's a link like <code>t.me/flippulse_jane_bot</code> —
+          <b>tap it</b>. Or search your bot's username to find it.</li>
+        <li>You'll land in a fresh, empty chat with your bot's name at the top.</li>
+      </ol>
+      <div class="callout tip"><span class="ct">💡 Right chat?</span>
+        <p>The name at the top should be <b>your bot's name</b> (e.g. "FlipPulse Alerts"),
+          not "BotFather".</p></div>
+    </section>
+
+    <!-- ============ SECTION 8 ============ -->
+    <section class="gsection" id="s8">
+      <div class="sec-head"><span class="sec-badge">8</span><h2>Click Start</h2></div>
+      <p class="lede">One tap that's easy to miss — and essential.</p>
+
+      <figure class="shot"><img src="assets/telegram-13-open-start.svg" alt="Open your new bot and tap the START button">
+        <figcaption>Tap the big <b>START</b> button in your bot's chat.</figcaption></figure>
+      <ol class="steps"><li>Tap <b>START</b> at the bottom of your bot's chat.</li></ol>
+      <div class="callout warn"><span class="ct">🔴 This step is required</span>
+        <p>Telegram blocks bots from messaging you until <b>you</b> press Start first.
+          Skip it and your bot simply can't send alerts — even though everything else is right.</p></div>
+      <div class="expect"><span class="chk">✓</span><p><b>What you should see:</b>
+        the START button disappears and a normal message box appears. That's the sign it worked.</p></div>
+    </section>
+
+    <!-- ============ SECTION 9 ============ -->
+    <section class="gsection" id="s9">
+      <div class="sec-head"><span class="sec-badge">9</span><h2>Get your Telegram Chat ID</h2></div>
+      <p class="lede">The last item — <b>Thing #4</b> — from another official helper, <b>@userinfobot</b>.</p>
+
+      <figure class="shot"><img src="assets/telegram-14-userinfobot.svg" alt="@userinfobot replies with your numeric Chat ID">
+        <figcaption>Send <code>hi</code>; copy <b>only the number</b> after <code>Id:</code>.</figcaption></figure>
+      <ol class="steps">
+        <li>Tap the <b>search bar</b> and type <code>userinfobot</code>.</li>
+        <li>Open <b>@userinfobot</b> and tap <b>Start</b>.</li>
+        <li>Send the message <code>hi</code> (any message works).</li>
+        <li>It replies with a line <code>Id: 123456789</code>. <b>Copy only the number.</b>
+          <em>(This is Thing #4.)</em></li>
+      </ol>
+      <div class="expect"><span class="chk">✓</span><p><b>What you should see:</b>
+        a reply containing <code>Id:</code> and a number (usually 8–10 digits). Copy just the digits.</p></div>
+      <div class="callout tip"><span class="ct">💡 Numbers only</span>
+        <p>The Chat ID is only digits (sometimes a leading minus for groups). If you copied
+          any letters, grab just the number after <code>Id:</code>.</p></div>
+    </section>
+
+    <!-- ============ SECTION 10 ============ -->
+    <section class="gsection" id="s10">
+      <div class="sec-head"><span class="sec-badge">10</span><h2>Complete the onboarding form</h2></div>
+      <div class="cta-box">
+        <h2 style="margin-top:0">🎉 You collected everything!</h2>
+        <ul class="checklist">
+          <li>✅ Kalshi API Key ID</li>
+          <li>✅ Kalshi PEM file (in Downloads)</li>
+          <li>✅ Telegram Bot Token</li>
+          <li>✅ Telegram Chat ID</li>
+        </ul>
+        <p style="color:#cbd8ea;max-width:520px;margin:0 auto 22px">
+          Open the onboarding form, paste in each item, and upload your PEM file.
+          We provision your bot in <b>paper mode</b> (fake money) automatically so you
+          can watch it work risk-free first.</p>
+        <a class="btn btn-primary btn-lg" href="/">Continue to Customer Onboarding →</a>
+      </div>
+    </section>
+
+    <!-- ============ FAQ / TROUBLESHOOTING ============ -->
+    <section class="gsection" id="faq">
+      <div class="sec-head"><span class="sec-badge">?</span><h2>FAQ &amp; troubleshooting</h2></div>
+      <p class="lede">Almost every question people ask, answered.</p>
+
+      <details class="faq"><summary>I lost my PEM file.</summary>
+        <div class="a">The PEM can't be re-downloaded, but a new key takes 60 seconds. Go to
+          Kalshi → Settings → API Keys → <b>Create API Key</b>, download the new PEM, copy the
+          new Key ID, and use that pair. You can delete the old key.</div></details>
+
+      <details class="faq"><summary>I can't find the API settings on Kalshi.</summary>
+        <div class="a">Use the Kalshi <b>website in a normal browser</b> (not the phone app).
+          Look under <b>Settings</b>, then <b>Security</b> or <b>API</b>, and search the page for "API".</div></details>
+
+      <details class="faq"><summary>My bot token isn't working / the bot never messages me.</summary>
+        <div class="a">Two usual causes: (1) you didn't press <b>START</b> in your bot's chat
+          (Section 8) — open your bot and tap Start; or (2) the token was copied incompletely —
+          re-copy the <b>entire</b> token, including everything after the colon. You can get it
+          again from BotFather with <code>/mybots</code> → your bot → <b>API Token</b>.</div></details>
+
+      <details class="faq"><summary>I don't see the Start button.</summary>
+        <div class="a">If the chat already shows a normal message box, it's already started —
+          you're fine. If unsure, type <code>/start</code> in the message box and send it.</div></details>
+
+      <details class="faq"><summary>@BotFather isn't responding.</summary>
+        <div class="a">Make sure you opened the <b>verified</b> BotFather (blue ✓). Send
+          <code>/start</code> again. Still silent? Reopen Telegram, check your internet, and retry.
+          Avoid look-alike bots without the checkmark.</div></details>
+
+      <details class="faq"><summary>@userinfobot isn't responding.</summary>
+        <div class="a">Confirm you opened <b>@userinfobot</b> (exact spelling), tapped <b>Start</b>,
+          and sent a message like <code>hi</code>. If nothing comes back, reopen Telegram and retry.
+          A backup helper is <b>@getidsbot</b>.</div></details>
+
+      <details class="faq"><summary>I accidentally created two bots.</summary>
+        <div class="a">Harmless. Decide which to use and copy <b>that</b> bot's token
+          (BotFather → <code>/mybots</code> → pick the bot → <b>API Token</b>). Delete the extra with
+          <code>/deletebot</code> if you like.</div></details>
+
+      <details class="faq"><summary>I downloaded the wrong Telegram app.</summary>
+        <div class="a">Delete it and reinstall the <b>official</b> Telegram (blue paper-plane, by
+          "Telegram FZ-LLC") using the links in Section 3.</div></details>
+
+      <details class="faq"><summary>My Chat ID isn't appearing.</summary>
+        <div class="a">Make sure you <b>sent a message</b> to @userinfobot (like <code>hi</code>)
+          after tapping Start — it only replies once you message it. The ID is the number on the
+          <code>Id:</code> line; copy just the digits.</div></details>
+
+      <details class="faq"><summary>Is my money safe? What can the API key do?</summary>
+        <div class="a">The key only lets your bot <b>place trades on your own Kalshi account</b>.
+          It <b>cannot withdraw</b> funds. Your money stays in your Kalshi account the whole time.</div></details>
+
+      <details class="faq"><summary>Do I need to fund my Kalshi account now?</summary>
+        <div class="a">No. You can finish setup and watch the bot in <b>paper mode</b> (fake money)
+          first. Funding and going live are separate steps you choose later.</div></details>
+
+      <hr class="soft">
+      <h3>Quick troubleshooting table</h3>
+      <table class="tbl">
+        <tr><th>Symptom</th><th>Likely cause</th><th>Do this</th></tr>
+        <tr><td>Can't create an API key</td><td>Using the mobile app</td><td>Open kalshi.com in a browser → Settings → API</td></tr>
+        <tr><td>PEM didn't download</td><td>Browser blocked it</td><td>Allow downloads for kalshi.com or switch browsers, then Download again</td></tr>
+        <tr><td>Lost the PEM</td><td>It downloads once</td><td>Create a new API key; use the new PEM + Key ID</td></tr>
+        <tr><td>Fake Telegram installed</td><td>Copycat app</td><td>Reinstall the official app (blue plane, Telegram FZ-LLC)</td></tr>
+        <tr><td>BotFather silent</td><td>Fake bot / connection</td><td>Open the ✓ verified BotFather; send <code>/start</code>; check internet</td></tr>
+        <tr><td>"Username already taken"</td><td>Popular name</td><td>Add numbers/your name; must end in <code>bot</code></td></tr>
+        <tr><td>Bot never texts me</td><td>Didn't press START</td><td>Open <b>your</b> bot, tap START (or send <code>/start</code>)</td></tr>
+        <tr><td>Token "invalid"</td><td>Copied partially</td><td>Re-copy the whole token (BotFather → <code>/mybots</code> → API Token)</td></tr>
+        <tr><td>No Chat ID shown</td><td>Didn't message userinfobot</td><td>Tap Start, send <code>hi</code>, read the <code>Id:</code> number</td></tr>
+        <tr><td>Chat ID has letters</td><td>Copied wrong part</td><td>Copy only the digits after <code>Id:</code></td></tr>
+      </table>
+      <div class="callout info" style="margin-bottom:0"><span class="ct">Still stuck?</span>
+        <p>Message us with (a) the Section number you're on and (b) a screenshot of what you see.
+          We'll sort it out — but if you followed the pictures here, you almost certainly won't need to.</p></div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="foot">
+  FlipPulse · Your keys and token are sent over a secure (HTTPS) connection, encrypted at rest,
+  and never shared. Funds always remain in your own Kalshi account.
+</footer>
+
+<script>
+  // slim scroll-progress bar
+  var bar = document.getElementById('progress');
+  function upd(){
+    var st = document.documentElement.scrollTop || document.body.scrollTop;
+    var h = (document.documentElement.scrollHeight - document.documentElement.clientHeight) || 1;
+    bar.style.width = (st / h * 100) + '%';
+  }
+  document.addEventListener('scroll', upd, {passive:true});
+  window.addEventListener('resize', upd); upd();
+</script>
+
+</body>
+</html>

@@ -35,7 +35,7 @@ from pathlib import Path
 
 import requests
 from flask import (Flask, abort, make_response, redirect, render_template,
-                   request, url_for)
+                   request, send_from_directory, url_for)
 
 log = logging.getLogger("flippulse.onboarding")
 logging.basicConfig(level=logging.INFO,
@@ -409,6 +409,31 @@ def admin_detail(sub_id: str):
     env_text = "\n".join(f"{k}={v}" for k, v in (env_pairs or []))
     return render_template("admin_detail.html", sub=sub, env_text=env_text,
                            has_env=env_pairs is not None)
+
+
+# ── Pre-onboarding guide (static landing page + step-by-step guide) ───────────
+# The zero-experience setup experience lives in ./guide as self-contained static
+# files (see guide/README.md). Served under /welcome/ so a customer can read the
+# landing page, follow the guide, print the checklist, and then click through to
+# the form at "/". All internal links are relative, so this whole directory is
+# also usable as standalone files or rendered to PDF offline.
+GUIDE_DIR = (Path(__file__).parent / "guide").resolve()
+
+
+@app.get("/welcome")
+def welcome_redirect():
+    return redirect("/welcome/")
+
+
+@app.get("/welcome/")
+def welcome_index():
+    return send_from_directory(GUIDE_DIR, "index.html")
+
+
+@app.get("/welcome/<path:filename>")
+def welcome_file(filename: str):
+    # send_from_directory safely rejects path traversal outside GUIDE_DIR.
+    return send_from_directory(GUIDE_DIR, filename)
 
 
 @app.get("/healthz")

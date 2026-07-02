@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlipPulse Quick Start Checklist</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  /* checklist-specific: compact, print-first */
+  body { background: #fff; }
+  .sheet { max-width: 800px; margin: 0 auto; padding: 26px 30px 60px; }
+  .sheet-head { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid var(--ink);
+    padding-bottom: 14px; margin-bottom: 8px; }
+  .sheet-head .logo { font-size: 26px; }
+  .sheet-head .meta { margin-left: auto; text-align: right; color: var(--muted); font-size: 13.5px; font-weight: 600; }
+  .grp { margin-top: 20px; }
+  .grp h3 { display: flex; align-items: center; gap: 10px; font-size: 18px; margin: 0 0 6px;
+    padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .grp h3 .n { width: 26px; height: 26px; border-radius: 7px; background: var(--grad);
+    color: var(--brand-ink); font-size: 14px; font-weight: 800; display: inline-flex;
+    align-items: center; justify-content: center; }
+  ul.ck { list-style: none; margin: 6px 0; padding: 0; }
+  ul.ck li { display: flex; gap: 12px; align-items: flex-start; padding: 7px 0; font-size: 15.5px;
+    color: var(--ink-soft); break-inside: avoid; }
+  ul.ck li .box { flex: none; width: 20px; height: 20px; border: 2px solid #9aa7bd; border-radius: 5px;
+    margin-top: 2px; }
+  ul.ck li b { color: var(--ink); }
+  .collect { margin-top: 6px; border: 2px dashed var(--brand-2); border-radius: 14px; padding: 16px 18px;
+    background: linear-gradient(180deg,#f2fdfb,#ffffff); }
+  .collect h3 { border: none; margin: 0 0 6px; }
+  .collect .row { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
+  .collect .row:last-child { border-bottom: none; }
+  .collect .tag { flex: none; width: 150px; font-weight: 700; color: var(--ink); font-size: 14.5px; }
+  .collect .fill { flex: 1; border-bottom: 1.5px solid #b9c4d4; height: 20px; }
+  .collect .pemnote { flex: 1; color: var(--muted); font-size: 13.5px; }
+  .tips { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .tips .t { border-radius: 10px; padding: 10px 14px; font-size: 13.5px; border: 1px solid; }
+  .tips .warn { background: var(--red-bg); border-color: var(--red-bd); color: #7f1d1d; }
+  .tips .info { background: var(--blue-bg); border-color: var(--blue-bd); color: #24365e; }
+  .print-btn { margin: 20px 0; }
+  @media (max-width: 560px) { .tips { grid-template-columns: 1fr; } .collect .tag { width: 110px; } }
+  @media print { .sheet { padding: 0 8px; } .print-btn, .nav { display: none !important; } }
+</style>
+</head>
+<body>
+
+<nav class="nav no-print">
+  <div class="nav-in">
+    <a class="logo" href="index.html" style="text-decoration:none">Flip<span class="dot">Pulse</span></a>
+    <span class="spacer"></span>
+    <a class="navlink" href="guide.html">Full Setup Guide</a>
+    <a class="navlink" href="/">Onboarding Form</a>
+  </div>
+</nav>
+
+<div class="sheet">
+  <div class="sheet-head">
+    <span class="logo">Flip<span class="dot">Pulse</span></span>
+    <span style="font-size:19px;font-weight:800">Quick Start Checklist</span>
+    <span class="meta">⏱ ~10–15 min · one time<br>Name: ____________________</span>
+  </div>
+  <p style="color:var(--muted);margin:8px 0 0">
+    Tick each box as you go. Full instructions with pictures:
+    <b>guide.html</b> (or the setup guide PDF).</p>
+
+  <div class="print-btn no-print">
+    <button class="btn btn-dark" onclick="window.print()">🖨 Print this checklist</button>
+    <a class="btn btn-ghost" href="guide.html">Open full guide</a>
+  </div>
+
+  <!-- collect box -->
+  <div class="collect">
+    <h3>🎯 The 4 things you're collecting — write them here</h3>
+    <div class="row"><span class="tag">1 · Kalshi Key ID</span><span class="fill"></span></div>
+    <div class="row"><span class="tag">2 · Kalshi PEM file</span>
+      <span class="pemnote">☐ Saved in my Downloads folder (upload the file — don't retype it)</span></div>
+    <div class="row"><span class="tag">3 · Telegram Token</span><span class="fill"></span></div>
+    <div class="row"><span class="tag">4 · Telegram Chat ID</span><span class="fill"></span></div>
+  </div>
+
+  <!-- Kalshi -->
+  <div class="grp">
+    <h3><span class="n">1</span> Kalshi account &amp; API key</h3>
+    <ul class="ck">
+      <li><span class="box"></span><span>Create a <b>Kalshi account</b> (use the FlipPulse link) and set a password.</span></li>
+      <li><span class="box"></span><span><b>Verify your email</b> (click the link Kalshi sends).</span></li>
+      <li><span class="box"></span><span>Complete <b>identity verification</b> if prompted (name, DOB, last 4 SSN).</span></li>
+      <li><span class="box"></span><span>Go to <b>Settings → API Keys → Create API Key</b>; name it <b>FlipPulse</b>.</span></li>
+      <li><span class="box"></span><span><b>Copy the API Key ID</b> → write it as #1 above.</span></li>
+      <li><span class="box"></span><span><b>Download the PEM file</b> (⚠ downloads once!) → save it; tick #2 above.</span></li>
+    </ul>
+  </div>
+
+  <!-- Telegram install -->
+  <div class="grp">
+    <h3><span class="n">2</span> Install Telegram</h3>
+    <ul class="ck">
+      <li><span class="box"></span><span>Install the <b>official Telegram</b> (blue paper-plane, "Telegram FZ-LLC") on phone or computer.</span></li>
+      <li><span class="box"></span><span>Sign in with your <b>phone number</b> and the 5-digit code; add your first name.</span></li>
+    </ul>
+  </div>
+
+  <!-- Telegram bot -->
+  <div class="grp">
+    <h3><span class="n">3</span> Create your Telegram bot</h3>
+    <ul class="ck">
+      <li><span class="box"></span><span>Search <b>BotFather</b>; open the one with the <b>blue ✓</b>.</span></li>
+      <li><span class="box"></span><span>Tap <b>Start</b>, then send <b>/newbot</b>.</span></li>
+      <li><span class="box"></span><span>Give a <b>name</b> (e.g. FlipPulse Alerts) and a <b>username ending in "bot"</b>.</span></li>
+      <li><span class="box"></span><span><b>Copy the token</b> BotFather gives you → write it as #3 above. (Keep it secret!)</span></li>
+    </ul>
+  </div>
+
+  <!-- Start + chat id -->
+  <div class="grp">
+    <h3><span class="n">4</span> Start the bot &amp; get your Chat ID</h3>
+    <ul class="ck">
+      <li><span class="box"></span><span>Open <b>your new bot</b> (the link from BotFather) and tap <b>START</b>. (Required!)</span></li>
+      <li><span class="box"></span><span>Search <b>@userinfobot</b>, open it, tap <b>Start</b>, send <b>hi</b>.</span></li>
+      <li><span class="box"></span><span>Copy the <b>number</b> after <code>Id:</code> → write it as #4 above.</span></li>
+    </ul>
+  </div>
+
+  <!-- finish -->
+  <div class="grp">
+    <h3><span class="n">✓</span> Finish</h3>
+    <ul class="ck">
+      <li><span class="box"></span><span>Open the <b>Customer Onboarding Form</b>, paste in #1, #3, #4, and <b>upload the PEM (#2)</b>.</span></li>
+      <li><span class="box"></span><span>Submit &amp; complete checkout. Done — your bot starts in <b>paper mode</b> automatically.</span></li>
+    </ul>
+  </div>
+
+  <div class="tips">
+    <div class="t warn"><b>⚠ PEM downloads once.</b> If you lose it, just create a new API key and use the new pair.</div>
+    <div class="t info"><b>ℹ Money stays yours.</b> The API key can only trade on your Kalshi account — it can't withdraw funds.</div>
+  </div>
+
+  <p style="margin-top:22px;text-align:center;color:var(--faint);font-size:13px">
+    FlipPulse · Keep your PEM file and bot token private. Need the pictures? See the full setup guide.</p>
+</div>
+
+</body>
+</html>
