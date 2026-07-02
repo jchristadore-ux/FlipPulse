@@ -9,8 +9,7 @@ operator) can check on it from Telegram without any dashboard:
   /health-log  — tail of the recent health/activity log.
   /help        — list the commands.
 
-Design (mirrors the long-poll listener markeymachine already uses in
-dashboard/telegram_bot.py, trimmed to one customer):
+Design (single-customer long-poll listener):
   * Long-polls Telegram getUpdates in a background daemon thread — no inbound
     webhook, no extra service. railway.toml still just runs `python bot.py`.
   * Only messages from authorized chat ids (TELEGRAM_CHAT_ID plus any

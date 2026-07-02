@@ -322,7 +322,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone, timedelta
 from enum import Enum
-from typing import Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 import requests
 from cryptography.hazmat.primitives import hashes, serialization
@@ -465,12 +465,10 @@ POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
 NORMAL_TRADE_PCT   = _env_float("NORMAL_TRADE_PCT", 0.10)
 RECOVERY_TRADE_PCT = _env_float("RECOVERY_TRADE_PCT", 0.03)
 MAX_TRADE_PCT      = _env_float("MAX_TRADE_PCT", 0.15)
-# v9.1.0: 0.08 → 0.04. At 8% of bankroll per binary bet, an ordinary 4-loss
-# streak costs ~12.5% of the account in one session (2026-06-18: −$246.87 on
-# 1W/4L). Halving the per-bet fraction bounds a cold-streak session.
-MAX_BET_FRACTION    = _env_float("MAX_BET_FRACTION", 0.04)
-KELLY_FRACTION      = _env_float("KELLY_FRACTION", 0.30)
-KELLY_RECOVERY_MULT = _env_float("KELLY_RECOVERY_MULT", 0.50)
+# NOTE: the fixed-dollar-era knobs MAX_BET_FRACTION, KELLY_FRACTION and
+# KELLY_RECOVERY_MULT were removed in the v10 cleanup — sizing is purely the
+# percentage knobs above (kelly math is used only as a positive-expectancy
+# gate in kelly_bet, never as a stake scaler).
 
 # ── Recovery Mode persistence ─────────────────────────────────────────────────
 # Where the recovery state (active flag + target balance) is written so it
@@ -533,11 +531,13 @@ PROBATION_PERSIST            = _env_bool("PROBATION_PERSIST", True)
 PROBATION_RUNG_STEP_PCT      = _env_float("PROBATION_RUNG_STEP_PCT", 0.035)
 
 # ── Dashboard / observability ─────────────────────────────────────────────────
-# When set, the bot writes a small JSON status snapshot once per main-loop cycle
-# (balance, PnL, W/L, active sizing mode, open positions, last signal). The web
-# dashboard reads this to render live status. Unset → no snapshot is written and
-# a standalone `python bot.py` run is completely unaffected.
-STATUS_SNAPSHOT_PATH = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip()
+# The bot writes a small JSON status snapshot here once per main-loop cycle
+# (balance, PnL, W/L, active sizing mode, open positions, last signal); the
+# /status Telegram command (command_bot.py) reads it.
+# Default matches command_bot.py and the provisioned /data volume, so /status
+# works even on a manual deploy that forgets the env var. On a local run with
+# no /data the per-cycle write fails silently (caught in the writer) — harmless.
+STATUS_SNAPSHOT_PATH = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip() or "/data/status_snapshot.json"
 
 # ── Performance-fee billing (high-water mark) — PLACEHOLDER, DISABLED ──────────
 # TEMPORARILY REMOVED: the performance fee is not currently charged, so this
@@ -581,14 +581,11 @@ def _probation_rungs() -> "list[float]":
     return rungs
 
 # ── Risk controls ─────────────────────────────────────────────────────────────
-MIN_BALANCE_FLOOR     = _env_float("MIN_BALANCE_FLOOR", 5.0)
-MAX_DAILY_LOSS        = _env_float("MAX_DAILY_LOSS_DOLLARS", 15.0)
-# v9.1.0: percentage-based daily stop. The fixed $15 cap is mis-scaled for
-# anything but a tiny paper account — on a ~$1969 bankroll it never bound, so
-# the session bled to −$246.87 (12.5%) before RECOVERY froze it. Halt when the
-# session drawdown exceeds the dollar cap OR this fraction of the start balance,
-# whichever binds first.
-MAX_DAILY_LOSS_PCT    = _env_float("MAX_DAILY_LOSS_PCT", 0.06)
+# The v9.4.0 owner directive removed the daily-loss caps and balance floor
+# (MIN_BALANCE_FLOOR / MAX_DAILY_LOSS_DOLLARS / MAX_DAILY_LOSS_PCT were dead
+# config since then and are deleted). The active auto-holds are the
+# consecutive-loss streak pause and the SESSION_STOP_FRACTION catastrophic
+# backstop below; the ladder overlay has its own percentage drawdown guard.
 SESSION_STOP_FRACTION = _env_float("SESSION_STOP_FRACTION", 0.40)
 MAX_CONSEC_LOSSES     = _env_int("MAX_CONSEC_LOSSES", 2)
 STREAK_PAUSE_SECS     = _env_int("STREAK_PAUSE_SECS", 1800)
@@ -632,6 +629,11 @@ MIN_EDGE_PCT          = _env_float("MIN_EDGE_PCT", 0.06)
 MIN_CONFIDENCE        = _env_int("MIN_CONFIDENCE", 65)
 MIN_WIN_PROB          = _env_float("MIN_WIN_PROB", 0.60)
 MIN_MINUTES_TO_EXPIRY = _env_float("MIN_MINUTES_TO_EXPIRY", 6.0)
+# The whole doctrine (momentum windows, expiry floor, session math) is built for
+# 15-MINUTE markets. BTC_SERIES falls back to daily-horizon series when the 15M
+# series has nothing open, so cap how far out a candidate may expire — otherwise
+# a quiet moment could apply 15-minute logic to a market with hours left.
+MAX_MINUTES_TO_EXPIRY = _env_float("MAX_MINUTES_TO_EXPIRY", 20.0)
 YES_BREAKEVEN_PRICE   = _env_int("YES_BREAKEVEN_PRICE", 67)
 
 # v9.3.0: DOCTRINE LAYER 7 — BTC momentum must explicitly AGREE with the OB
@@ -684,14 +686,12 @@ MOMENTUM_ACCURACY_LIFT = _env_float("MOMENTUM_ACCURACY_LIFT", 0.045)
 # win-prob path at all; this keeps win_prob honest if the gate is disabled.
 NEUTRAL_ACCURACY_DRAG  = _env_float("NEUTRAL_ACCURACY_DRAG", 0.02)
 
-# ── Recovery protocol ─────────────────────────────────────────────────────────
-RECOVERY_TRIGGER_PCT  = _env_float("RECOVERY_TRIGGER_PCT", 0.10)
-RECOVERY_EXIT_TRADES  = _env_int("RECOVERY_EXIT_TRADES", 5)
-RECOVERY_WIN_RATE_MIN = _env_float("RECOVERY_WIN_RATE_MIN", 0.60)
-# v9.1.0: hard wall-clock backstop. If recovery cannot clear via the trade-count
-# or balance-heal exits within this window, force-return to ACTIVE so the state
-# machine can never permanently lock itself out of trading again.
-RECOVERY_MAX_SECS     = _env_int("RECOVERY_MAX_SECS", 3600)
+# NOTE: the old drawdown-triggered RECOVERY session state (RECOVERY_TRIGGER_PCT
+# / RECOVERY_EXIT_TRADES / RECOVERY_WIN_RATE_MIN / RECOVERY_MAX_SECS) was
+# removed by the v9.4.0 owner directive; those env vars were dead config and
+# are deleted. Today's "recovery" is the two-tier RecoveryState sizing below
+# (a settled full-size LOSS drops sizing to RECOVERY_TRADE_PCT until the
+# balance heals), which never blocks trading — only shrinks the stake.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -727,6 +727,8 @@ try:
     _private_key = serialization.load_pem_private_key(
         KALSHI_PRIVATE_KEY_PEM.encode("utf-8"), password=None,
     )
+    # Provisioner green-verify boot marker — keep this exact text in sync
+    # with onboarding/provisioner.py LOG_MARKERS.
     log.info("✅ RSA private key loaded.")
 except Exception as e:
     raise ValueError(
@@ -819,7 +821,10 @@ open_orders:               dict     = {}
 active_tickers:            set      = set()
 trade_history:             deque    = deque(maxlen=500)
 session_traded_tickers:    Set[str] = set()
-_processed_settlement_ids: Set[str] = set()
+# Insertion-ordered (dict) so it can be pruned oldest-first without ever
+# re-processing: the settlements endpoint only returns the last ~100 records,
+# so keeping the newest few thousand ids guarantees a pruned id can't reappear.
+_processed_settlement_ids: "dict[str, None]" = {}
 
 paper_balance:          float = 25.0
 paper_daily_pnl:        float = 0.0
@@ -838,10 +843,6 @@ last_daily_summary_ts:  float = 0.0
 last_signal_desc:       str   = "none yet"
 
 session_state:         SessionState = SessionState.ACTIVE
-recovery_trades:       int          = 0
-recovery_entry_wins:   int          = 0
-recovery_entry_losses: int          = 0
-recovery_entered_ts:   float        = 0.0
 _session_start_ts:     str          = ""
 _session_day:          str          = ""
 _session_halted:       bool         = False
@@ -1560,7 +1561,16 @@ def fetch_btc_price() -> Optional[float]:
     return None
 
 
+# Newest sample's arrival time. The deques carry no timestamps, so without this
+# a feed outage (both sources down → 5-min backoff) left compute_regime()
+# trending on frozen data and the bot could still authorize a trade against a
+# market that had since moved. Older than BTC_STALE_MAX_SECS → regime UNKNOWN.
+_btc_last_ingest_ts: float = 0.0
+BTC_STALE_MAX_SECS = _env_int("BTC_STALE_MAX_SECS", 180)
+
+
 def ingest_btc_price() -> None:
+    global _btc_last_ingest_ts
     price = fetch_btc_price()
     if price is None:
         return
@@ -1569,6 +1579,7 @@ def ingest_btc_price() -> None:
         if prev > 0:
             btc_returns.append((price - prev) / prev * 100.0)
     btc_prices.append(price)
+    _btc_last_ingest_ts = time.time()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1595,6 +1606,15 @@ def _linear_regression(ys: list) -> Tuple[float, float, float]:
 
 def compute_regime() -> Tuple[Regime, float, float]:
     if len(btc_prices) < MIN_PRICES_FOR_REGIME:
+        return Regime.UNKNOWN, 0.0, 0.0
+
+    # Staleness gate: a dead feed keeps the deques frozen at their last values,
+    # which would otherwise keep reporting yesterday's trend as live. UNKNOWN
+    # blocks all trading until fresh samples arrive.
+    age = time.time() - _btc_last_ingest_ts
+    if _btc_last_ingest_ts and age > BTC_STALE_MAX_SECS:
+        log.warning("Regime │ BTC feed STALE (%.0fs > %ds) — no trade until fresh data.",
+                    age, BTC_STALE_MAX_SECS)
         return Regime.UNKNOWN, 0.0, 0.0
 
     prices  = list(btc_prices)[-TREND_LOOKBACK:]
@@ -1712,10 +1732,10 @@ def momentum_gate_ok(momentum_verdict: str) -> bool:
     post-mortemed in v6.0.0 (50% loss, 2026-03-27/28) and the cause of the
     2026-06-20→22 bleed, in which all 6 trades fired on BTC=NEUTRAL.
 
-    Applies in EVERY session state. RECOVERY is not exempt: its deadlock is
-    resolved by update_session_state()'s balance-heal exit and RECOVERY_MAX_SECS
-    wall-clock backstop, not by trading unconfirmed setups. A calm, all-NEUTRAL
-    session producing zero trades is correct behaviour.
+    Applies in EVERY sizing mode — recovery included. Recovery's exit is
+    balance-driven (RecoveryState.maybe_exit, checked every cycle), never a
+    reason to trade unconfirmed setups. A calm, all-NEUTRAL session producing
+    zero trades is correct behaviour.
     """
     if not REQUIRE_AGREE_MOMENTUM:
         return True
@@ -1807,6 +1827,13 @@ def check_ob_trend(ticker: str, direction: str, imbalance: float) -> bool:
     now  = time.time()
     prev = _prev_ob.get(ticker)
     _prev_ob[ticker] = (direction, imbalance, now)
+
+    # Prune: a new 15-minute market exists every quarter hour, so without
+    # eviction this dict grows forever in a 24/7 process (~35k entries/year).
+    # Entries older than 10 min are already ignored by the logic below.
+    if len(_prev_ob) > 64:
+        for k in [k for k, (_, _, ts) in _prev_ob.items() if now - ts > 600]:
+            del _prev_ob[k]
 
     if prev is None:
         return True
@@ -2059,19 +2086,6 @@ def performance_guard() -> bool:
 
 def get_session_score() -> int:
     return SESSION_QUALITY.get(datetime.now(timezone.utc).hour, 50)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RECOVERY PROTOCOL
-# ─────────────────────────────────────────────────────────────────────────────
-
-def update_session_state(current_balance: float) -> None:
-    # RECOVERY mode (the 10% drawdown state that halved Kelly sizing) was removed
-    # by owner directive so that drawdown never shrinks the $500 stake. The
-    # session stays ACTIVE; the only auto-hold is the consecutive-loss streak
-    # pause, and the 40% session-stop remains as a catastrophic backstop. HALTED,
-    # if ever set, is left untouched.
-    return
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2358,7 +2372,10 @@ def resolve_open_orders() -> None:
                         matched_oid = oid
                         break
 
-            _processed_settlement_ids.add(rec_id)
+            _processed_settlement_ids[rec_id] = None
+            if len(_processed_settlement_ids) > 4000:      # 24/7 memory bound
+                for k in list(_processed_settlement_ids)[:2000]:
+                    del _processed_settlement_ids[k]
 
             if not matched_oid:
                 # Pre-restart trade: count toward W/L so RECOVERY can exit.
@@ -2544,6 +2561,14 @@ def get_active_market() -> Optional[dict]:
                 continue
             valid = []
             for m in markets:
+                # Horizon gate: never hand a daily-series market (a fallback in
+                # BTC_SERIES) to the 15-minute doctrine. minutes_to_expiry()
+                # returns its 999.0 sentinel when close_time is missing — treat
+                # that as unknown rather than too-far, so an API field change
+                # can't silently stop all trading.
+                mins = minutes_to_expiry(m)
+                if mins != 999.0 and mins > MAX_MINUTES_TO_EXPIRY:
+                    continue
                 bid = _to_cents(m.get("yes_bid_dollars"))
                 ask = _to_cents(m.get("yes_ask_dollars"))
                 if bid > 0 and ask > 0 and bid < ask:
@@ -2583,11 +2608,12 @@ def minutes_to_expiry(market: dict) -> float:
 # GUARD STACK
 # ─────────────────────────────────────────────────────────────────────────────
 
-def daily_loss_check(balance: float) -> bool:
-    # Daily-loss governors (the % and $ caps) and the balance floor were removed
-    # by owner directive: the only active auto-hold is the consecutive-loss
-    # streak pause (streak_check). The 40% session-stop is retained as a
-    # catastrophic backstop only.
+def session_stop_check(balance: float) -> bool:
+    """The catastrophic session backstop (formerly misnamed daily_loss_check —
+    the per-day loss caps were removed by the v9.4.0 owner directive; the only
+    other auto-hold is the consecutive-loss streak pause in streak_check).
+    Halts the day when balance falls below SESSION_STOP_FRACTION of the
+    session-start balance; the UTC rollover clears the halt."""
     global _session_halted
     if _session_halted:
         return False
@@ -2767,7 +2793,7 @@ def telegram_boot(balance: float) -> None:
         f"OBDepth≥${MIN_OB_DEPTH:.0f} | OBImb≥{OB_IMBALANCE_THRESH*100:.0f}%\n"
         f"AGREE-gate={'ON' if REQUIRE_AGREE_MOMENTUM else 'OFF'} | "
         f"Breakeven≤{YES_BREAKEVEN_PRICE}c\n"
-        f"SessionScore≥{MIN_SESSION_SCORE} | Kelly={KELLY_FRACTION}"
+        f"SessionScore≥{MIN_SESSION_SCORE}"
     )
 
 
@@ -2795,8 +2821,8 @@ def telegram_daily_summary(balance: float, pnl: float, wins: int, losses: int) -
 def write_status_snapshot(balance: float) -> None:
     """Write a small JSON status snapshot for the web dashboard.
 
-    No-op unless STATUS_SNAPSHOT_PATH is set, so a standalone `python bot.py`
-    run is unaffected. Never raises — observability must not break trading.
+    Never raises — observability must not break trading (a local run with no
+    /data volume just skips the write).
     """
     if not STATUS_SNAPSHOT_PATH:
         return
@@ -2870,7 +2896,7 @@ def run_decision(market: dict, balance: float) -> None:
         return
     if not cooldown_check():
         return
-    if not daily_loss_check(balance):
+    if not session_stop_check(balance):
         return
     if not streak_check():
         last_signal_desc = f"streak pause ({consecutive_losses}L)"
@@ -2938,10 +2964,10 @@ def run_decision(market: dict, balance: float) -> None:
     # 2026-03-27/28 50% loss). Every trade in the 2026-06-20→22 bleed fired on
     # BTC=NEUTRAL because v9.0.6→v9.2.0 left no NEUTRAL gate here.
     #
-    # Applies in EVERY session state, RECOVERY included. RECOVERY does not relax
-    # this — its deadlock is resolved by the balance-heal exit and
-    # RECOVERY_MAX_SECS in update_session_state(), not by trading unconfirmed
-    # setups. A calm, all-NEUTRAL session producing zero trades is CORRECT.
+    # Applies in EVERY sizing mode, recovery included — recovery's exit is
+    # balance-driven (RecoveryState.maybe_exit, checked every cycle), never a
+    # reason to trade unconfirmed setups. A calm, all-NEUTRAL session producing
+    # zero trades is CORRECT.
     if not momentum_gate_ok(momentum_verdict):
         log.info("Momentum │ require AGREE, got %s (OB=%s) — no trade",
                  momentum_verdict, ob_dir)
@@ -3099,19 +3125,17 @@ def main() -> None:
     global consecutive_losses, last_signal_desc, last_heartbeat_ts, running_pnl
     global live_wins, live_losses, streak_pause_until, live_daily_realized
     global _last_known_balance, _shutdown_requested, _session_start_ts
-    global _session_halted, session_state, recovery_trades
-    global recovery_entry_wins, recovery_entry_losses, _session_day
+    global _session_halted, session_state, _session_day
 
     init_base_url()
 
-    paper_balance         = _env_dollars("PAPER_BALANCE", 25.0)
+    # Default matches .env.example so a manual deploy that skips the var starts
+    # at the same documented paper balance.
+    paper_balance         = _env_dollars("PAPER_BALANCE", 1000.0)
     _session_start_ts     = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _session_day          = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     _session_halted       = False
     session_state         = SessionState.ACTIVE
-    recovery_trades       = 0
-    recovery_entry_wins   = 0
-    recovery_entry_losses = 0
 
     # In-place resets — no global declaration needed
     session_traded_tickers.clear()
@@ -3130,6 +3154,8 @@ def main() -> None:
              MIN_CONFIDENCE, YES_BREAKEVEN_PRICE, NEUTRAL_ACCURACY_DRAG)
     log.info("  Momentum lookback=%d intervals | thresh≥%.2f%% or R²≥%.2f",
              MOMENTUM_LOOKBACK, MOMENTUM_THRESH_PCT, MOMENTUM_R2_MIN)
+    # "Sizing (% of balance)" is a provisioner green-verify boot marker — keep
+    # the prefix in sync with onboarding/provisioner.py LOG_MARKERS.
     log.info("  Sizing (%% of balance): normal=%.1f%% recovery=%.1f%% max=%.1f%%%s",
              NORMAL_TRADE_PCT * 100, RECOVERY_TRADE_PCT * 100, MAX_TRADE_PCT * 100,
              " (RECOVERY active, target $%.2f)" % recovery.target_balance
@@ -3137,7 +3163,7 @@ def main() -> None:
              " (PROBATION ramp, rung %.1f%%→full %.1f%%)"
              % (probation.current_size() * 100, NORMAL_TRADE_PCT * 100)
              if probation.active else "")
-    log.info("  Kelly=%.2f | SessionScore≥%d", KELLY_FRACTION, MIN_SESSION_SCORE)
+    log.info("  SessionScore≥%d", MIN_SESSION_SCORE)
     log.info("  TimePrior: %dh buckets fullN=%d | now=%s prior=%.3f n=%d",
              BUCKET_GROUP_HOURS, BUCKET_PRIOR_FULL_N, bucket_stats.key_now(),
              *bucket_stats.prior_for(bucket_stats.key_now()))
@@ -3281,14 +3307,11 @@ def main() -> None:
                     cash_delta = live_bal - session_start_balance
                     daily_pnl  = live_daily_realized
                     wlb       = wilson_lower_bound(live_wins, live_wins + live_losses)
-                    trades_since = (live_wins + live_losses) - (recovery_entry_wins + recovery_entry_losses)
                     log.info(
-                        "Portfolio │ $%.2f │ PnL=$%+.2f │ cash=$%+.2f │ WR=%d/%d LB=%.1f%% │ Prior=%.3f │ %s"
-                        "%s",
+                        "Portfolio │ $%.2f │ PnL=$%+.2f │ cash=$%+.2f │ WR=%d/%d LB=%.1f%% │ Prior=%.3f │ %s",
                         live_bal, daily_pnl, cash_delta,
                         live_wins, live_wins + live_losses,
                         wlb * 100, _live_prior, session_state.value,
-                        f" (rec+{trades_since})" if session_state == SessionState.RECOVERY else "",
                     )
                     if (datetime.now(timezone.utc).hour == 0
                             and time.time() - last_daily_summary_ts > 3600):

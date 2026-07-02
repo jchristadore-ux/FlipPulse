@@ -36,6 +36,7 @@ from pathlib import Path
 import requests
 from flask import (Flask, abort, make_response, redirect, render_template,
                    request, send_from_directory, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 try:
     import provisioner                     # gunicorn/app run from onboarding/
@@ -47,6 +48,16 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s │ %(levelname)-7s │ %(message)s")
 
 app = Flask(__name__)
+
+# Railway terminates TLS at its proxy, so without this Flask sees plain HTTP:
+# request.is_secure is False (the admin cookie loses its Secure flag) and
+# request.host_url is http:// (breaking the Stripe redirect fallback when
+# PUBLIC_BASE_URL is unset). Trust exactly one proxy hop's forwarding headers.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+# The form's largest legitimate field is a ~4 KB PEM; anything near this cap is
+# abuse. Oversized bodies get a 413 before any parsing or disk write.
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 
 # ── Config (all via env) ──────────────────────────────────────────────────────
 SUBMISSIONS_DIR = Path(os.environ.get("SUBMISSIONS_DIR", Path(__file__).parent / "submissions"))
@@ -234,12 +245,22 @@ def _slug(text: str) -> str:
     return s or "customer"
 
 
-def _notify_operator(sub: dict) -> None:
-    """Telegram alert to the operator. Non-secret summary ONLY."""
+def _send_operator_message(text: str) -> None:
+    """Best-effort Telegram alert to the operator — never breaks the request."""
     if not (TG_BOT_TOKEN and TG_CHAT_ID):
         log.info("Operator Telegram not configured — skipping alert.")
         return
-    text = (
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TG_CHAT_ID, "text": text}, timeout=10)
+    except Exception as e:                      # alerting must not break signup
+        log.warning("Operator alert failed: %s", e)
+
+
+def _notify_operator(sub: dict) -> None:
+    """Telegram alert to the operator. Non-secret summary ONLY."""
+    _send_operator_message(
         "🔔 New FlipPulse signup\n"
         f"Name: {sub['full_name']}\n"
         f"Email: {sub['email']}\n"
@@ -249,12 +270,31 @@ def _notify_operator(sub: dict) -> None:
         f"Submission: {sub['id']}\n"
         "Run:  python admin_cli.py show " + sub["id"]
     )
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TG_CHAT_ID, "text": text}, timeout=10)
-    except Exception as e:                      # alerting must not break signup
-        log.warning("Operator alert failed: %s", e)
+
+
+# ── Submit rate limiting ──────────────────────────────────────────────────────
+# The form is public and marketing traffic includes bots. Every submission
+# writes disk, calls the Telegram API twice (validation), and pings the
+# operator — so throttle per client IP. In-memory is fine: the service runs a
+# single gunicorn worker, and a restart resetting the window is harmless.
+_SUBMIT_WINDOW_SECS = 600
+_SUBMIT_MAX_PER_IP  = 5
+_submit_hits: "dict[str, list[float]]" = {}
+
+
+def _submit_rate_limited(ip: str) -> bool:
+    """True when this IP has exhausted its submissions for the window."""
+    import time
+    now  = time.time()
+    hits = [t for t in _submit_hits.get(ip, []) if now - t < _SUBMIT_WINDOW_SECS]
+    if len(hits) >= _SUBMIT_MAX_PER_IP:
+        _submit_hits[ip] = hits
+        return True
+    hits.append(now)
+    _submit_hits[ip] = hits
+    if len(_submit_hits) > 10_000:              # bound memory under a flood
+        _submit_hits.clear()
+    return False
 
 
 def _start_stripe_checkout(sub: dict):
@@ -291,6 +331,11 @@ def form():
 
 @app.post("/submit")
 def submit():
+    # ProxyFix has already resolved remote_addr to the real client IP.
+    if _submit_rate_limited(request.remote_addr or "?"):
+        return redirect(url_for("form", error=(
+            "Too many sign-up attempts from your connection — please wait a few "
+            "minutes and try again.")))
     f = request.form
     required = ["full_name", "email", "starting_balance", "trading_format",
                 "kalshi_api_key_id", "kalshi_private_key_pem",
@@ -359,8 +404,18 @@ def submit():
     try:
         checkout_url = _start_stripe_checkout(submission)
     except Exception as e:
+        # Stripe is configured but Checkout could not start (outage, bad price
+        # id). The customer must NOT see the normal success page — it claims
+        # payment was received. Show the payment-pending variant and alert the
+        # operator to send a payment link; the submission is already saved.
         log.warning("Stripe checkout failed (submission still saved): %s", e)
-        checkout_url = None
+        _send_operator_message(
+            "⚠️ Stripe Checkout FAILED at signup\n"
+            f"Customer: {submission['full_name']} <{submission['email']}>\n"
+            f"Submission: {sub_id} (saved, payment_status=pending)\n"
+            f"Error: {type(e).__name__}: {e}\n"
+            "Action: send them a payment link / invoice manually.")
+        return redirect(url_for("success", pay="pending"))
     if checkout_url:
         return redirect(checkout_url, code=303)
     return redirect(url_for("success"))
@@ -368,7 +423,8 @@ def submit():
 
 @app.get("/success")
 def success():
-    return render_template("success.html", price_monthly=PRICE_MONTHLY, perf_pct=PERF_PCT)
+    return render_template("success.html", price_monthly=PRICE_MONTHLY, perf_pct=PERF_PCT,
+                           payment_pending=request.args.get("pay") == "pending")
 
 
 @app.get("/cancelled")

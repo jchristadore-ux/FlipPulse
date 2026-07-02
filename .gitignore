@@ -24,3 +24,7 @@ env/
 .DS_Store
 .idea/
 .vscode/
+
+# Runtime logs (normally on the /data volume; ignore local-run artifacts)
+health.log
+billing.log

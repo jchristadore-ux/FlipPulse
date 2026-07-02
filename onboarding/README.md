@@ -116,5 +116,11 @@ Both print the ready-to-paste Railway variables (the customer's `TRADING_FORMAT`
 - Serve **only over HTTPS**. The form transmits a Kalshi private key.
 - Submission files are `chmod 600` and git-ignored. Rotate `ONBOARDING_FERNET_KEY`
   by re-encrypting existing submissions if it is ever exposed.
+- **Back up `ONBOARDING_FERNET_KEY` the day you generate it** (password manager, at
+  minimum two places). It is a single point of failure: lose it and every stored
+  submission — including paying customers not yet provisioned — is permanently
+  unreadable. Rotation procedure: generate a new key, decrypt each submission's
+  `secrets_encrypted` values with the old key and re-encrypt with the new one,
+  swap the env var, redeploy, then destroy the old key.
 - Funds stay on Kalshi — this service never touches customer money; it only
   collects setup/subscription payment via Stripe.

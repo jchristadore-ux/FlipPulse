@@ -1,5 +1,15 @@
 # FlipPulse — Production Readiness Audit (2026-07-02)
 
+> **Fix status (updated 2026-07-02).** Resolved since this audit was written:
+> C-1, C-2, C-3 (PR #15) · H-1, H-2, H-3, H-8 (PR #16) · H-5, M-1, M-2, M-3,
+> M-5, M-6, L-3, the B.1 dead-config/dead-code inventory, the B.2 requirements
+> split, quick wins #5/#7/#9, consistency items #3 (rename), #4 (heartbeat
+> label) and #5 (marker comments), plus first engine test coverage for H-4
+> (`test_bot_engine.py` — settlement reconstruction, PEM normalization, sizing,
+> edge math). Still open: H-4 beyond the pure functions, M-4 (submission write
+> lock), C.1/C.2 logger + env-prefix consolidation, B.2 repo/media split, the
+> `bot.py` changelog-header move, and L-1/L-2/L-4.
+
 Full-system audit ahead of the customer-acquisition launch. Scope: every file in
 the repository, the onboarding flow end-to-end, and production hardening for
 24/7 unattended operation at scale.

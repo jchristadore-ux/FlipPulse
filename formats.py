@@ -162,63 +162,6 @@ FORMATS: Dict[str, dict] = {
 }
 
 
-# Trading parameters that may be overridden per account (e.g. via a future
-# dashboard/command). Curated allowlist: tunable strategy knobs only — never
-# DEMO_MODE (paper safety), credentials, or state-file paths. Each maps to a
-# coercion so values are validated before they reach a worker's env.
-ALLOWED_PARAM_KEYS = {
-    "NORMAL_TRADE_PCT": float,
-    "RECOVERY_TRADE_PCT": float,
-    "MAX_TRADE_PCT": float,
-    "OB_IMBALANCE_THRESH": float,
-    "MIN_OB_DEPTH_DOLLARS": float,
-    "R2_TREND_THRESHOLD": float,
-    "MOMENTUM_THRESH_PCT": float,
-    "MIN_EDGE_PCT": float,
-    "MIN_WIN_PROB": float,
-    "MIN_CONFIDENCE": int,
-    "MAX_CONCURRENT_POS": int,
-    "MAX_CONSEC_LOSSES": int,
-    "SESSION_STOP_FRACTION": float,
-    "YES_BREAKEVEN_PRICE": int,
-    "POLL_INTERVAL_SECS": int,
-    "LADDER_ENABLED": "bool",
-    "PROBATION_RAMP_ENABLED": "bool",
-    "REQUIRE_AGREE_MOMENTUM": "bool",
-}
-
-# Keys that are fractions of balance in [0, 1]; a percentage override is
-# range-checked so a fat-fingered "50" can never mean 5000% of the account.
-_FRACTION_KEYS = {"NORMAL_TRADE_PCT", "RECOVERY_TRADE_PCT", "MAX_TRADE_PCT",
-                  "SESSION_STOP_FRACTION", "MIN_EDGE_PCT", "MIN_WIN_PROB",
-                  "OB_IMBALANCE_THRESH", "R2_TREND_THRESHOLD"}
-
-
-def coerce_param(key: str, value: str) -> str:
-    """Validate a parameter override. Returns the normalized string to store in
-    env. Raises ValueError on an unknown key or unparseable/out-of-range value."""
-    key = (key or "").strip().upper()
-    if key not in ALLOWED_PARAM_KEYS:
-        raise ValueError(
-            f"'{key}' is not an adjustable parameter. Allowed: "
-            + ", ".join(sorted(ALLOWED_PARAM_KEYS)))
-    kind = ALLOWED_PARAM_KEYS[key]
-    raw = (value or "").strip()
-    if kind == "bool":
-        if raw.lower() not in ("true", "false", "1", "0", "yes", "no"):
-            raise ValueError(f"{key} must be true/false.")
-        return "true" if raw.lower() in ("true", "1", "yes") else "false"
-    try:
-        num = kind(raw)  # float(...) / int(...)
-    except (TypeError, ValueError):
-        raise ValueError(f"{key} must be a {kind.__name__}.")
-    if key in _FRACTION_KEYS and not (0.0 <= float(num) <= 1.0):
-        raise ValueError(
-            f"{key} is a fraction of balance and must be between 0 and 1 "
-            f"(e.g. 0.10 for 10%). Got {raw}.")
-    return str(num)
-
-
 def _resolve(name: str) -> str:
     """Normalize a requested format name to a known key, or DEFAULT_FORMAT."""
     key = (name or "").strip().lower().replace("-", "_").replace(" ", "_")
