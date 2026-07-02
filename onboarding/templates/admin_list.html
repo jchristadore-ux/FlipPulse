@@ -26,8 +26,9 @@
   <div class="sub">{{ subs|length }} submission(s). Click one to get the deploy variables.</div>
   {% if subs %}
   <table>
-    <tr><th>When</th><th>Name</th><th>Email</th><th>Format</th><th>Balance</th><th>Payment</th><th></th></tr>
+    <tr><th>When</th><th>Name</th><th>Email</th><th>Format</th><th>Balance</th><th>Payment</th><th>Bot</th><th></th></tr>
     {% for s in subs %}
+    {% set pst = (s.provisioning or {}).get('status') %}
     <tr>
       <td>{{ s.created_at[:16].replace('T',' ') }}</td>
       <td>{{ s.full_name }}</td>
@@ -35,6 +36,9 @@
       <td class="fmt">{{ s.trading_format }}</td>
       <td>${{ '{:,.0f}'.format(s.starting_balance) }}</td>
       <td class="{{ 'paid' if s.payment_status == 'paid' else 'pending' }}">{{ s.payment_status }}</td>
+      <td class="{{ 'paid' if pst == 'provisioned' else 'pending' }}">
+        {{ {'provisioned':'✅ running','in_progress':'⏳ deploying','failed':'❌ failed',
+            'deprovisioned':'🗑 removed'}.get(pst, '—') }}</td>
       <td><a href="{{ url_for('admin_detail', sub_id=s.id) }}">deploy →</a></td>
     </tr>
     {% endfor %}

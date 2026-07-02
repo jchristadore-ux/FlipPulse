@@ -16,6 +16,19 @@ supervisor — one repo/template → one Railway project → one bot per custome
 Every customer starts in **paper mode** (`DEMO_MODE=true`). Going live is a separate,
 deliberate step (last section). Budget ~15 minutes per customer.
 
+> ## ⚡ This runbook is now automated
+> Everything below from §2 through §6 (project, service, volume, variables, deploy,
+> verify) is executed automatically by the onboarding service the moment Stripe
+> confirms payment — see **[`AUTOMATED_PROVISIONING.md`](AUTOMATED_PROVISIONING.md)**
+> for the one-time setup (`RAILWAY_API_TOKEN`) and how it works. With automation on,
+> a signup's happy path needs **zero** operator action: you get a
+> "✅ FlipPulse bot provisioned" Telegram alert with the project link, and `/admin`
+> shows the bot as running. Manual fallbacks: the **Provision bot now** button on the
+> `/admin` deploy view, or `python admin_cli.py provision <id>`.
+>
+> The steps below remain as the **manual fallback** and as the reference for what the
+> automation does. Going live (§8) is still deliberately manual.
+
 ---
 
 ## 0. A signup lands (from the digital form)
@@ -250,9 +263,11 @@ Do **not** do this during initial onboarding. When the customer is ready:
    https URL). The form then runs Checkout in `subscription` mode: the setup fee lands on
    the first invoice, the subscription recurs monthly, and the **card is saved** on file
    for any future invoices.
-4. *(Optional)* Add a Stripe webhook to `POST /stripe/webhook` for
+4. Add a Stripe webhook to `POST /stripe/webhook` for
    `checkout.session.completed` and set `STRIPE_WEBHOOK_SECRET` — the submission is then
-   auto-marked `paid`.
+   auto-marked `paid`, **and (with `RAILWAY_API_TOKEN` set) the customer's bot is
+   provisioned automatically** — see
+   [`AUTOMATED_PROVISIONING.md`](AUTOMATED_PROVISIONING.md).
 
 See [`onboarding/README.md`](onboarding/README.md) for the full env-var list and how to
 deploy the form as its own Railway service.

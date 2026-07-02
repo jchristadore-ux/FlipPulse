@@ -11,6 +11,11 @@ Usage:
     ONBOARDING_FERNET_KEY=... python admin_cli.py list
     ONBOARDING_FERNET_KEY=... python admin_cli.py show <submission_id>
     ONBOARDING_FERNET_KEY=... python admin_cli.py env  <submission_id>   # .env format
+
+Automated provisioning (also needs RAILWAY_API_TOKEN; see AUTOMATED_PROVISIONING.md):
+    ... python admin_cli.py provision   <submission_id>   # create/resume the Railway bot
+    ... python admin_cli.py status      <submission_id>   # show provisioning state
+    ... python admin_cli.py deprovision <submission_id>   # DELETE the customer's Railway project
 """
 
 from __future__ import annotations
@@ -92,6 +97,45 @@ def cmd_env(sub_id: str) -> None:
         print(f'{k}={v}')
 
 
+def cmd_provision(sub_id: str) -> None:
+    """Run (or resume) automated provisioning synchronously, printing progress.
+    The paid gate is skipped — running this command IS the operator decision."""
+    import provisioner
+    try:
+        prov = provisioner.provision(sub_id, require_paid=False)
+    except provisioner.ProvisionError as e:
+        sys.exit(f"❌ Provisioning failed at step {e.step!r}: {e}\n"
+                 f"   Re-run to resume from the last completed step.")
+    print(f"✅ Provisioned. Railway project: https://railway.app/project/{prov['project_id']}")
+    print("   Bot is in PAPER mode (DEMO_MODE=true). Going live stays a manual step.")
+
+
+def cmd_status(sub_id: str) -> None:
+    sub = _load(sub_id)
+    prov = sub.get("provisioning") or {}
+    if not prov:
+        print(f"{sub_id}: not provisioned.")
+        return
+    for k in ("status", "step", "error", "project_id", "environment_id",
+              "service_id", "volume_id", "deployment_id", "provisioned_at", "updated_at"):
+        if prov.get(k):
+            print(f"{k:16} {prov[k]}")
+    if prov.get("project_id"):
+        print(f"{'railway':16} https://railway.app/project/{prov['project_id']}")
+
+
+def cmd_deprovision(sub_id: str) -> None:
+    import provisioner
+    sub = _load(sub_id)
+    project_id = (sub.get("provisioning") or {}).get("project_id")
+    answer = input(f"DELETE Railway project {project_id} for {sub.get('full_name')!r}? "
+                   "This stops their bot. Type the customer handle to confirm: ")
+    if answer.strip() != sub.get("handle"):
+        sys.exit("Aborted — handle did not match.")
+    provisioner.deprovision(sub_id)
+    print("🗑 Project deleted; submission marked deprovisioned.")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit(__doc__)
@@ -102,6 +146,12 @@ def main() -> None:
         cmd_show(sys.argv[2])
     elif cmd == "env" and len(sys.argv) == 3:
         cmd_env(sys.argv[2])
+    elif cmd == "provision" and len(sys.argv) == 3:
+        cmd_provision(sys.argv[2])
+    elif cmd == "status" and len(sys.argv) == 3:
+        cmd_status(sys.argv[2])
+    elif cmd == "deprovision" and len(sys.argv) == 3:
+        cmd_deprovision(sys.argv[2])
     else:
         sys.exit(__doc__)
 
