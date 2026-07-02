@@ -82,8 +82,14 @@ class LadderConfig:
     # lower bounds; see StakeManager.TIERS for the canonical ladder.
     max_multiplier:    float = 2.0     # hard ceiling — never size past 2x base
 
-    # Safety / drawdown controls
-    max_daily_loss:    float = 15.0    # $ loss that trips the drawdown override
+    # Safety / drawdown controls. The drawdown trigger is a FRACTION of the
+    # current balance (consistent with v10 percentage sizing) — a fixed dollar
+    # figure can't fit every customer's bankroll (a $15 default tripped on the
+    # first loss for any real balance, permanently reverting the ladder to 1x).
+    # max_daily_loss ($, LADDER_MAX_DAILY_LOSS_DOLLARS) is an explicit override:
+    # when > 0 it wins over the percentage.
+    max_daily_loss_pct: float = 0.20   # daily loss fraction of balance that trips the override
+    max_daily_loss:    float = 0.0     # $ override; 0 = use the percentage
     drawdown_action:   str   = "revert"  # "revert" -> 1x base, "pause" -> 0 stake
     streak_demote_at:  int   = 4       # losing streak length that demotes one tier
     vol_cap_at_base:   bool  = True    # a vol-spike flag caps stake at baseline
@@ -102,7 +108,11 @@ class LadderConfig:
             window           = _env_int("LADDER_WINDOW", 30),
             min_trades       = _env_int("LADDER_MIN_TRADES", 10),
             max_multiplier   = _env_float("LADDER_MAX_MULT", 2.0),
-            max_daily_loss   = _env_float("MAX_DAILY_LOSS_DOLLARS", 15.0),
+            max_daily_loss_pct = _env_float("LADDER_MAX_DAILY_LOSS_PCT", 0.20),
+            # Legacy dollar knob kept as an explicit override (0 = off). The old
+            # $15 default is gone — see the field comment above.
+            max_daily_loss   = _env_float("LADDER_MAX_DAILY_LOSS_DOLLARS",
+                                          _env_float("MAX_DAILY_LOSS_DOLLARS", 0.0)),
             drawdown_action  = os.environ.get("LADDER_DRAWDOWN_ACTION", "revert").strip().lower(),
             streak_demote_at = _env_int("LADDER_STREAK_DEMOTE_AT", 4),
             vol_cap_at_base  = _env_bool("LADDER_VOL_CAP_AT_BASE", True),
@@ -266,12 +276,16 @@ class RiskGuardrails:
         daily_pnl:       float,
         vol_spike:       bool,
         cooldown_active: bool,
+        daily_loss_cap:  Optional[float] = None,
     ) -> GuardResult:
         mult   = base_multiplier
         reasons: List[str] = []
 
-        # 1. Daily drawdown — overrides everything.
-        if daily_pnl <= -abs(self.cfg.max_daily_loss):
+        # 1. Daily drawdown — overrides everything. `daily_loss_cap` is the
+        # resolved DOLLAR threshold for this call (percentage of the caller's
+        # balance, or the explicit dollar override). None/<=0 → no balance was
+        # supplied and no override is set, so the drawdown guard is inactive.
+        if daily_loss_cap and daily_loss_cap > 0 and daily_pnl <= -abs(daily_loss_cap):
             if self.cfg.drawdown_action == "pause":
                 return GuardResult(0.0, f"DRAWDOWN pause (pnl ${daily_pnl:.2f})", paused=True)
             return GuardResult(min(mult, 1.0), f"DRAWDOWN revert→base (pnl ${daily_pnl:.2f})")
@@ -336,12 +350,17 @@ class StakeLadder:
 
     # ── public hook: BEFORE every trade ─────────────────────────────────────
     def get_stake(self, base_stake: float,
-                  max_stake: Optional[float] = None) -> StakeDecision:
+                  max_stake: Optional[float] = None,
+                  balance: Optional[float] = None) -> StakeDecision:
         """Compute the stake for the next trade. Deterministic.
 
         base_stake : the strategy's intended size (e.g. the Kelly stake).
         max_stake  : optional absolute ceiling on the returned dollar amount
                      (e.g. a balance-fraction cap); applied last.
+        balance    : the account balance, used to resolve the percentage
+                     drawdown trigger (max_daily_loss_pct × balance) to dollars.
+                     Omitted → the drawdown guard only fires on the explicit
+                     dollar override (cfg.max_daily_loss), if set.
         """
         self._roll_day_if_needed()
         tracker = self.tracker
@@ -362,6 +381,7 @@ class StakeLadder:
             daily_pnl       = self.daily_pnl,
             vol_spike       = self.vol_spike,
             cooldown_active = self._cooldown_active(),
+            daily_loss_cap  = self._daily_loss_cap(balance),
         )
 
         if guard.paused:
@@ -443,6 +463,15 @@ class StakeLadder:
             self._save()
 
     # ── internals ───────────────────────────────────────────────────────────
+    def _daily_loss_cap(self, balance: Optional[float]) -> Optional[float]:
+        """Resolve the drawdown trigger to dollars for this call: the explicit
+        dollar override wins; otherwise the percentage of the given balance."""
+        if self.cfg.max_daily_loss > 0:
+            return self.cfg.max_daily_loss
+        if balance and balance > 0 and self.cfg.max_daily_loss_pct > 0:
+            return self.cfg.max_daily_loss_pct * balance
+        return None
+
     def _cooldown_active(self) -> bool:
         time_block  = self._clock() < self.cooldown_until
         cycle_block = self.tracker.cycles < self.cooldown_cycle
@@ -517,7 +546,9 @@ def simulate() -> None:
     print(f"\n{'#':>2} {'stake':>6} {'mult':>5} {'tier':<20} {'WR':>6} {'reason'}")
     print("-" * 78)
     for i, won in enumerate(tape, 1):
-        d = ladder.get_stake(base)
+        # balance=50 → 20% drawdown trigger = $10, so the 4-loss streak (-$12)
+        # demonstrates the drawdown override in the printed table.
+        d = ladder.get_stake(base, balance=50.0)
         print(f"{i:>2} ${d.stake:>5.2f} {d.multiplier:>5.2f} {d.tier:<20} "
               f"{d.win_rate*100:>5.1f}% {d.reason}")
         ladder.on_trade_result(won, pnl_win if won else pnl_loss)

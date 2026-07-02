@@ -195,3 +195,55 @@ def test_deprovision_deletes_the_recorded_project(submission, tmp_path):
     prov_mod.deprovision(submission["id"], client=client)
     assert ("project_delete", "proj-1") in client.calls
     assert _stored(tmp_path, submission["id"])["provisioning"]["status"] == "deprovisioned"
+
+# ── boot reconciliation sweep ─────────────────────────────────────────────────
+# The queue is in-memory and Stripe never retries an acknowledged webhook, so a
+# restart must re-enqueue every paid submission whose provisioning never
+# finished — and must never resurrect a deliberately deprovisioned customer.
+
+def _write_sub(tmp_path, sub, sub_id, payment="paid", provisioning=None):
+    d = dict(sub, id=sub_id)
+    d["payment_status"] = payment
+    if provisioning is not None:
+        d["provisioning"] = provisioning
+    else:
+        d.pop("provisioning", None)
+    (tmp_path / f"{sub_id}.json").write_text(json.dumps(d))
+
+
+@pytest.fixture
+def enqueue_recorder(monkeypatch):
+    """Capture re-enqueued ids instead of spinning worker threads."""
+    queued = []
+    monkeypatch.setattr(prov_mod, "enqueue", lambda sub_id, require_paid=True: queued.append(sub_id))
+    monkeypatch.setattr(prov_mod, "RAILWAY_API_TOKEN", "tok")   # is_configured() → True
+    monkeypatch.setattr(prov_mod, "_notify_operator", lambda text: None)
+    return queued
+
+
+def test_sweep_requeues_paid_unfinished(submission, tmp_path, enqueue_recorder):
+    from datetime import datetime, timedelta, timezone
+    stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    fresh = datetime.now(timezone.utc).isoformat()
+    (tmp_path / f"{submission['id']}.json").unlink()   # only the explicit cases below
+    _write_sub(tmp_path, submission, "s-never")                                    # paid, never attempted
+    _write_sub(tmp_path, submission, "s-failed",
+               provisioning={"status": "failed", "step": "deploy"})                # paid, failed mid-run
+    _write_sub(tmp_path, submission, "s-stale",
+               provisioning={"status": "in_progress", "updated_at": stale})        # worker died
+    _write_sub(tmp_path, submission, "s-live",
+               provisioning={"status": "in_progress", "updated_at": fresh})        # live worker owns it
+    _write_sub(tmp_path, submission, "s-done", provisioning={"status": "provisioned"})
+    _write_sub(tmp_path, submission, "s-deleted", provisioning={"status": "deprovisioned"})
+    _write_sub(tmp_path, submission, "s-unpaid", payment="pending")
+
+    requeued = prov_mod.reconcile_pending()
+    assert sorted(requeued) == ["s-failed", "s-never", "s-stale"]
+    assert sorted(enqueue_recorder) == ["s-failed", "s-never", "s-stale"]
+
+
+def test_sweep_noop_without_railway_token(submission, tmp_path, enqueue_recorder, monkeypatch):
+    monkeypatch.setattr(prov_mod, "RAILWAY_API_TOKEN", "")
+    _write_sub(tmp_path, submission, "s-never")
+    assert prov_mod.reconcile_pending() == []
+    assert enqueue_recorder == []

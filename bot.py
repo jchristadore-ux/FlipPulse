@@ -392,6 +392,20 @@ def _env_bool(key: str, default: bool) -> bool:
     return raw in ("true", "1", "yes")
 
 
+def _env_dollars(key: str, default: float) -> float:
+    """Tolerant dollar-amount parse: accepts human formatting like '$1,000' or
+    ' 1000.50 '. A malformed value falls back to the default with a WARNING —
+    a bad paste must never crash-loop a customer deploy at boot."""
+    raw = os.environ.get(key, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw.replace("$", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        log.warning("%s=%r is not a number — using default %.2f", key, raw, default)
+        return default
+
+
 # ── Trading Format preset overlay ─────────────────────────────────────────────
 # A "Trading Format" is a named bundle of the env values below (sizing posture,
 # gate strictness, ladder/recovery toggles). apply_format() seeds the selected
@@ -1984,7 +1998,8 @@ def kelly_bet(win_prob: float, contract_price_cents: int, balance: float) -> flo
     if stake_ladder is not None:
         cap_mult = 1.0 if in_clawback() else stake_ladder.cfg.max_multiplier
         ceiling  = min(cap_mult * size, max_dollars, balance)
-        decision = stake_ladder.get_stake(base_bet, max_stake=ceiling)
+        # balance resolves the ladder's percentage drawdown trigger to dollars.
+        decision = stake_ladder.get_stake(base_bet, max_stake=ceiling, balance=balance)
         return decision.stake
 
     return base_bet
@@ -2741,7 +2756,7 @@ def place_order(ticker: str, direction: str, bet_dollars: float,
 def telegram_boot(balance: float) -> None:
     mode = "📋 PAPER" if DEMO_MODE else "🔴 LIVE"
     tg.send_telegram_message(
-        f"🤖 MarkeyMachine {BOT_VERSION} STARTED\n"
+        f"🤖 FlipPulse {BOT_VERSION} STARTED\n"
         f"{mode} │ State: {session_state.value}\n"
         f"Balance: ${balance:.2f}\n"
         f"Size={active_trade_fraction()*100:.1f}% (~${active_trade_size(balance):.0f}) "
@@ -3089,7 +3104,7 @@ def main() -> None:
 
     init_base_url()
 
-    paper_balance         = float(os.environ.get("PAPER_BALANCE", "25.0"))
+    paper_balance         = _env_dollars("PAPER_BALANCE", 25.0)
     _session_start_ts     = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _session_day          = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     _session_halted       = False
@@ -3103,7 +3118,7 @@ def main() -> None:
     _processed_settlement_ids.clear()
 
     log.info("━" * 70)
-    log.info("  MARKEYMACHINE %s │ %s", BOT_VERSION, "PAPER 🟡" if DEMO_MODE else "LIVE 🔴")
+    log.info("  FLIPPULSE %s │ %s", BOT_VERSION, "PAPER 🟡" if DEMO_MODE else "LIVE 🔴")
     log.info("  Trading Format: %s", TRADING_FORMAT)
     log.info("  Start: %s", _session_start_ts)
     log.info("  Regime R²≥%.2f | VolCap=%.3f%% | Circuit=%.2f%%",
@@ -3165,11 +3180,11 @@ def main() -> None:
         if balance_err is not None:
             log.error("Cannot fetch starting balance after 5 attempts — exiting "
                       "for restart: %s", balance_err)
-            tg.send_telegram_message(f"🛑 MarkeyMachine {BOT_VERSION} boot failed: balance error")
+            tg.send_telegram_message(f"🛑 FlipPulse {BOT_VERSION} boot failed: balance error")
             sys.exit(1)
         if bal <= 0.0:
             log.error("Starting balance $0 — exiting for restart")
-            tg.send_telegram_message(f"🛑 MarkeyMachine {BOT_VERSION} boot failed: balance=$0")
+            tg.send_telegram_message(f"🛑 FlipPulse {BOT_VERSION} boot failed: balance=$0")
             sys.exit(1)
         _last_known_balance    = bal
         session_start_balance  = bal
@@ -3295,7 +3310,7 @@ def main() -> None:
 
     final = paper_balance if DEMO_MODE else get_live_balance()
     log.info("Shutdown. Final balance: $%.2f", final)
-    tg.send_telegram_message(f"🛑 MarkeyMachine {BOT_VERSION} stopped. Final: ${final:.2f}")
+    tg.send_telegram_message(f"🛑 FlipPulse {BOT_VERSION} stopped. Final: ${final:.2f}")
 
 
 if __name__ == "__main__":

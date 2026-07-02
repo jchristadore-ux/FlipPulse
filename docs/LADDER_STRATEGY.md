@@ -83,9 +83,13 @@ clears wins:
 
 ### Safety / drawdown controls (always on, in priority order)
 
-1. **Daily drawdown** — if `daily_pnl ≤ -MAX_DAILY_LOSS_DOLLARS`, revert to
-   baseline (`LADDER_DRAWDOWN_ACTION=revert`, default) or pause sizing to `$0`
-   (`=pause`). Highest priority — outranks every tier.
+1. **Daily drawdown** — if the day's `daily_pnl` falls below
+   `-LADDER_MAX_DAILY_LOSS_PCT × balance` (default 20% of the current balance,
+   consistent with the bot's percentage sizing), revert to baseline
+   (`LADDER_DRAWDOWN_ACTION=revert`, default) or pause sizing to `$0`
+   (`=pause`). `LADDER_MAX_DAILY_LOSS_DOLLARS` (or the legacy
+   `MAX_DAILY_LOSS_DOLLARS`) is an explicit dollar override that wins when set
+   > 0. Highest priority — outranks every tier.
 2. **Losing streak** — `≥ 4` consecutive losses (`LADDER_STREAK_DEMOTE_AT`)
    demotes the stake exactly **one rung** down the ladder.
 3. **Volatility spike** — an externally-fed `set_vol_spike(True)` flag caps the
@@ -163,7 +167,8 @@ wedges; the worst case is grinding at the reduced floor.
 | `LADDER_WINDOW` | `30` | Rolling window size (20–50) |
 | `LADDER_MIN_TRADES` | `10` | Warm-up trades before sizing up |
 | `LADDER_MAX_MULT` | `2.0` | Absolute multiplier ceiling |
-| `MAX_DAILY_LOSS_DOLLARS` | `15.0` | Drawdown override trigger (shared with bot) |
+| `LADDER_MAX_DAILY_LOSS_PCT` | `0.20` | Drawdown trigger as a fraction of balance |
+| `LADDER_MAX_DAILY_LOSS_DOLLARS` | `0` (off) | Explicit dollar override; wins over the percentage when > 0 |
 | `LADDER_DRAWDOWN_ACTION` | `revert` | `revert` → 1× base, or `pause` → $0 |
 | `LADDER_STREAK_DEMOTE_AT` | `4` | Losing streak length that demotes one tier |
 | `LADDER_VOL_CAP_AT_BASE` | `true` | Vol-spike flag caps at baseline |
