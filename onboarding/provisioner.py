@@ -521,3 +521,58 @@ def enqueue(sub_id: str, require_paid: bool = True) -> None:
             _workers_started = True
     _queue.put((sub_id, require_paid))
     log.info("Queued %s for provisioning.", sub_id)
+
+
+def reconcile_pending() -> list[str]:
+    """Boot-time sweep: re-enqueue every PAID submission whose provisioning
+    never finished, and return the re-enqueued ids.
+
+    WHY: the provisioning queue is in-memory. Stripe gets its 200 the moment
+    the webhook enqueues, so if this service restarts (deploy, crash, Railway
+    maintenance) before the worker finishes, the job is simply gone — and
+    Stripe never retries an acknowledged event. Without this sweep a paying
+    customer could silently never get their bot.
+
+    Picked up:
+      • paid, never attempted (status None) or "failed"      → resume/retry
+      • paid, "in_progress" with a checkpoint older than the lock TTL
+        (the worker died mid-run; the stale lockfile self-clears)  → resume
+    Skipped:
+      • "provisioned" (done) and "deprovisioned" (deliberate operator delete —
+        must never be silently resurrected)
+      • "in_progress" with a fresh checkpoint (a live worker owns it)
+    provision() itself resumes from per-step checkpoints, so a re-enqueued job
+    never duplicates Railway resources."""
+    if not is_configured():
+        return []
+    requeued: list[str] = []
+    now = datetime.now(timezone.utc)
+    for path in sorted(SUBMISSIONS_DIR.glob("*.json")):
+        try:
+            sub = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if sub.get("payment_status") != "paid" or not sub.get("id"):
+            continue
+        prov = sub.get("provisioning") or {}
+        status = prov.get("status")
+        if status in ("provisioned", "deprovisioned"):
+            continue
+        if status == "in_progress":
+            try:
+                updated = datetime.fromisoformat(prov.get("updated_at", ""))
+                if (now - updated).total_seconds() < _LOCK_STALE_SECS:
+                    continue                       # a live worker owns it
+            except ValueError:
+                pass                               # unparseable → treat as stale
+        enqueue(sub["id"])
+        requeued.append(sub["id"])
+    if requeued:
+        log.warning("Boot sweep: re-enqueued %d paid submission(s) whose "
+                    "provisioning never finished: %s", len(requeued), requeued)
+        _notify_operator(
+            "♻️ FlipPulse provisioning boot sweep\n"
+            f"Re-enqueued {len(requeued)} paid submission(s) left unfinished by a "
+            "restart:\n" + "\n".join(requeued) +
+            "\nEach resumes from its last completed step; results will follow here.")
+    return requeued

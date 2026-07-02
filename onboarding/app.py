@@ -87,6 +87,17 @@ PERF_PCT      = os.environ.get("ONBOARDING_PERF_PCT", "0")   # placeholder — f
 VALID_FORMATS = ("conservative", "balanced", "aggressive")
 SECRET_FIELDS = ("kalshi_api_key_id", "kalshi_private_key_pem", "telegram_bot_token")
 
+# Boot reconciliation: the provisioning queue is in-memory, so a restart between
+# Stripe's webhook (already acknowledged with a 200 — Stripe won't retry) and
+# the worker finishing would otherwise strand a PAID customer with no bot and no
+# alert. Re-enqueue anything paid-but-unfinished; each job resumes from its last
+# checkpoint. Best-effort — a sweep failure must never stop the app booting.
+if AUTO_PROVISION and provisioner.is_configured():
+    try:
+        provisioner.reconcile_pending()
+    except Exception:                              # pragma: no cover - defensive
+        log.exception("Provisioning boot sweep failed — continuing to serve.")
+
 
 def _fernet():
     """Return a Fernet cipher, or None if no key is configured (secrets then

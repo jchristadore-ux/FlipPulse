@@ -89,7 +89,7 @@ def validate_telegram_connection() -> bool:
     if len(_recipients) > 1:
         log.info("Telegram fan-out to %d recipients (customer + operator).", len(_recipients))
 
-    if _send_raw("🤖 MarkeyMachine connected to Telegram.\nCredentials validated ✅ — alerts active."):
+    if _send_raw("🤖 FlipPulse connected to Telegram.\nCredentials validated ✅ — alerts active."):
         log.info("✅ Telegram validated — notifications enabled.")
         _telegram_enabled = True
         return True
@@ -352,7 +352,7 @@ def _self_heal_loop() -> None:
         time.sleep(max(1.0, interval))
         if _telegram_enabled:      # something else already enabled it
             return
-        if _send_raw("🤖 MarkeyMachine reconnected to Telegram.\nAlerts are now active ✅."):
+        if _send_raw("🤖 FlipPulse reconnected to Telegram.\nAlerts are now active ✅."):
             _telegram_enabled = True
             log.info("✅ Telegram self-healed — notifications enabled after a "
                      "boot-time connectivity gap.")

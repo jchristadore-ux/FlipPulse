@@ -211,6 +211,7 @@ and cleanup is an explicit operator command.
 | Boot markers missing | Log scan | `failed@verify` — deploy is green but the bot didn't prove Kalshi auth | Inspect service logs via the alert's project link, retry after fix |
 | Double trigger (Stripe retries webhooks!) | `O_EXCL` lockfile + status check | Second attempt refuses: "already in progress"; already-provisioned submissions are a **no-op** | Automatic (idempotency) |
 | Worker/process dies mid-run | Lockfile staleness (45 min) | Lock expires; submission still shows its last checkpoint | Retry resumes |
+| Service restarts with jobs queued (queue is in-memory; Stripe won't retry an acknowledged event) | **Boot sweep** (`reconcile_pending()` on app start) | Every *paid* submission whose provisioning never finished (never attempted, `failed`, or `in_progress` with a stale checkpoint) is re-enqueued; operator gets one summary alert. `deprovisioned` customers are never resurrected | Automatic |
 | Operator wants it gone | — | `python admin_cli.py deprovision <id>` — confirms by handle, deletes the Railway project | Explicit only |
 
 **Retry surfaces** (all resume from the last checkpoint, all safe to repeat):
