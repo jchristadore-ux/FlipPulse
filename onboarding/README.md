@@ -47,7 +47,7 @@ Environment variables:
 | `STRIPE_SECRET_KEY` | for payment | Stripe secret key (`sk_live_...` / `sk_test_...`). |
 | `STRIPE_MONTHLY_PRICE_ID` | for payment | Recurring $99/mo Price id (`price_...`). |
 | `STRIPE_SETUP_PRICE_ID` | for payment | One-time $99 setup Price id. |
-| `STRIPE_WEBHOOK_SECRET` | optional | Verify `checkout.session.completed` to mark a submission **paid**. |
+| `STRIPE_WEBHOOK_SECRET` | **required with Stripe** | Verifies `checkout.session.completed` so a submission is marked **paid** (which triggers auto-provisioning). Without it, paid customers are never marked paid and never provisioned — the app logs an ERROR at boot, `/healthz` reports `ok: false`, and the webhook returns 500 so Stripe flags the endpoint. |
 | `ADMIN_TOKEN` | optional | Enables the operator dashboard at `/admin`. Unset = dashboard disabled (routes 404). |
 | `PUBLIC_BASE_URL` | optional | Public https URL (for Stripe success/cancel redirects). Defaults to the request host. |
 | `SUBMISSIONS_DIR` | optional | Where submission files are written (default `./submissions`; put on a Railway volume to persist). |
@@ -56,7 +56,7 @@ Environment variables:
 | `RAILWAY_API_TOKEN` | for auto-provisioning | Railway account/workspace token — enables zero-touch bot deployment on payment. |
 | `RAILWAY_TEAM_ID` | if workspace token | Workspace to create customer projects in. |
 | `AUTO_PROVISION` | optional (default `true`) | Provision automatically on `checkout.session.completed`. `false` = use the `/admin` button or CLI. |
-| `PROVISION_REPO` / `PROVISION_REPO_BRANCH` | optional | Repo/branch every customer bot deploys from (default `jchristadore-ux/FlipPulse` @ `main`). |
+| `PROVISION_REPO` / `PROVISION_REPO_BRANCH` | optional | Repo/branch every customer bot deploys from (default `jchristadore-ux/FlipPulse` @ `release` — the pinned fleet branch; promote with `git push origin main:release`). |
 | `BOT_OPERATOR_CHAT_ID` | recommended | Injected into every provisioned bot as `TELEGRAM_OPERATOR_CHAT_ID` so all customer-bot alerts fan out to you. |
 
 Full provisioning reference (all knobs, failure handling, architecture):

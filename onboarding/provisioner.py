@@ -58,8 +58,15 @@ RAILWAY_TEAM_ID   = os.environ.get("RAILWAY_TEAM_ID", "").strip()      # optiona
 
 # The repo every customer service deploys from — identical code for everyone,
 # only the variables differ (runbook §2).
+#
+# Customer bots deploy from the `release` branch, NOT `main`. Railway
+# auto-redeploys every tracking service on push, so pointing the whole fleet at
+# main means one bad merge restarts/bricks every customer bot at once. Workflow:
+# develop on main (keep one in-house canary bot tracking main), then promote
+# deliberately once the canary has traded through a session:
+#     git push origin main:release
 PROVISION_REPO        = os.environ.get("PROVISION_REPO", "jchristadore-ux/FlipPulse").strip()
-PROVISION_REPO_BRANCH = os.environ.get("PROVISION_REPO_BRANCH", "main").strip()
+PROVISION_REPO_BRANCH = os.environ.get("PROVISION_REPO_BRANCH", "release").strip()
 
 # Operator chat id(s) baked into every provisioned bot (runbook §7) so all
 # alerts fan out to you. Blank = customer-only alerts.

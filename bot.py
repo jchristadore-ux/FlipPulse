@@ -3143,16 +3143,34 @@ def main() -> None:
         billing.reconcile_on_boot(paper_balance)
         telegram_boot(paper_balance)
     else:
-        try:
-            bal = get_live_balance(allow_cached_zero=False)
-        except Exception as e:
-            log.error("Cannot fetch starting balance — aborting: %s", e)
+        # Boot-time balance fetch: retry a transient Kalshi/API blip in-process
+        # first, then exit NON-ZERO. railway.toml uses restartPolicyType
+        # ON_FAILURE, which only restarts non-zero exits — a plain `return`
+        # here (exit 0) left the bot permanently, silently down after a
+        # transient outage during deploy. sys.exit(1) hands the outage to
+        # Railway's restart policy instead.
+        bal         = 0.0
+        balance_err: Optional[Exception] = None
+        for attempt in range(5):
+            if attempt:
+                time.sleep(15 * attempt)          # 15s, 30s, 45s, 60s (~2.5 min total)
+            try:
+                bal = get_live_balance(allow_cached_zero=False)
+                balance_err = None
+                break
+            except Exception as e:
+                balance_err = e
+                log.warning("Starting balance fetch attempt %d/5 failed: %s",
+                            attempt + 1, e)
+        if balance_err is not None:
+            log.error("Cannot fetch starting balance after 5 attempts — exiting "
+                      "for restart: %s", balance_err)
             tg.send_telegram_message(f"🛑 MarkeyMachine {BOT_VERSION} boot failed: balance error")
-            return
+            sys.exit(1)
         if bal <= 0.0:
-            log.error("Starting balance $0 — aborting")
+            log.error("Starting balance $0 — exiting for restart")
             tg.send_telegram_message(f"🛑 MarkeyMachine {BOT_VERSION} boot failed: balance=$0")
-            return
+            sys.exit(1)
         _last_known_balance    = bal
         session_start_balance  = bal
         session_stop_threshold = bal * SESSION_STOP_FRACTION
