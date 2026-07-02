@@ -60,7 +60,19 @@ ADMIN_TOKEN         = os.environ.get("ADMIN_TOKEN", "").strip()
 STRIPE_SECRET_KEY   = os.environ.get("STRIPE_SECRET_KEY", "").strip()
 STRIPE_SETUP_PRICE  = os.environ.get("STRIPE_SETUP_PRICE_ID", "").strip()
 STRIPE_MONTHLY_PRICE= os.environ.get("STRIPE_MONTHLY_PRICE_ID", "").strip()
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
 PUBLIC_BASE_URL     = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+# The webhook secret is REQUIRED whenever Stripe is live: without it the
+# checkout.session.completed webhook cannot be verified, so paid customers are
+# never marked paid and auto-provisioning never fires — silently. Fail loudly
+# at boot so the misconfiguration is caught before the first real signup.
+if STRIPE_SECRET_KEY and not STRIPE_WEBHOOK_SECRET:
+    log.error(
+        "STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not — paid "
+        "checkouts will NEVER be marked paid and auto-provisioning will NEVER "
+        "fire. Create a webhook endpoint for checkout.session.completed in the "
+        "Stripe dashboard and set STRIPE_WEBHOOK_SECRET to its signing secret.")
 
 # Auto-provision a customer's Railway bot as soon as Stripe confirms payment.
 # Requires RAILWAY_API_TOKEN (see provisioner.py / AUTOMATED_PROVISIONING.md).
@@ -355,15 +367,23 @@ def cancelled():
 
 @app.post("/stripe/webhook")
 def stripe_webhook():
-    """Optional: mark a submission paid once Checkout completes. Requires
-    STRIPE_WEBHOOK_SECRET; otherwise a harmless no-op acknowledgement."""
-    secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
-    if not secret:
-        return ("", 200)
+    """Mark a submission paid once Checkout completes (and auto-provision).
+    Requires STRIPE_WEBHOOK_SECRET to verify the event signature."""
+    if not STRIPE_WEBHOOK_SECRET:
+        if STRIPE_SECRET_KEY:
+            # Stripe is live but we can't verify events. Returning non-200 makes
+            # Stripe retry and flag the endpoint as failing (dashboard + email),
+            # instead of silently swallowing a real payment.
+            log.error("Stripe webhook received but STRIPE_WEBHOOK_SECRET is not "
+                      "set — cannot verify it. This payment will NOT be marked "
+                      "paid or provisioned until the secret is configured.")
+            return ("webhook secret not configured", 500)
+        return ("", 200)                # Stripe not in use — harmless no-op
     import stripe
     try:
         event = stripe.Webhook.construct_event(
-            request.get_data(), request.headers.get("Stripe-Signature", ""), secret)
+            request.get_data(), request.headers.get("Stripe-Signature", ""),
+            STRIPE_WEBHOOK_SECRET)
     except Exception as e:
         log.warning("Bad Stripe webhook: %s", e)
         return ("", 400)
@@ -477,7 +497,11 @@ def welcome_file(filename: str):
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "stripe": bool(STRIPE_SECRET_KEY),
+    # ok is False when Stripe is live without a webhook secret — that combination
+    # silently strands paid customers (never marked paid, never provisioned).
+    stripe_ok = bool(STRIPE_WEBHOOK_SECRET) or not STRIPE_SECRET_KEY
+    return {"ok": stripe_ok, "stripe": bool(STRIPE_SECRET_KEY),
+            "stripe_webhook": bool(STRIPE_WEBHOOK_SECRET),
             "encryption": bool(FERNET_KEY), "admin_dashboard": bool(ADMIN_TOKEN),
             "railway": provisioner.is_configured(), "auto_provision": AUTO_PROVISION}
 

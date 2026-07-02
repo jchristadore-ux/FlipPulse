@@ -102,7 +102,7 @@ sequenceDiagram
    | `RAILWAY_TEAM_ID` | if workspace token | Team/workspace id to create projects in. |
    | `AUTO_PROVISION` | no (default `true`) | `false` = webhook only marks paid; you use the `/admin` button or CLI. |
    | `PROVISION_REPO` | no (default `jchristadore-ux/FlipPulse`) | Repo every bot deploys from. |
-   | `PROVISION_REPO_BRANCH` | no (default `main`) | Branch to deploy. |
+   | `PROVISION_REPO_BRANCH` | no (default `release`) | Branch customer bots deploy from. Defaults to `release`, NOT `main` — Railway auto-redeploys every tracking service on push, so a fleet on `main` restarts (and can brick) every customer bot on any bad merge. Develop on `main`, keep one in-house canary bot tracking `main`, and promote deliberately with `git push origin main:release`. |
    | `BOT_OPERATOR_CHAT_ID` | recommended | Your Telegram chat id — injected into every bot as `TELEGRAM_OPERATOR_CHAT_ID` (runbook §7 oversight, automated). |
    | `PROVISION_DEPLOY_TIMEOUT` | no (default `600`) | Seconds to wait for a green deploy. |
    | `PROVISION_MAX_CONCURRENCY` | no (default `2`) | Parallel provisioning jobs. |
@@ -133,7 +133,7 @@ below remains manual.
 |---|---|---|---|
 | §0 | Read the Telegram alert, open `/admin` or `admin_cli.py show`, copy values | Stripe webhook hands the submission id straight to the provisioner; secrets are decrypted in memory | `app.py stripe_webhook` → `provisioner.provision()` |
 | §0 | Confirm `payment_status` is `paid` | Provisioning is **gated on paid** (`require_paid=True` on the webhook path); operator button/CLI can override for manually-billed customers | `provisioner.provision()` payment gate |
-| §2.1 | Railway UI: New Project → Deploy from GitHub repo → name it | `projectCreate` → `flippulse-<handle>`; `serviceCreate` with `source.repo = FlipPulse`, `branch = main` | `RailwayClient.project_create / service_create` |
+| §2.1 | Railway UI: New Project → Deploy from GitHub repo → name it | `projectCreate` → `flippulse-<handle>`; `serviceCreate` with `source.repo = FlipPulse`, `branch = release` (the pinned fleet branch) | `RailwayClient.project_create / service_create` |
 | §2.2 | Set Root Directory blank (the make-or-break setting) | `serviceCreate` never sets a root directory, so it's blank **by construction** — the repo-root `railway.toml` (`python bot.py`) always applies. The "empty repo / Bird_Bot" failure mode can no longer happen: the repo is pinned in `PROVISION_REPO` | `RailwayClient.service_create` |
 | §2 | Accept the crash-loop until vars are pasted | Gone: the full variable set is passed **inside `serviceCreate`**, so the first build already has its config | `deploy_variables()` inline at creation |
 | §3 | UI: Volumes → New Volume → mount `/data` | `volumeCreate(mountPath="/data")` | `RailwayClient.volume_create` |
@@ -173,8 +173,18 @@ per customer — far heavier than a 6-step state machine.
 | Temporal | Built for fleets of long workflows. Unjustified below hundreds of signups/day. |
 
 **Golden template.** The repo **is** the golden template: every service points
-at `PROVISION_REPO@PROVISION_REPO_BRANCH`. Versioning deployments = git. To
-canary a customer on a branch, set `PROVISION_REPO_BRANCH` before provisioning
+at `PROVISION_REPO@PROVISION_REPO_BRANCH`. Versioning deployments = git. The
+fleet branch is `release`: Railway auto-redeploys every tracking service on
+push, so customer bots must never track `main` directly — one bad merge would
+restart/brick all of them at once. Develop on `main` (with one in-house canary
+bot tracking it), then promote deliberately once the canary has traded through
+a session:
+
+```bash
+git push origin main:release        # promote main → the customer fleet
+```
+
+To canary a customer on a branch, set `PROVISION_REPO_BRANCH` before provisioning
 (or change the branch in Railway later). Per-customer repo clones were
 explicitly rejected — the runbook already warns that pattern causes the
 "Connected branch does not exist" failure; multi-tenant single-box was rejected
