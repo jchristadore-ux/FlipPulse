@@ -195,11 +195,13 @@ Each customer gets a dedicated bot so their alerts and commands are isolated.
    - **`/health-log [n]`** — tails the recent health/activity log.
    - **`/help`** — lists the commands.
 
-   > The bot only *answers* these read-only commands; it also *sends* alerts on its own
-   > (boot, 15-min heartbeat, trade entry, win/loss, daily summary). It does **not**
+   > The bot only *answers* these read-only commands; it also *sends* alerts on its own,
+   > but **only when something happens**: boot, trade entry, win/loss settlement, and
+   > triggered guardrails. There is no heartbeat and no scheduled summary — a quiet chat
+   > means no trades fired; use `/status` to check liveness on demand. It does **not**
    > accept any command that changes trading — no order placement, no `DEMO_MODE` flip.
 
-4. Confirm the boot/heartbeat message arrives in Telegram. If you set
+4. Confirm the boot message arrives in Telegram. If you set
    `TELEGRAM_OPERATOR_CHAT_ID`, confirm it reached you too.
 
 A green verify = bot booted, Kalshi authenticated in paper mode, `/status` responds and

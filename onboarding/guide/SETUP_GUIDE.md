@@ -35,9 +35,10 @@ these — it makes every step make sense:
   that lets *your* FlipPulse bot place trades on *your* account (and nothing
   else). The **PEM file** is the secret half of that key.
 - **Telegram** is a free messaging app. Your bot uses it to **text you**
-  updates — when it starts, wins, loses, and a daily summary. The **Bot Token**
-  lets us create your personal alert bot; the **Chat ID** tells it which
-  conversation is yours.
+  when something actually happens — when it starts, enters a trade, and wins or
+  loses (no spam in between; a quiet chat just means no trades fired — message
+  it `/status` anytime to check in). The **Bot Token** lets us create your
+  personal alert bot; the **Chat ID** tells it which conversation is yours.
 
 > 🔒 **Your money never touches us.** Funds stay in *your* Kalshi account. The
 > API key only lets the bot trade; it can't withdraw. We bill the subscription

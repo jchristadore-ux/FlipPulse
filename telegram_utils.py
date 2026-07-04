@@ -4,7 +4,10 @@ telegram_utils.py — Telegram notification module for FlipPulse
 Responsibilities:
   - Validate credentials at startup
   - Send messages with up to 2 retries
-  - Fire WIN trade alerts, heartbeat, entry, halt, daily summary
+  - Fire trade ENTRY and settlement WIN/LOSS alerts, plus guardrail/halt
+    alerts. NO periodic messages (owner directive): no heartbeat, no scheduled
+    summaries — a message means a trade or a triggered gate. Liveness checks
+    are pull-based via the /status and /health-log commands (command_bot.py).
 
 Design rules:
   - Never raises — all errors logged and swallowed
@@ -109,27 +112,6 @@ def send_telegram_message(text: str) -> bool:
     if not _telegram_enabled:
         return False
     return _send_raw(text)
-
-
-def send_heartbeat(balance: float, session_pnl: float, open_count: int,
-                   trades_today: int, last_signal: str) -> None:
-    """
-    15-minute heartbeat. Confirms bot is alive and scanning.
-    Sent regardless of whether trades are firing.
-    """
-    if not _telegram_enabled:
-        return
-    now = datetime.now(timezone.utc).strftime("%H:%M UTC")
-    pnl_sign = "+" if session_pnl >= 0 else ""
-    msg = (
-        f"💓 Heartbeat — {now}\n"
-        f"💵 Balance:     ${balance:,.2f}\n"
-        f"📊 Session PnL: {pnl_sign}${session_pnl:.2f}\n"
-        f"📂 Open orders: {open_count}\n"
-        f"🔁 Session trades: {trades_today}\n"
-        f"🔍 Last signal: {last_signal}"
-    )
-    send_telegram_message(msg)
 
 
 def send_trade_entry_notification(ticker: str, direction: str, cost: float,
