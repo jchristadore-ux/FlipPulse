@@ -77,9 +77,12 @@ The bot reads everything from environment variables. See
 
 ## Self-monitoring
 
-Each customer's bot sends its own alerts via Telegram (boot, 15-min heartbeat,
-trade entry, win/loss, daily summary) and answers three read-only commands
-(`command_bot.py`, started by `bot.py` on boot):
+Each customer's bot sends its own alerts via Telegram **only when something
+happens**: boot confirmation, trade entry, win/loss settlement, and triggered
+guardrails (recovery/probation transitions, vol circuit breaker, session stop).
+There are **no periodic messages** — no heartbeat, no scheduled summaries; a
+quiet chat means no trades fired. Liveness checks are pull-based via three
+read-only commands (`command_bot.py`, started by `bot.py` on boot):
 
 - **`/status`** — mode (paper/live), format, balance, session PnL, W/L record,
   ladder/recovery/probation mode + size, open positions, session state, last

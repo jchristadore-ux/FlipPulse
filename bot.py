@@ -838,8 +838,6 @@ running_pnl:            float = 0.0
 daily_pnl:              float = 0.0
 live_daily_realized:    float = 0.0   # v9.3.1: realized-only $ that feeds the LIVE daily-loss breaker
 last_trade_ts:          float = -9999.0
-last_heartbeat_ts:      float = 0.0
-last_daily_summary_ts:  float = 0.0
 last_signal_desc:       str   = "none yet"
 
 session_state:         SessionState = SessionState.ACTIVE
@@ -2803,21 +2801,6 @@ def telegram_halt(reason: str, balance: float) -> None:
     )
 
 
-def telegram_daily_summary(balance: float, pnl: float, wins: int, losses: int) -> None:
-    total  = wins + losses
-    wr     = wins / total * 100 if total > 0 else 0.0
-    emoji  = "📈" if pnl >= 0 else "📉"
-    ci_str = ""
-    if total >= 10:
-        wlb    = wilson_lower_bound(wins, total)
-        ci_str = f" LB={wlb*100:.0f}%"
-    tg.send_telegram_message(
-        f"{emoji} Daily Summary\n"
-        f"P&L: ${pnl:+.2f} │ Balance: ${balance:.2f}\n"
-        f"WR: {wr:.0f}%{ci_str} ({wins}W/{losses}L)"
-    )
-
-
 def write_status_snapshot(balance: float) -> None:
     """Write a small JSON status snapshot for the web dashboard.
 
@@ -3121,8 +3104,8 @@ def main() -> None:
     # then raises UnboundLocalError before any local assignment has occurred.
     # ─────────────────────────────────────────────────────────────────────────
     global session_start_balance, session_stop_threshold, daily_pnl
-    global paper_balance, paper_daily_pnl, last_trade_ts, last_daily_summary_ts
-    global consecutive_losses, last_signal_desc, last_heartbeat_ts, running_pnl
+    global paper_balance, paper_daily_pnl, last_trade_ts
+    global consecutive_losses, last_signal_desc, running_pnl
     global live_wins, live_losses, streak_pause_until, live_daily_realized
     global _last_known_balance, _shutdown_requested, _session_start_ts
     global _session_halted, session_state, _session_day
@@ -3239,18 +3222,10 @@ def main() -> None:
                     time.sleep(300)
                     continue
 
-            if time.time() - last_heartbeat_ts >= 900:
-                last_heartbeat_ts = time.time()
-                hb_bal  = paper_balance if DEMO_MODE else get_live_balance()
-                hb_pnl  = paper_daily_pnl if DEMO_MODE else live_daily_realized
-                hb_open = len(open_orders)
-                hb_tr   = len([t for t in trade_history
-                                if t.get("result") in ("win", "loss", "pending")])
-                tg.send_heartbeat(
-                    balance=hb_bal, session_pnl=hb_pnl, open_count=hb_open,
-                    trades_today=hb_tr, last_signal=last_signal_desc,
-                )
-
+            # Telegram policy (owner directive): messages fire ONLY on a trade
+            # entry, a trade settlement, or a triggered guardrail — no periodic
+            # heartbeat, no scheduled summaries. Liveness is pull-based: the
+            # /status and /health-log commands answer on demand.
             ingest_btc_price()
 
             market = get_active_market()
@@ -3313,10 +3288,6 @@ def main() -> None:
                         live_wins, live_wins + live_losses,
                         wlb * 100, _live_prior, session_state.value,
                     )
-                    if (datetime.now(timezone.utc).hour == 0
-                            and time.time() - last_daily_summary_ts > 3600):
-                        last_daily_summary_ts = time.time()
-                        telegram_daily_summary(live_bal, daily_pnl, live_wins, live_losses)
 
                 if recovery.active:
                     log.info(recovery.status_line(current_balance))
