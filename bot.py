@@ -3245,7 +3245,6 @@ def main() -> None:
 
             current_balance = paper_balance if DEMO_MODE else get_live_balance()
             maybe_roll_session_day(current_balance)
-            update_session_state(current_balance)
             # Recovery EXIT check runs every cycle, independent of trading, so
             # the bot can never wedge in recovery once balance reaches target.
             # On a real exit, begin the graduated probation ramp instead of
