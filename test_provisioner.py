@@ -33,14 +33,11 @@ class FakeRailway:
         if self.fail_on == step:
             raise prov_mod.ProvisionError(step, f"simulated {step} failure")
 
-    def project_create(self, name):
-        self.calls.append("project_create")
-        self._maybe_fail("project_create")
-        return "proj-1", "env-1"
-
     def service_create(self, project_id, name, repo, branch, variables):
         self.calls.append("service_create")
         self._maybe_fail("service_create")
+        self.service_project_id = project_id
+        self.service_name = name
         self.variables = dict(variables)
         return "svc-1"
 
@@ -71,8 +68,8 @@ class FakeRailway:
         self.calls.append("deployment_logs")
         return list(self.logs)
 
-    def project_delete(self, project_id):
-        self.calls.append(("project_delete", project_id))
+    def service_delete(self, service_id):
+        self.calls.append(("service_delete", service_id))
 
 
 @pytest.fixture
@@ -82,6 +79,10 @@ def submission(tmp_path, monkeypatch):
     monkeypatch.setattr(prov_mod, "SUBMISSIONS_DIR", tmp_path)
     monkeypatch.setattr(prov_mod, "DEPLOY_POLL_SECS", 0.01)
     monkeypatch.setattr(prov_mod, "DEPLOY_TIMEOUT_SECS", 1)
+    # The shared project the onboarding runs in — customer bots deploy here as
+    # sibling services (Railway injects these ids into the onboarding service).
+    monkeypatch.setattr(prov_mod, "RAILWAY_PROJECT_ID", "proj-1")
+    monkeypatch.setattr(prov_mod, "RAILWAY_ENVIRONMENT_ID", "env-1")
     f = Fernet(FERNET_KEY.encode())
     sub = {
         "id": "20260701-120000_jane_ab12cd",
@@ -117,6 +118,46 @@ def test_happy_path_provisions_and_records_ids(submission, tmp_path):
     assert prov["deployment_id"] == "dep-1"
     # Persisted to disk, not just in memory.
     assert _stored(tmp_path, submission["id"])["provisioning"]["status"] == "provisioned"
+
+
+def test_service_created_in_shared_project(submission, tmp_path):
+    """The customer bot is a sibling SERVICE in the onboarding's shared project —
+    no new project is created, and the recorded ids are the shared ones."""
+    client = FakeRailway()
+    prov = prov_mod.provision(submission["id"], client=client)
+    assert client.service_project_id == "proj-1"       # deployed into the shared project
+    assert client.service_name == "jane-doe-bot"
+    assert prov["project_id"] == "proj-1"
+    assert prov["environment_id"] == "env-1"
+    assert "project_create" not in client.calls        # never mints a new project
+
+
+def test_missing_shared_project_ids_fail_fast(submission, monkeypatch):
+    """Without RAILWAY_PROJECT_ID/RAILWAY_ENVIRONMENT_ID there is nowhere to put
+    the service — fail loudly at locate_project rather than mint a temporary one."""
+    monkeypatch.setattr(prov_mod, "RAILWAY_PROJECT_ID", "")
+    monkeypatch.setattr(prov_mod, "RAILWAY_ENVIRONMENT_ID", "")
+    with pytest.raises(prov_mod.ProvisionError) as e:
+        prov_mod.provision(submission["id"], client=FakeRailway())
+    assert e.value.step == "locate_project"
+
+
+def test_stale_recorded_project_is_recreated_in_shared(submission, tmp_path):
+    """A submission left pointing at a retired per-customer project (e.g. the old
+    'temporary' project) is healed: its stale service/volume ids are dropped and
+    the bot is recreated in the shared project."""
+    stored = _stored(tmp_path, submission["id"])
+    stored["provisioning"] = {"status": "failed", "step": "deploy",
+                              "project_id": "temp-proj-OLD", "environment_id": "temp-env-OLD",
+                              "service_id": "svc-OLD", "volume_id": "vol-OLD"}
+    (tmp_path / f"{submission['id']}.json").write_text(json.dumps(stored))
+
+    client = FakeRailway()
+    prov = prov_mod.provision(submission["id"], client=client)
+    assert prov["project_id"] == "proj-1"              # moved to the shared project
+    assert client.service_project_id == "proj-1"
+    assert "service_create" in client.calls            # stale svc-OLD dropped, recreated
+    assert prov["service_id"] == "svc-1"
 
 
 def test_full_variable_set_injected(submission):
@@ -210,11 +251,10 @@ def test_failure_is_recorded_and_resume_skips_completed_steps(submission, tmp_pa
     assert rec["step"] == "volume_create"
     assert rec["project_id"] == "proj-1"               # partial state kept
 
-    # Retry resumes: no second project/service is created.
+    # Retry resumes: the service already exists, so it's not recreated.
     retry = FakeRailway()
     prov = prov_mod.provision(submission["id"], client=retry)
     assert prov["status"] == "provisioned"
-    assert "project_create" not in retry.calls
     assert "service_create" not in retry.calls
     assert "volume_create" in retry.calls
 
@@ -243,12 +283,17 @@ def test_already_provisioned_is_a_noop(submission):
     assert again.calls == []                           # nothing touched Railway
 
 
-def test_deprovision_deletes_the_recorded_project(submission, tmp_path):
+def test_deprovision_deletes_the_service_not_the_project(submission, tmp_path):
+    """Deprovision removes only the customer's own service — never the shared
+    project, which would take down every other bot running in it."""
     prov_mod.provision(submission["id"], client=FakeRailway())
     client = FakeRailway()
     prov_mod.deprovision(submission["id"], client=client)
-    assert ("project_delete", "proj-1") in client.calls
-    assert _stored(tmp_path, submission["id"])["provisioning"]["status"] == "deprovisioned"
+    assert ("service_delete", "svc-1") in client.calls
+    assert not any(isinstance(c, tuple) and c[0] == "project_delete" for c in client.calls)
+    stored = _stored(tmp_path, submission["id"])["provisioning"]
+    assert stored["status"] == "deprovisioned"
+    assert stored["deleted_service_id"] == "svc-1"
 
 # ── boot reconciliation sweep ─────────────────────────────────────────────────
 # The queue is in-memory and Stripe never retries an acknowledged webhook, so a
