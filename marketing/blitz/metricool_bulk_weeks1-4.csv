@@ -1,0 +1,448 @@
+Text,Date,Time,Draft,Network,Media URL,Shortener
+⚠️ THREAD (TH-PIN) — DRAFT. Build the tweet chain manually in Metricool (+ Add tweet for each numbered tweet). Full text in 03_POST_LIBRARY.md §2/§3.2.,2026-07-06,08:15,TRUE,twitter,,FALSE
+"Kalshi runs a Bitcoin Up/Down market every 15 minutes.
+
+96 markets a day. Each pays $1 if right, $0 if wrong.
+
+Most people have never heard of these. Fewer have the reflexes to trade them all day. That's exactly why we built a bot for it.",2026-07-06,12:30,FALSE,twitter,,FALSE
+"We stream a FlipPulse bot's paper-mode decisions to a public Telegram channel. Unedited. Timestamped. Including the boring days.
+
+Watch it think before you spend a dollar: t.me/flippulse
+
+⚠️ Simulated trading. Not financial advice.",2026-07-06,19:30,TRUE,twitter,,FALSE
+"Most trading software is sold on hype. We built FlipPulse on the opposite idea.
+
+It's an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — Kalshi is a CFTC-regulated US exchange. The bot checks nine strict conditions before every single trade: is Bitcoin actually trending, is there real money in the order book, does spot momentum agree, has the bot statistically proven its own edge… If even one check fails, it does nothing and tells you why.
+
+Every customer starts in paper mode — simulated money — and watches the bot make real decisions with zero risk. Your funds stay in your own Kalshi account the entire time. Every decision arrives on your own Telegram, and you can pause with one tap.
+
+$99 setup + $99/month, cancel anytime. If you'd like to watch a live paper-mode feed first (we publish one, unedited): t.me/flippulse
+
+Questions welcome in the comments — the founder answers every one.
+
+⚠️ FlipPulse is software, not investment advice. Trading involves risk, including loss of principal. Simulated results do not guarantee live results.",2026-07-06,13:00,FALSE,facebook,,FALSE
+"The single most important filter in our stack:
+
+Regime detection.
+
+Every 30s, the bot runs a regression on recent BTC prices. R² > 0.65 = trending → trading allowed. Below = ranging → all signals ignored.
+
+This one check eliminates 50–70% of would-be trades.",2026-07-07,08:15,FALSE,twitter,,FALSE
+⚠️ THREAD (TH01) — DRAFT. Build the tweet chain manually in Metricool (+ Add tweet for each numbered tweet). Full text in 03_POST_LIBRARY.md §2/§3.2.,2026-07-07,12:30,TRUE,twitter,,FALSE
+"Zero trades yesterday.
+
+Some customers ask if it's broken. It's not broken. Bitcoin spent the day chopping sideways and the doctrine says: ranging market = no trades, always.
+
+Discipline looks boring right up until it saves you.",2026-07-07,19:30,TRUE,twitter,,FALSE
+"A 15-minute Bitcoin market sounds exotic, but the structure is simple: ""Will Bitcoin be higher at 2:15 than at 2:00?"" Contracts pay $1 if you're right, $0 if not. Risk is capped at what you paid — no leverage, no liquidations. There are 96 of these a day on Kalshi. Our bot watches all of them so nobody has to. [explainer video]",2026-07-07,13:00,FALSE,facebook,,FALSE
+"Our bot's day so far:
+
+✅ Checked 34 markets
+❌ Traded 0 of them
+
+Reason logged every time: ""RANGING regime — no edge.""
+
+A bot with the patience you don't have. That's the product.",2026-07-08,08:15,TRUE,twitter,,FALSE
+"Honest question for traders:
+
+What % of your worst losses came from a bad READ vs. bad DISCIPLINE (revenge trade, oversize, boredom)?
+
+Be honest. Mine were 80% discipline.",2026-07-08,12:30,FALSE,twitter,,FALSE
+"The bot just sent this:
+
+""EDGE JUSTIFICATION │ YES @ 48¢ │ Regime=TRENDING(R²=0.78) │ OB=75% depth=$120 │ Momentum=AGREE │ Confidence=73/100""
+
+Every single trade comes with its homework attached.",2026-07-08,19:30,TRUE,twitter,,FALSE
+"Here's a screenshot most companies wouldn't post: our bot refusing to trade, 34 times in one day. Bitcoin spent the day moving sideways, and in sideways markets the signals this strategy uses are just noise — so the rules say stand down. A tool that protects you from bad days is worth more than one that promises good ones. [screenshot] ⚠️ Not financial advice.",2026-07-08,13:00,TRUE,facebook,,FALSE
+"Things that make the bot refuse to trade:
+
+• sideways BTC
+• violent BTC
+• thin order book
+• near-certain contracts (>85¢ / <15¢)
+• under 3 min to expiry
+• 3 losses in a row
+• its own win rate unproven
+
+The list of reasons to say no is longer than the list to say yes. As it should be.",2026-07-09,08:15,FALSE,twitter,,FALSE
+"Hot take: your trading problem isn't information.
+
+It's that at 11:47pm, up 3% and feeling invincible, you take one more trade.
+
+A bot doesn't feel invincible. It checks 9 boxes or it goes back to sleep.",2026-07-09,12:30,FALSE,twitter,,FALSE
+"3 consecutive losses → the bot benches itself. Automatically. Cooldown before it's allowed back in.
+
+When was the last time YOU did that after 3 losses?",2026-07-09,19:30,FALSE,twitter,,FALSE
+"The most honest sentence in our documentation: ""Many days with zero trades are correct behavior."" We put it in writing because someday your bot will have a quiet Tuesday and you'll wonder if it's broken. It isn't. Bitcoin was boring. The bot noticed. That's the job.",2026-07-09,13:00,FALSE,facebook,,FALSE
+"Building FlipPulse in public, week [n]:
+
+• [milestone]
+• [thing that broke + fix]
+• [what's next]
+
+Ask me anything about running a one-person trading-bot company. The unglamorous parts too.",2026-07-10,08:15,TRUE,twitter,,FALSE
+"Poll: a trading bot goes 0-for-3 today, then correctly refuses 30 setups in a chop.
+
+Did it have a good day or a bad day?",2026-07-10,12:30,TRUE,twitter,,FALSE
+"Today's paper-mode log, unedited 👇
+
+[screenshot of Telegram daily summary]
+
+Every customer gets this feed for their own bot. Wins, losses, and the boring days. t.me/flippulse if you want to watch live.",2026-07-10,19:30,TRUE,twitter,,FALSE
+"Founder note, week [n]: [milestone / lesson / fix]. Building this company in public because trust is the entire product in this category. Ask me anything below — including the uncomfortable questions. Especially those.",2026-07-10,13:00,TRUE,facebook,,FALSE
+"Every trading bot ad: ""It never sleeps! It trades 24/7!""
+
+Ours sleeps on purpose, 5 hours a day, because the books are garbage after US close.
+
+""Always trading"" isn't a feature. It's how accounts die.",2026-07-11,08:15,FALSE,twitter,,FALSE
+"POV: it's a choppy, sideways Bitcoin day
+
+You: 14 trades, revenge-trading by noon
+The bot: ""RANGING (R²=0.31). Skipping."" ×34
+
+Same market. Different nervous systems.",2026-07-11,12:30,FALSE,twitter,,FALSE
+A limit order 1¢ inside the spread is the bot equivalent of never paying retail.,2026-07-11,19:30,FALSE,twitter,,FALSE
+"Poll for the traders here: what's cost you more over the years — bad analysis, or bad discipline (the revenge trade, the oversized position, the 1am ""one more"")? Honest answers only. Our bet when we built FlipPulse was that for most people it's discipline. 🗳",2026-07-11,13:00,TRUE,facebook,,FALSE
+"Binary market math in one tweet:
+
+Contract at 50¢ → you need >50% win rate to break even.
+At 65¢ → you need >65%.
+
+Edge isn't ""being right."" It's being right MORE OFTEN than the price implies. That gap is the only thing worth trading.",2026-07-12,08:15,FALSE,twitter,,FALSE
+"Paper mode isn't a demo. It's the full bot — same signals, same sizing, same alerts — with simulated money.
+
+Watch it for a week. Watch it for a month. Go live only when you've seen enough. Or don't go live at all.",2026-07-12,12:30,FALSE,twitter,,FALSE
+"Reminder because finance Twitter needs it daily: paper-mode results are practice. Live results involve slippage, fills, and feelings. Anyone who shows you simulated numbers as proof of profit is selling something. (Yes, ours are labeled.)",2026-07-12,19:30,FALSE,twitter,,FALSE
+"Sunday reading: we wrote down every condition under which our bot is forbidden to trade — all 14 — and published the list. Sideways markets. Violent markets. Thin order books. Three losses in a row. The 2am hours. If a strategy's ""never trade"" list is longer than its sales page, that's a good sign. Full doc free: [lead magnet link]",2026-07-12,13:00,TRUE,facebook,,FALSE
+"New customer onboarding, timed: 9 minutes from form to their bot's first heartbeat message.
+
+Goal by fall: under 5. The boring ops work IS the product.",2026-07-13,08:15,FALSE,twitter,,FALSE
+"Fill in the blank: the hardest part of trading is ______.
+
+(We built a whole product around one specific answer. Curious how many say it.)",2026-07-13,12:30,FALSE,twitter,,FALSE
+"A customer sent /status at 2am:
+
+[screenshot showing mode, balance, W/L, open positions]
+
+No dashboard to log into. No spreadsheet. Just ask the bot how it's doing, any hour.",2026-07-13,19:30,TRUE,twitter,,FALSE
+"The feature our customers mention most isn't a trading feature. It's the Telegram feed. Every heartbeat, every trade, every daily summary — on your phone, from your own private bot. Send /status any time and get the full picture in two seconds. Automation you can actually see. [screenshot]",2026-07-13,13:00,TRUE,facebook,,FALSE
+"The Wilson confidence interval, explained like you're 12:
+
+""You've won 12 of 20. Are you actually good, or lucky?""
+
+The bot computes the statistically-safe LOWER estimate of its true win rate. If that drops under 50%, it stops trading. Evidence or nothing.",2026-07-14,08:15,FALSE,twitter,,FALSE
+⚠️ THREAD (TH02) — DRAFT. Build the tweet chain manually in Metricool (+ Add tweet for each numbered tweet). Full text in 03_POST_LIBRARY.md §2/§3.2.,2026-07-14,12:30,TRUE,twitter,,FALSE
+"UTC 0–4 (post-US-close), the bot won't trade at all.
+
+Thin books. One or two orders can fake an entire signal.
+
+It's not missing opportunities at 2am. There are no opportunities at 2am — just noise wearing a costume.",2026-07-14,19:30,FALSE,twitter,,FALSE
+"""Where does my money actually sit?"" — the best question we get.
+
+Answer: in YOUR Kalshi account, a CFTC-regulated US exchange. FlipPulse never holds a dollar. The bot trades through your own API key, which can place trades but cannot withdraw funds. We charge a flat software fee — $99/month — and that's the entire business model. [link] ⚠️ Trading involves risk.",2026-07-14,13:00,FALSE,facebook,,FALSE
+"Weekly receipts 🧾
+
+Qualified setups found: [n]
+Trades taken: [n]
+Trades refused: [n]
+Most common refusal: [reason]
+
+Full unedited feed: t.me/flippulse
+
+(Paper mode. Not advice. Risk disclosure in bio.)",2026-07-15,08:15,TRUE,twitter,,FALSE
+What would it take for you to trust an automated strategy? Serious question — building the answer is literally my job. Wrong answers also welcome.,2026-07-15,12:30,FALSE,twitter,,FALSE
+"It took a loss this morning.
+
+Here's what happened next, automatically:
+→ stake cut to 3% of balance
+→ recovery target set
+→ kept trading small until the balance recovered
+→ size restored. No human involved.
+
+[screenshot]",2026-07-15,19:30,TRUE,twitter,,FALSE
+"If you're evaluating ANY automated trading product (including ours), demand these five things:
+
+1. Published rules — what makes it trade?
+2. Paper mode — can you watch before risking money?
+3. Custody — does your money stay at a regulated exchange, in your name?
+4. Transparency — do you see every decision, or a monthly summary?
+5. Exit — can you pause instantly and cancel anytime?
+
+Anything that fails #3 is an automatic no. Here's how FlipPulse answers all five: [link]",2026-07-15,13:00,FALSE,facebook,,FALSE
+"""Why did it skip that trade? BTC was clearly moving!""
+
+Because one signal isn't confirmation.
+
+The order book said UP. But spot momentum was NEUTRAL. The doctrine requires both to AGREE — explicitly. Neutral is a rejection.
+
+One signal = a guess. Two agreeing = a setup.",2026-07-16,08:15,FALSE,twitter,,FALSE
+"Most bots die of overtrading.
+
+Not bad signals — overtrading. Fees, spreads, and forced trades in dead markets bleed accounts one paper cut at a time.
+
+The cheapest edge in trading is simply refusing to play bad hands.",2026-07-16,12:30,FALSE,twitter,,FALSE
+"We publish our no-trade conditions. All 14 of them.
+
+Ask any other bot for their list. Watch what happens.",2026-07-16,19:30,FALSE,twitter,,FALSE
+"We made the ""go live"" step deliberately inconvenient. No Telegram command can switch a bot from paper money to real money — not /golive, not a setting, nothing. It's a manual, human, double-checked step that only happens when the customer explicitly asks. Some friction is a safety feature.",2026-07-16,13:00,FALSE,facebook,,FALSE
+"Design decision I'm proud of: the /status command is read-only.
+
+No command can place a trade or flip a bot to live mode. Not from Telegram, not from anywhere. Going live is a deliberate, manual, human step.
+
+Some things should be hard.",2026-07-17,08:15,FALSE,twitter,,FALSE
+"If a bot could text you ""why"" before every trade it takes, would you actually read it — or do you just want the summary at the end of the day? Building for both, curious about the split.",2026-07-17,12:30,FALSE,twitter,,FALSE
+"Quiet BTC week = quiet bot week.
+
+Trades: few. Refusals: many. Account: intact.
+
+The flex is the third line.",2026-07-17,19:30,TRUE,twitter,,FALSE
+"Founder note, week [n]: [milestone / lesson / fix]. Building this company in public because trust is the entire product in this category. Ask me anything below — including the uncomfortable questions. Especially those.",2026-07-17,13:00,TRUE,facebook,,FALSE
+"Red flag phrases in bot marketing, a thread-less thread:
+
+""guaranteed returns"" — nothing is
+""1000% APY"" — run
+""risk-free"" — lie
+""secret strategy"" — it's martingale
+
+What honest looks like: published rules, paper mode first, losses posted. Judge us by that standard too.",2026-07-18,08:15,FALSE,twitter,,FALSE
+"""How many trades a day does it take?""
+
+Honest answer: 1–5 on a good day. Sometimes zero.
+
+If that number disappoints you, we're not for you — and the bots promising 50/day are not your friend.",2026-07-18,12:30,FALSE,twitter,,FALSE
+"The order book is the only place market participants put money where their mouth is. That's why it's our primary signal — not headlines, not indicators, not vibes.",2026-07-18,19:30,FALSE,twitter,,FALSE
+"Three risk settings, plain English:
+
+🛡 Conservative — small stakes (5% of balance), strictest filters, fewest trades.
+⚖️ Balanced — the default. 10% stakes, standard doctrine.
+⚡ Aggressive — 20% stakes, more setups, bigger swings.
+
+You choose at signup, we deploy it, and everyone starts in paper mode regardless. [link] ⚠️ Not financial advice.",2026-07-18,13:00,FALSE,facebook,,FALSE
+"Why the bot only posts maker orders:
+
+Taker fees ≈ $5+/day at moderate frequency. On a small account that eats the entire edge.
+
+So it posts limit orders 1¢ inside the spread and waits to be filled. Slower. Cheaper. Correct.",2026-07-19,08:15,FALSE,twitter,,FALSE
+"Things FlipPulse can't do, by design:
+
+• hold your money (stays in YOUR Kalshi account)
+• stop you pausing it (one tap)
+• go live without you explicitly choosing it
+• hide a trade from you (everything hits your Telegram)
+
+The cage is the feature.",2026-07-19,12:30,FALSE,twitter,,FALSE
+"The 15-minute contract either pays $1 or $0. No stop-losses to fumble, no liquidations, no leverage. The risk is the stake, known in advance, every time. Binary markets are brutally honest.",2026-07-19,19:30,FALSE,twitter,,FALSE
+"What the $99/month actually pays for: your own isolated bot deployment, your own Telegram alert bot, state that survives restarts, monitoring and heartbeats, and a human being who watches the fleet daily. The strategy is public — the reliability engineering is the product. [link]",2026-07-19,13:00,FALSE,facebook,,FALSE
+"Milestone: [n] customers 🎉
+
+Every single one started in paper mode. Several are still there, watching — and honestly? That's the system working exactly as designed. Go live when YOU'RE convinced, not when we say so.",2026-07-20,08:15,TRUE,twitter,,FALSE
+"Honest question for traders:
+
+What % of your worst losses came from a bad READ vs. bad DISCIPLINE (revenge trade, oversize, boredom)?
+
+Be honest. Mine were 80% discipline.",2026-07-20,12:30,TRUE,twitter,,FALSE
+"The free doc we probably shouldn't give away: ""The 9 Rules Our Bot Checks Before Risking a Dollar.""
+
+The actual entry doctrine, plain English. Steal it for your own trading, honestly.
+
+Grab it: [lead magnet link]",2026-07-20,19:30,TRUE,twitter,,FALSE
+"Milestone: [n] customers. 🎉 Thank you. A stat we're weirdly proud of: several are still in paper mode after weeks — watching, learning the cadence, in zero rush. That's exactly the customer we built this for. Go live when YOU'RE convinced. Or don't.",2026-07-20,13:00,TRUE,facebook,,FALSE
+"Kalshi 101, since people keep asking:
+
+• US exchange, CFTC-regulated
+• You trade event contracts: ""Will BTC be above X at 3:15pm?""
+• Pays $1 per contract if right, $0 if wrong
+• Your money sits at the exchange, like a brokerage
+
+Our bot just automates one specific market there. Your account, your funds, your API key.",2026-07-21,08:15,FALSE,twitter,,FALSE
+⚠️ THREAD (TH03) — DRAFT. Build the tweet chain manually in Metricool (+ Add tweet for each numbered tweet). Full text in 03_POST_LIBRARY.md §2/§3.2.,2026-07-21,12:30,TRUE,twitter,,FALSE
+"If your strategy can't survive being written down and shown to strangers, it isn't a strategy. Ours is public: the 9 layers, the sizing, the refusal list. [lead magnet link]",2026-07-21,19:30,TRUE,twitter,,FALSE
+"A 15-minute Bitcoin market sounds exotic, but the structure is simple: ""Will Bitcoin be higher at 2:15 than at 2:00?"" Contracts pay $1 if you're right, $0 if not. Risk is capped at what you paid — no leverage, no liquidations. There are 96 of these a day on Kalshi. Our bot watches all of them so nobody has to. [explainer video]",2026-07-21,13:00,FALSE,facebook,,FALSE
+"Today's paper-mode log, unedited 👇
+
+[screenshot of Telegram daily summary]
+
+Every customer gets this feed for their own bot. Wins, losses, and the boring days. t.me/flippulse if you want to watch live.",2026-07-22,08:15,TRUE,twitter,,FALSE
+"Poll: a trading bot goes 0-for-3 today, then correctly refuses 30 setups in a chop.
+
+Did it have a good day or a bad day?",2026-07-22,12:30,TRUE,twitter,,FALSE
+"The bot just sent this:
+
+""EDGE JUSTIFICATION │ YES @ 48¢ │ Regime=TRENDING(R²=0.78) │ OB=75% depth=$120 │ Momentum=AGREE │ Confidence=73/100""
+
+Every single trade comes with its homework attached.",2026-07-22,19:30,TRUE,twitter,,FALSE
+"Here's a screenshot most companies wouldn't post: our bot refusing to trade, 34 times in one day. Bitcoin spent the day moving sideways, and in sideways markets the signals this strategy uses are just noise — so the rules say stand down. A tool that protects you from bad days is worth more than one that promises good ones. [screenshot] ⚠️ Not financial advice.",2026-07-22,13:00,TRUE,facebook,,FALSE
+"We could 10x our trade count by loosening two thresholds.
+
+More action! More engagement! More dopamine!
+
+And worse expectancy. The doctrine line we wrote on day one still stands: ""If trade frequency drops 80% but expectancy rises, that is success.""",2026-07-23,08:15,FALSE,twitter,,FALSE
+"POV: it's a choppy, sideways Bitcoin day
+
+You: 14 trades, revenge-trading by noon
+The bot: ""RANGING (R²=0.31). Skipping."" ×34
+
+Same market. Different nervous systems.",2026-07-23,12:30,FALSE,twitter,,FALSE
+"Things that make the bot refuse to trade:
+
+• sideways BTC
+• violent BTC
+• thin order book
+• near-certain contracts (>85¢ / <15¢)
+• under 3 min to expiry
+• 3 losses in a row
+• its own win rate unproven
+
+The list of reasons to say no is longer than the list to say yes. As it should be.",2026-07-23,19:30,FALSE,twitter,,FALSE
+"The most honest sentence in our documentation: ""Many days with zero trades are correct behavior."" We put it in writing because someday your bot will have a quiet Tuesday and you'll wonder if it's broken. It isn't. Bitcoin was boring. The bot noticed. That's the job.",2026-07-23,13:00,FALSE,facebook,,FALSE
+"Building FlipPulse in public, week [n]:
+
+• [milestone]
+• [thing that broke + fix]
+• [what's next]
+
+Ask me anything about running a one-person trading-bot company. The unglamorous parts too.",2026-07-24,08:15,TRUE,twitter,,FALSE
+"Customer question of the week: ""[real question]""
+
+Answer: [answer in 2-3 sentences].
+
+Keep these coming — they write our roadmap.",2026-07-24,12:30,TRUE,twitter,,FALSE
+"Everyone's a genius in a trend. The doctrine's job is the OTHER 70% of the time.
+
+This week that meant: [n] setups passed all 9 layers, [n] rejected. The rejections are the product.",2026-07-24,19:30,TRUE,twitter,,FALSE
+"Founder note, week [n]: [milestone / lesson / fix]. Building this company in public because trust is the entire product in this category. Ask me anything below — including the uncomfortable questions. Especially those.",2026-07-24,13:00,TRUE,facebook,,FALSE
+"""Set and forget"" is marketing. FlipPulse is ""set and VERIFY"" — it runs itself, but every decision lands on your phone. Automation with receipts.",2026-07-25,08:15,FALSE,twitter,,FALSE
+"Hot take: your trading problem isn't information.
+
+It's that at 11:47pm, up 3% and feeling invincible, you take one more trade.
+
+A bot doesn't feel invincible. It checks 9 boxes or it goes back to sleep.",2026-07-25,12:30,FALSE,twitter,,FALSE
+"Two kinds of trading pain: losing money on a good process, and making money on a bad one. The second is more expensive. It just bills you later.",2026-07-25,19:30,FALSE,twitter,,FALSE
+"Three risk settings, plain English:
+
+🛡 Conservative — small stakes (5% of balance), strictest filters, fewest trades.
+⚖️ Balanced — the default. 10% stakes, standard doctrine.
+⚡ Aggressive — 20% stakes, more setups, bigger swings.
+
+You choose at signup, we deploy it, and everyone starts in paper mode regardless. [link] ⚠️ Not financial advice.",2026-07-25,13:00,FALSE,facebook,,FALSE
+"Every 15 minutes, heartbeat. Every trade, alert. Every day, summary. Anytime, /status.
+
+If your current ""automated strategy"" goes quiet for hours, you don't have automation. You have a mystery box.",2026-07-26,08:15,FALSE,twitter,,FALSE
+"$99/month. Flat.
+
+No % of profits. No AUM fee. No upsell tiers.
+
+We make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.",2026-07-26,12:30,FALSE,twitter,,FALSE
+"Reminder because finance Twitter needs it daily: paper-mode results are practice. Live results involve slippage, fills, and feelings. Anyone who shows you simulated numbers as proof of profit is selling something. (Yes, ours are labeled.)",2026-07-26,19:30,FALSE,twitter,,FALSE
+"Sunday reading: we wrote down every condition under which our bot is forbidden to trade — all 14 — and published the list. Sideways markets. Violent markets. Thin order books. Three losses in a row. The 2am hours. If a strategy's ""never trade"" list is longer than its sales page, that's a good sign. Full doc free: [lead magnet link]",2026-07-26,13:00,TRUE,facebook,,FALSE
+"Why one bot per customer instead of one big multi-tenant system:
+
+• your own API key
+• your own Telegram bot
+• your own isolated deployment
+• nobody's bug becomes your bug
+
+Costs us more to run. Worth it.",2026-07-27,08:15,FALSE,twitter,,FALSE
+"Fill in the blank: the hardest part of trading is ______.
+
+(We built a whole product around one specific answer. Curious how many say it.)",2026-07-27,12:30,FALSE,twitter,,FALSE
+"How FlipPulse starts, every time:
+
+1. Sign up (5 min) — go.flippulse.com
+2. We deploy YOUR bot (own keys, own Telegram)
+3. It runs in PAPER MODE
+4. You watch it decide, live
+5. Go live only if/when you choose
+
+$99 setup + $99/mo. Cancel anytime. Risk disclosure on site.",2026-07-27,19:30,FALSE,twitter,,FALSE
+"What the $99/month actually pays for: your own isolated bot deployment, your own Telegram alert bot, state that survives restarts, monitoring and heartbeats, and a human being who watches the fleet daily. The strategy is public — the reliability engineering is the product. [link]",2026-07-27,13:00,FALSE,facebook,,FALSE
+"What ""smart sizing"" actually means here:
+
+Every stake is a % of the CURRENT balance.
+
+Account grows → stakes grow.
+Account dips → stakes shrink.
+Loss? → drop to recovery size until you're back.
+
+No martingale. No doubling down. Ever.",2026-07-28,08:15,FALSE,twitter,,FALSE
+⚠️ THREAD (TH04) — DRAFT. Build the tweet chain manually in Metricool (+ Add tweet for each numbered tweet). Full text in 03_POST_LIBRARY.md §2/§3.2.,2026-07-28,12:30,TRUE,twitter,,FALSE
+"$99/month. Flat.
+
+No % of profits. No AUM fee. No upsell tiers.
+
+We make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.",2026-07-28,19:30,FALSE,twitter,,FALSE
+"""Where does my money actually sit?"" — the best question we get.
+
+Answer: in YOUR Kalshi account, a CFTC-regulated US exchange. FlipPulse never holds a dollar. The bot trades through your own API key, which can place trades but cannot withdraw funds. We charge a flat software fee — $99/month — and that's the entire business model. [link] ⚠️ Trading involves risk.",2026-07-28,13:00,FALSE,facebook,,FALSE
+"Weekly receipts 🧾
+
+Qualified setups found: [n]
+Trades taken: [n]
+Trades refused: [n]
+Most common refusal: [reason]
+
+Full unedited feed: t.me/flippulse
+
+(Paper mode. Not advice. Risk disclosure in bio.)",2026-07-29,08:15,TRUE,twitter,,FALSE
+What would it take for you to trust an automated strategy? Serious question — building the answer is literally my job. Wrong answers also welcome.,2026-07-29,12:30,FALSE,twitter,,FALSE
+"It took a loss this morning.
+
+Here's what happened next, automatically:
+→ stake cut to 3% of balance
+→ recovery target set
+→ kept trading small until the balance recovered
+→ size restored. No human involved.
+
+[screenshot]",2026-07-29,19:30,TRUE,twitter,,FALSE
+"The feature our customers mention most isn't a trading feature. It's the Telegram feed. Every heartbeat, every trade, every daily summary — on your phone, from your own private bot. Send /status any time and get the full picture in two seconds. Automation you can actually see. [screenshot]",2026-07-29,13:00,TRUE,facebook,,FALSE
+"3 consecutive losses → the bot benches itself. Automatically. Cooldown before it's allowed back in.
+
+When was the last time YOU did that after 3 losses?",2026-07-30,08:15,FALSE,twitter,,FALSE
+"""How many trades a day does it take?""
+
+Honest answer: 1–5 on a good day. Sometimes zero.
+
+If that number disappoints you, we're not for you — and the bots promising 50/day are not your friend.",2026-07-30,12:30,FALSE,twitter,,FALSE
+"We publish our no-trade conditions. All 14 of them.
+
+Ask any other bot for their list. Watch what happens.",2026-07-30,19:30,FALSE,twitter,,FALSE
+"We made the ""go live"" step deliberately inconvenient. No Telegram command can switch a bot from paper money to real money — not /golive, not a setting, nothing. It's a manual, human, double-checked step that only happens when the customer explicitly asks. Some friction is a safety feature.",2026-07-30,13:00,FALSE,facebook,,FALSE
+"Building FlipPulse in public, week [n]:
+
+• [milestone]
+• [thing that broke + fix]
+• [what's next]
+
+Ask me anything about running a one-person trading-bot company. The unglamorous parts too.",2026-07-31,08:15,TRUE,twitter,,FALSE
+"Poll: a trading bot goes 0-for-3 today, then correctly refuses 30 setups in a chop.
+
+Did it have a good day or a bad day?",2026-07-31,12:30,TRUE,twitter,,FALSE
+"Quiet BTC week = quiet bot week.
+
+Trades: few. Refusals: many. Account: intact.
+
+The flex is the third line.",2026-07-31,19:30,TRUE,twitter,,FALSE
+"Founder note, week [n]: [milestone / lesson / fix]. Building this company in public because trust is the entire product in this category. Ask me anything below — including the uncomfortable questions. Especially those.",2026-07-31,13:00,TRUE,facebook,,FALSE
+"Every trading bot ad: ""It never sleeps! It trades 24/7!""
+
+Ours sleeps on purpose, 5 hours a day, because the books are garbage after US close.
+
+""Always trading"" isn't a feature. It's how accounts die.",2026-08-01,08:15,FALSE,twitter,,FALSE
+"Conservative: 5% stakes, strictest filters, lowest variance
+Balanced: 10% stakes, doctrine defaults
+Aggressive: 20% stakes, more setups, higher variance
+
+Three postures, one switch, chosen by you at signup. All start in paper mode. go.flippulse.com",2026-08-01,12:30,FALSE,twitter,,FALSE
+A limit order 1¢ inside the spread is the bot equivalent of never paying retail.,2026-08-01,19:30,FALSE,twitter,,FALSE
+"Poll for the traders here: what's cost you more over the years — bad analysis, or bad discipline (the revenge trade, the oversized position, the 1am ""one more"")? Honest answers only. Our bet when we built FlipPulse was that for most people it's discipline. 🗳",2026-08-01,13:00,TRUE,facebook,,FALSE
+"Binary market math in one tweet:
+
+Contract at 50¢ → you need >50% win rate to break even.
+At 65¢ → you need >65%.
+
+Edge isn't ""being right."" It's being right MORE OFTEN than the price implies. That gap is the only thing worth trading.",2026-08-02,08:15,FALSE,twitter,,FALSE
+"Paper mode isn't a demo. It's the full bot — same signals, same sizing, same alerts — with simulated money.
+
+Watch it for a week. Watch it for a month. Go live only when you've seen enough. Or don't go live at all.",2026-08-02,12:30,FALSE,twitter,,FALSE
+"The order book is the only place market participants put money where their mouth is. That's why it's our primary signal — not headlines, not indicators, not vibes.",2026-08-02,19:30,FALSE,twitter,,FALSE
+"Sunday reading: we wrote down every condition under which our bot is forbidden to trade — all 14 — and published the list. Sideways markets. Violent markets. Thin order books. Three losses in a row. The 2am hours. If a strategy's ""never trade"" list is longer than its sales page, that's a good sign. Full doc free: [lead magnet link]",2026-08-02,13:00,TRUE,facebook,,FALSE
