@@ -19,16 +19,41 @@ def fresh_price_cache():
     app_mod._price_id_cache.clear()
 
 
+class _StripeObj:
+    """Stand-in for a stripe-python StripeObject: attribute + item access, but
+    deliberately NO .get() method. Real StripeObjects (stripe ≥ 8) don't subclass
+    dict, so product.get("default_price") raises AttributeError: get — the bug
+    that broke live signups. Returning a plain dict here (as this test used to)
+    hid it, because dicts DO have .get()."""
+
+    def __init__(self, data):
+        object.__setattr__(self, "_data", data)
+
+    def __getattr__(self, key):
+        try:
+            return self._data[key]
+        except KeyError:
+            raise AttributeError(key)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+
 def _fake_product(monkeypatch, mapping):
     """Patch stripe.Product.retrieve to return default_price per the mapping.
-    Records how many times it was called so caching can be asserted."""
+    Records how many times it was called so caching can be asserted. An expanded
+    (object) default_price is itself wrapped in a StripeObject stand-in, mirroring
+    what the real API returns."""
     calls = {"n": 0}
+
+    def _wrap(value):
+        return _StripeObj(value) if isinstance(value, dict) else value
 
     class FakeProduct:
         @staticmethod
         def retrieve(pid):
             calls["n"] += 1
-            return {"default_price": mapping[pid]}
+            return _StripeObj({"default_price": _wrap(mapping[pid])})
 
     monkeypatch.setattr(stripe, "Product", FakeProduct)
     return calls

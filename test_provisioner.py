@@ -275,6 +275,26 @@ def enqueue_recorder(monkeypatch):
     return queued
 
 
+def test_mark_queued_flips_status_synchronously(submission, tmp_path):
+    """The /admin deploy button calls mark_queued() before enqueue() so the
+    redirect immediately shows progress rather than racing the background worker
+    (which looked like the button did nothing)."""
+    assert (submission.get("provisioning") or {}).get("status") is None
+    prov_mod.mark_queued(submission["id"])
+    prov = _stored(tmp_path, submission["id"])["provisioning"]
+    assert prov["status"] == "in_progress"
+    assert prov["step"] == "queued"
+
+
+def test_mark_queued_leaves_finished_states_untouched(submission, tmp_path):
+    """Never resurrect a provisioned/in_progress record from a stray double-click."""
+    for status in ("provisioned", "in_progress"):
+        sub = dict(submission, provisioning={"status": status, "step": "verify"})
+        (tmp_path / f"{sub['id']}.json").write_text(json.dumps(sub))
+        prov_mod.mark_queued(sub["id"])
+        assert _stored(tmp_path, sub["id"])["provisioning"]["step"] == "verify"
+
+
 def test_sweep_requeues_paid_unfinished(submission, tmp_path, enqueue_recorder):
     from datetime import datetime, timedelta, timezone
     stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()

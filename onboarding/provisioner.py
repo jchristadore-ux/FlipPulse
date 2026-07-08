@@ -581,6 +581,27 @@ def _worker() -> None:
             _queue.task_done()
 
 
+def mark_queued(sub_id: str) -> None:
+    """Synchronously record that provisioning has been requested.
+
+    enqueue() hands the job to a background thread and returns immediately, so a
+    status page rendered right after (the /admin "deploy" button redirects back
+    to the submission detail) can beat the worker's first checkpoint and render
+    as if nothing happened. Writing the in_progress marker here, before the
+    redirect, makes the click visible at once. provision() preserves started_at
+    and overwrites step with the real checkpoints as it runs; a failure before it
+    checkpoints is still healed by the boot sweep / lock TTL."""
+    try:
+        sub = load_submission(sub_id)
+    except ProvisionError:
+        return
+    prov = sub.get("provisioning") or {}
+    if prov.get("status") in ("in_progress", "provisioned"):
+        return
+    _checkpoint(sub, status="in_progress", step="queued", error=None,
+                started_at=prov.get("started_at") or datetime.now(timezone.utc).isoformat())
+
+
 def enqueue(sub_id: str, require_paid: bool = True) -> None:
     """Queue a submission for background provisioning (returns immediately —
     used by the Stripe webhook so the 200 goes back to Stripe fast).

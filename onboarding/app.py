@@ -304,6 +304,22 @@ def _submit_rate_limited(ip: str) -> bool:
 _price_id_cache: "dict[str, str]" = {}
 
 
+def _stripe_get(obj, key):
+    """Read a field from a Stripe API object *or* a plain dict.
+
+    stripe-python ≥ 8 (we run v15) returns `StripeObject` instances that — unlike
+    older releases — no longer subclass `dict`, so `obj.get("…")` raises
+    `AttributeError: 'Product' object has no attribute 'get'` (str(e) == "get").
+    That crashed real signups even though the unit tests (which mock `retrieve`
+    to return a plain dict) stayed green. Attribute access works on a StripeObject
+    and the isinstance(dict) branch keeps plain dicts working too."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
 def _resolve_price_id(configured: str) -> str:
     """Return a usable Stripe **Price** id for a configured value.
 
@@ -320,9 +336,8 @@ def _resolve_price_id(configured: str) -> str:
         return _price_id_cache[pid]
     import stripe
     product = stripe.Product.retrieve(pid)
-    default_price = product.get("default_price")
-    price_id = default_price if isinstance(default_price, str) else (
-        (default_price or {}).get("id"))
+    default_price = _stripe_get(product, "default_price")
+    price_id = default_price if isinstance(default_price, str) else _stripe_get(default_price, "id")
     if not price_id:
         raise RuntimeError(
             f"Stripe product {pid} has no default price — set a default price on "
@@ -574,6 +589,10 @@ def admin_provision(sub_id: str):
     if not provisioner.is_configured():
         return redirect(url_for("admin_detail", sub_id=sub_id))
     if (sub.get("provisioning") or {}).get("status") != "in_progress":
+        # Mark it in_progress on disk before enqueuing so the redirect below
+        # immediately shows "⏳ deploying" instead of racing the worker's first
+        # checkpoint and looking like the button did nothing.
+        provisioner.mark_queued(sub_id)
         provisioner.enqueue(sub_id, require_paid=False)
     return redirect(url_for("admin_detail", sub_id=sub_id))
 
