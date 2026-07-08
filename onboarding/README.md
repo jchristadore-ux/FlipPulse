@@ -45,8 +45,8 @@ Environment variables:
 | `ONBOARDING_TELEGRAM_BOT_TOKEN` | recommended | Operator-alert bot (a bot you own). |
 | `ONBOARDING_TELEGRAM_CHAT_ID` | recommended | Your chat id for signup alerts. |
 | `STRIPE_SECRET_KEY` | for payment | Stripe secret key (`sk_live_...` / `sk_test_...`). |
-| `STRIPE_MONTHLY_PRICE_ID` | for payment | Recurring $99/mo Price id (`price_...`). |
-| `STRIPE_SETUP_PRICE_ID` | for payment | One-time $99 setup Price id. |
+| `STRIPE_MONTHLY_PRICE_ID` | for payment | Recurring $99/mo **Price** id (`price_...`). If you paste a **Product** id (`prod_...`) by mistake — the id the Stripe dashboard shows most prominently — the service auto-resolves it to that product's default price so checkout still works. |
+| `STRIPE_SETUP_PRICE_ID` | for payment | One-time $99 setup **Price** id (`price_...`); a `prod_...` is auto-resolved to its default price too. |
 | `STRIPE_WEBHOOK_SECRET` | **required with Stripe** | Verifies `checkout.session.completed` so a submission is marked **paid** (which triggers auto-provisioning). Without it, paid customers are never marked paid and never provisioned — the app logs an ERROR at boot, `/healthz` reports `ok: false`, and the webhook returns 500 so Stripe flags the endpoint. |
 | `ADMIN_TOKEN` | optional | Enables the operator dashboard at `/admin`. Unset = dashboard disabled (routes 404). |
 | `PUBLIC_BASE_URL` | optional | Public https URL (for Stripe success/cancel redirects). Defaults to the request host. |
