@@ -422,7 +422,27 @@ if "--list-formats" in sys.argv:
 for _arg in sys.argv[1:]:
     if _arg.startswith("--format="):
         os.environ.setdefault("TRADING_FORMAT", _arg.split("=", 1)[1])
-TRADING_FORMAT = apply_format(os.environ.get("TRADING_FORMAT", "balanced"))
+
+
+def _boot_trading_format() -> str:
+    """The format to boot with: the customer's dashboard choice (persisted to the
+    /data volume) when present, otherwise the TRADING_FORMAT env var provisioned at
+    signup. The dashboard writes {"trading_format": "..."} to FORMAT_OVERRIDE_PATH;
+    because a format bundles gate thresholds read once here at startup, a change
+    only takes effect on the next boot. Best-effort — a missing/corrupt file just
+    falls back to the env value."""
+    path = os.environ.get("FORMAT_OVERRIDE_PATH", "").strip() or "/data/format_override.json"
+    try:
+        with open(path) as f:
+            chosen = str(json.load(f).get("trading_format", "")).strip()
+        if chosen:
+            return chosen
+    except (OSError, ValueError, TypeError):
+        pass
+    return os.environ.get("TRADING_FORMAT", "balanced")
+
+
+TRADING_FORMAT = apply_format(_boot_trading_format())
 
 KALSHI_API_KEY_ID   = _require("KALSHI_API_KEY_ID")
 
@@ -447,7 +467,38 @@ def _load_raw_pem() -> str:
 
 
 _RAW_PEM            = _load_raw_pem()
-DEMO_MODE           = _env_bool("DEMO_MODE", True)
+
+# ── Paper ↔ live mode override (dashboard / Telegram) ─────────────────────────
+# DEMO_MODE gates the whole trading path and is fixed for a process run, so a
+# customer/operator flip between paper and live is applied by (1) writing the
+# desired mode to MODE_OVERRIDE_PATH on the /data volume and (2) the running bot
+# restarting cleanly into that mode the next time it is FLAT (no open position) —
+# see _maybe_restart_for_mode_change() in the main loop. The override wins over the
+# provisioned DEMO_MODE env var; deleting the file falls back to it. Going LIVE
+# always requires an explicit confirmation on the dashboard / via `/live confirm`.
+MODE_OVERRIDE_PATH  = os.environ.get("MODE_OVERRIDE_PATH", "").strip() or "/data/mode_override.json"
+
+
+def _read_mode_override() -> "bool | None":
+    """The customer/operator's desired DEMO_MODE from MODE_OVERRIDE_PATH, or None if
+    no valid override is present. Best-effort — a missing/corrupt file means 'no
+    override, use the env default'."""
+    try:
+        with open(MODE_OVERRIDE_PATH) as f:
+            val = json.load(f).get("demo_mode")
+    except (OSError, ValueError, TypeError):
+        return None
+    return bool(val) if isinstance(val, bool) else None
+
+
+def _boot_demo_mode() -> bool:
+    """The mode to boot in: the persisted override when set, else the DEMO_MODE env
+    var provisioned at signup (defaults to paper)."""
+    override = _read_mode_override()
+    return override if override is not None else _env_bool("DEMO_MODE", True)
+
+
+DEMO_MODE           = _boot_demo_mode()
 POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
 
 # ── Capital & sizing (PERCENTAGE-BASED — v10.0.0) ─────────────────────────────
@@ -465,6 +516,36 @@ POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
 NORMAL_TRADE_PCT   = _env_float("NORMAL_TRADE_PCT", 0.10)
 RECOVERY_TRADE_PCT = _env_float("RECOVERY_TRADE_PCT", 0.03)
 MAX_TRADE_PCT      = _env_float("MAX_TRADE_PCT", 0.15)
+
+# ── Customer risk-percentage override (Telegram /risk) ────────────────────────
+# The customer can retune their full-size stake fraction at runtime by messaging
+# their bot "/risk <percent>" (see command_bot.py). command_bot validates the
+# request and drops the chosen fraction into RISK_OVERRIDE_PATH on the /data
+# volume; the trading loop reads it back here at the sizing chokepoint. This keeps
+# command_bot fully decoupled from the engine — it never imports bot.py, it just
+# writes a file, the mirror image of the status snapshot the engine writes for it.
+# The override is a clamped substitute for NORMAL_TRADE_PCT ONLY: RECOVERY sizing,
+# the hard MAX_TRADE_PCT ceiling, and every downside guardrail still apply on top
+# of it unchanged. Deleting the file (or /risk reset) falls back to NORMAL_TRADE_PCT.
+RISK_OVERRIDE_PATH = os.environ.get("RISK_OVERRIDE_PATH", "").strip() or "/data/risk_override.json"
+# A customer-typed value is clamped into [RISK_MIN_TRADE_PCT, MAX_TRADE_PCT] before
+# it can ever reach sizing, so a fat-finger "/risk 90" can neither exceed the sane
+# ceiling nor drop the stake to a dust amount that never fills.
+RISK_MIN_TRADE_PCT = _env_float("RISK_MIN_TRADE_PCT", 0.01)
+
+# ── Customer reserve / "set aside" (dashboard) ────────────────────────────────
+# The customer can ring-fence a dollar amount of their balance from trading via
+# the web dashboard (dashboard.py), which drops it into RESERVE_OVERRIDE_PATH on
+# the /data volume. The engine subtracts it from the balance used for sizing at
+# the single dollar-resolution point (active_trade_size), so the reserve is never
+# staked — the bot trades only the balance ABOVE it and de-risks toward zero size
+# as the tradeable remainder shrinks. Withdrawals still happen on Kalshi; this
+# only tells the bot how much to leave untouched. Decoupled by file, like /risk.
+RESERVE_OVERRIDE_PATH = os.environ.get("RESERVE_OVERRIDE_PATH", "").strip() or "/data/reserve_override.json"
+# The customer's chosen Trading Format from the dashboard, persisted here so it
+# survives redeploys and is applied at the NEXT boot (a format bundles gate
+# thresholds read once at startup, so it takes effect on restart — see boot below).
+FORMAT_OVERRIDE_PATH  = os.environ.get("FORMAT_OVERRIDE_PATH", "").strip() or "/data/format_override.json"
 # NOTE: the fixed-dollar-era knobs MAX_BET_FRACTION, KELLY_FRACTION and
 # KELLY_RECOVERY_MULT were removed in the v10 cleanup — sizing is purely the
 # percentage knobs above (kelly math is used only as a positive-expectancy
@@ -557,7 +638,7 @@ def _probation_rungs() -> "list[float]":
     in [RECOVERY_TRADE_PCT, NORMAL_TRADE_PCT); the full fraction is the graduation
     target, not a rung. Returns [] when there is no room to ramp (caller stays
     normal)."""
-    lo, hi = RECOVERY_TRADE_PCT, NORMAL_TRADE_PCT
+    lo, hi = RECOVERY_TRADE_PCT, effective_normal_trade_pct()
     if hi <= lo:
         return []
     if PROBATION_RUNGS_RAW:
@@ -919,7 +1000,7 @@ class RecoveryState:
             f"🛟 RECOVERY MODE ACTIVATED\n"
             f"Recovery target: ${self.target_balance:.2f}\n"
             f"Trade size → {RECOVERY_TRADE_PCT*100:.1f}% of balance "
-            f"(was {NORMAL_TRADE_PCT*100:.1f}%)"
+            f"(was {effective_normal_trade_pct()*100:.1f}%)"
         )
         return True
 
@@ -936,9 +1017,9 @@ class RecoveryState:
         self._save()
         log.warning("Recovery target reached.")
         log.warning("Recovery mode DEACTIVATED.")
-        log.warning("Switching trade size back to: %.1f%% of balance", NORMAL_TRADE_PCT * 100)
+        log.warning("Switching trade size back to: %.1f%% of balance", effective_normal_trade_pct() * 100)
         msg = (f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
-               f"${reached:.2f}\nTrade size → {NORMAL_TRADE_PCT*100:.1f}% of balance")
+               f"${reached:.2f}\nTrade size → {effective_normal_trade_pct()*100:.1f}% of balance")
         # Make the ladder re-prove the edge on fresh data: hold its win-rate
         # size-up at baseline for the next RECOVERY_LADDER_PAUSE_TRADES trades
         # before it can scale the stake above NORMAL_TRADE_PCT again.
@@ -1073,7 +1154,7 @@ class ProbationState:
         """The base stake FRACTION for the current rung (full fraction when
         inactive)."""
         if not self.active or not self.rungs:
-            return self.full_size or NORMAL_TRADE_PCT
+            return self.full_size or effective_normal_trade_pct()
         return self.rungs[min(self.level, len(self.rungs) - 1)]
 
     def _gate_met(self) -> bool:
@@ -1127,7 +1208,7 @@ class ProbationState:
         )
 
     def _graduate(self) -> None:
-        frac = self.full_size or NORMAL_TRADE_PCT
+        frac = self.full_size or effective_normal_trade_pct()
         self.active = False
         self.level  = 0
         self.rungs  = []
@@ -1167,7 +1248,7 @@ class ProbationState:
         if self.day and self.day != today and not recovery.active:
             log.info("Probation boot │ new day (%s→%s) — re-arming ramp from floor.",
                      self.day, today)
-            self.start(_probation_rungs(), NORMAL_TRADE_PCT, reason="Daily slow-roll")
+            self.start(_probation_rungs(), effective_normal_trade_pct(), reason="Daily slow-roll")
             return
         self.level = max(0, min(self.level, len(self.rungs) - 1))
         log.info("Probation boot │ RESUMING ramp at base %.1f%% (rung %d/%d).",
@@ -1459,6 +1540,83 @@ class BillingState:
 billing = BillingState(BILLING_STATE_PATH, BILLING_PERSIST)
 
 
+# Cache the parsed risk override on the file's mtime so the sizing chokepoint can
+# consult it every cycle without re-reading/parsing JSON on each call.
+_risk_override_cache: "tuple[float, float] | None" = None  # (mtime, fraction)
+
+
+def _read_risk_override() -> "float | None":
+    """The customer's full-size stake fraction from RISK_OVERRIDE_PATH, or None if
+    no valid override is present. Cached on the file's mtime. Never raises — a
+    missing, empty, or corrupt file simply means 'no override, use the default'."""
+    global _risk_override_cache
+    try:
+        mtime = os.path.getmtime(RISK_OVERRIDE_PATH)
+    except OSError:
+        _risk_override_cache = None
+        return None
+    if _risk_override_cache is not None and _risk_override_cache[0] == mtime:
+        return _risk_override_cache[1]
+    try:
+        with open(RISK_OVERRIDE_PATH) as f:
+            frac = float(json.load(f).get("normal_trade_pct"))
+    except (OSError, ValueError, TypeError):
+        _risk_override_cache = None
+        return None
+    if not frac > 0:                      # 0, negative, or NaN → treat as no override
+        _risk_override_cache = None
+        return None
+    _risk_override_cache = (mtime, frac)
+    return frac
+
+
+def effective_normal_trade_pct() -> float:
+    """The active full-size stake FRACTION: the customer's runtime /risk override
+    when one is set, otherwise the NORMAL_TRADE_PCT default. Always clamped into
+    the safe [RISK_MIN_TRADE_PCT, MAX_TRADE_PCT] band so no configured or typed
+    value can push the base stake past the hard ceiling or below a fill-able floor.
+    Recovery/probation de-risking and every guardrail still layer on top of this."""
+    frac = _read_risk_override()
+    if frac is None:
+        frac = NORMAL_TRADE_PCT
+    return max(RISK_MIN_TRADE_PCT, min(frac, MAX_TRADE_PCT))
+
+
+# Cache the parsed reserve on the file's mtime, same pattern as the risk override.
+_reserve_cache: "tuple[float, float] | None" = None  # (mtime, dollars)
+
+
+def effective_reserve() -> float:
+    """The dollar amount the customer has ring-fenced from trading via the
+    dashboard (RESERVE_OVERRIDE_PATH), or 0.0 if none/invalid. Cached on the file's
+    mtime. Never raises. Clamped to ≥ 0 — a negative reserve is meaningless and is
+    treated as no reserve."""
+    global _reserve_cache
+    try:
+        mtime = os.path.getmtime(RESERVE_OVERRIDE_PATH)
+    except OSError:
+        _reserve_cache = None
+        return 0.0
+    if _reserve_cache is not None and _reserve_cache[0] == mtime:
+        return _reserve_cache[1]
+    try:
+        with open(RESERVE_OVERRIDE_PATH) as f:
+            amt = float(json.load(f).get("reserve_dollars"))
+    except (OSError, ValueError, TypeError):
+        _reserve_cache = None
+        return 0.0
+    amt = amt if amt > 0 else 0.0         # negative/NaN/0 → no reserve
+    _reserve_cache = (mtime, amt)
+    return amt
+
+
+def tradeable_balance(balance: float) -> float:
+    """The balance the bot is allowed to stake: the live balance minus the
+    customer's reserve, floored at 0. All sizing works off this, so the reserve is
+    never risked and the stake auto-de-risks to 0 as the tradeable remainder does."""
+    return max(0.0, balance - effective_reserve())
+
+
 def active_trade_fraction() -> float:
     """The stake FRACTION of the current balance for the active mode. Single
     source of truth for sizing posture: recovery (deepest claw-back) → probation
@@ -1468,17 +1626,21 @@ def active_trade_fraction() -> float:
         return RECOVERY_TRADE_PCT
     if probation.active:
         return probation.current_size()
-    return NORMAL_TRADE_PCT
+    return effective_normal_trade_pct()
 
 
 def active_trade_size(balance: float) -> float:
-    """The DOLLAR stake for the current mode = active fraction × balance, clamped
-    by the hard MAX_TRADE_PCT ceiling and by cash on hand. Because the fraction is
-    of the CURRENT balance, the stake re-scales on every trade — it compounds as
-    the account grows and auto-de-risks as it shrinks. Single dollar-resolution
-    point; every position-sizing path derives from this."""
+    """The DOLLAR stake for the current mode = active fraction × TRADEABLE balance,
+    clamped by the hard MAX_TRADE_PCT ceiling and by cash on hand. The tradeable
+    balance is the live balance minus the customer's reserve (set aside), so the
+    reserve is never staked and the stake auto-de-risks to 0 as the tradeable
+    remainder shrinks. Because the fraction is of the CURRENT balance, the stake
+    re-scales on every trade — it compounds as the account grows and de-risks as it
+    shrinks. Single dollar-resolution point; every position-sizing path derives
+    from this."""
+    usable = tradeable_balance(balance)
     frac = min(active_trade_fraction(), MAX_TRADE_PCT)
-    return round(min(frac * balance, balance), 2)
+    return round(min(frac * usable, usable), 2)
 
 
 def in_clawback() -> bool:
@@ -2827,6 +2989,11 @@ def write_status_snapshot(balance: float) -> None:
             "version": BOT_VERSION,
             "trading_format": TRADING_FORMAT,
             "demo_mode": DEMO_MODE,
+            # A requested-but-not-yet-applied paper↔live flip (applies on the next
+            # flat cycle via restart). None unless a flip is pending; the dashboard
+            # and /status show it so the user knows the switch is armed.
+            "pending_demo_mode": (t if (t := _read_mode_override()) is not None
+                                  and t != DEMO_MODE else None),
             "balance": round(float(balance), 2),
             "session_pnl": round(float(session_pnl), 2),
             "wins": wins,
@@ -2836,6 +3003,15 @@ def write_status_snapshot(balance: float) -> None:
             "active_mode": active_mode,
             "active_trade_pct": round(active_trade_fraction() * 100, 2),
             "active_trade_size": round(active_trade_size(balance), 2),
+            # Full-size risk knob + the hard bounds the Telegram /risk command
+            # clamps into. normal_trade_pct reflects any live /risk override.
+            "normal_trade_pct": round(effective_normal_trade_pct() * 100, 2),
+            "risk_min_pct": round(RISK_MIN_TRADE_PCT * 100, 2),
+            "risk_max_pct": round(MAX_TRADE_PCT * 100, 2),
+            # Customer reserve (set aside) + the balance actually in play, and the
+            # live trading format — all surfaced so the dashboard can render them.
+            "reserve_dollars": round(effective_reserve(), 2),
+            "tradeable_balance": round(tradeable_balance(balance), 2),
             "billing": billing.snapshot(balance),
             "open_positions": len(open_orders),
             "open_tickers": [o.get("ticker", "") for o in open_orders.values()],
@@ -3081,7 +3257,7 @@ def maybe_roll_session_day(current_balance: float) -> bool:
     # sub-full room (sizing then stays normal), and it resets any half-climbed
     # ramp left over from yesterday back to the floor.
     if not recovery.active:
-        probation.start(_probation_rungs(), NORMAL_TRADE_PCT, reason="Daily slow-roll")
+        probation.start(_probation_rungs(), effective_normal_trade_pct(), reason="Daily slow-roll")
 
     log.info("🔄 New trading day %s │ balance $%.2f │ daily budget reset%s",
              today, current_balance, " (halt cleared)" if was_halted else "")
@@ -3091,6 +3267,29 @@ def maybe_roll_session_day(current_balance: float) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN LOOP
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _maybe_restart_for_mode_change() -> None:
+    """Apply a pending paper↔live flip. If MODE_OVERRIDE_PATH now differs from the
+    running DEMO_MODE and the bot is FLAT (no open position), restart into the new
+    mode. Restarting only when flat guarantees an in-flight position is never
+    abandoned by the switch. The exit is non-zero so Railway's ON_FAILURE restart
+    policy boots a fresh process that reads the new mode at startup (DEMO_MODE =
+    _boot_demo_mode()). No-op when no flip is pending. Never raises."""
+    try:
+        target = _read_mode_override()
+        if target is None or target == DEMO_MODE or open_orders:
+            return
+        new_mode = "PAPER 🟡" if target else "LIVE 🔴"
+        log.warning("Mode flip requested → %s. Bot is flat; restarting to apply.", new_mode)
+        tg.send_telegram_message(
+            f"🔀 Switching to {new_mode}. Restarting now to apply — back in a few "
+            f"seconds trading in {'paper' if target else 'LIVE (real money)'} mode.")
+    except Exception as e:  # a flip must never crash the loop; retry next cycle
+        log.warning("Mode-change check error (will retry): %s", e)
+        return
+    logging.shutdown()
+    os._exit(3)             # non-zero → Railway ON_FAILURE restart → boot reads new mode
+
 
 def main() -> None:
     # ── CRITICAL GLOBAL DECLARATION RULE ─────────────────────────────────────
@@ -3212,6 +3411,9 @@ def main() -> None:
 
     while not _shutdown_requested:
         try:
+            # Apply a pending paper↔live flip as soon as the bot is flat (checked
+            # first so it also fires while halted, when there is no open position).
+            _maybe_restart_for_mode_change()
             if _session_halted:
                 # Halt is paused-for-the-day, not forever: poll often enough to
                 # catch the UTC rollover that clears it (maybe_roll_session_day),
@@ -3251,7 +3453,7 @@ def main() -> None:
             # snapping straight back to full size (no-op if the ramp is disabled
             # or there is no sub-full room, in which case sizing resumes normal).
             if recovery.maybe_exit(current_balance):
-                probation.start(_probation_rungs(), NORMAL_TRADE_PCT)
+                probation.start(_probation_rungs(), effective_normal_trade_pct())
             # Performance-fee billing: close the month + report the fee at the UTC
             # month boundary (observability only; never moves money).
             billing.maybe_month_rollover(current_balance)
@@ -3315,5 +3517,14 @@ if __name__ == "__main__":
         command_bot.start_command_bot()
     except Exception as _cb_err:  # pragma: no cover - must never break trading
         log.warning("Command bot not started: %s", _cb_err)
+
+    # Customer self-service web dashboard (login-protected). Runs in a daemon
+    # thread reading/writing the same /data override files as /risk; a no-op when
+    # DASHBOARD_PASSWORD is unset. Guarded so it can never stop the bot booting.
+    try:
+        import dashboard
+        dashboard.start_dashboard()
+    except Exception as _db_err:  # pragma: no cover - must never break trading
+        log.warning("Dashboard not started: %s", _db_err)
 
     main()

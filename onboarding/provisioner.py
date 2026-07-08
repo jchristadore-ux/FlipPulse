@@ -72,6 +72,18 @@ PROVISION_REPO_BRANCH = os.environ.get("PROVISION_REPO_BRANCH", "release").strip
 # alerts fan out to you. Blank = customer-only alerts.
 BOT_OPERATOR_CHAT_ID = os.environ.get("BOT_OPERATOR_CHAT_ID", "").strip()
 
+# Port the customer bot's self-service dashboard binds inside the container. The
+# generated Railway domain targets this port, and it is injected as DASHBOARD_PORT
+# so the two always agree. Kept fixed (not $PORT) so provisioning is deterministic.
+DASHBOARD_PORT = os.environ.get("DASHBOARD_PORT", "8080").strip() or "8080"
+
+
+def _gen_dashboard_password() -> str:
+    """A strong, URL-safe per-customer dashboard password. Uses os.urandom (not the
+    stdlib `secrets` module, whose name is shadowed by the decrypted-secrets dict
+    elsewhere in this file)."""
+    return base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+
 # Deploy watch knobs.
 DEPLOY_TIMEOUT_SECS = int(os.environ.get("PROVISION_DEPLOY_TIMEOUT", "600"))
 DEPLOY_POLL_SECS    = float(os.environ.get("PROVISION_DEPLOY_POLL", "10"))
@@ -94,7 +106,7 @@ DEPLOY_PENDING_STATUSES = {"QUEUED", "WAITING", "INITIALIZING", "BUILDING", "DEP
 DEPLOY_FAILED_STATUSES  = {"FAILED", "CRASHED", "REMOVED", "SKIPPED"}
 
 STEPS = ("create_project", "create_service", "attach_volume",
-         "set_variables", "deploy", "verify")
+         "create_domain", "set_variables", "deploy", "verify")
 
 
 class ProvisionError(RuntimeError):
@@ -189,6 +201,20 @@ class RailwayClient:
                "source": {"repo": repo}, "variables": variables}
         return self.gql(q, {"input": inp})["serviceCreate"]["id"]
 
+    def service_domain_create(self, environment_id: str, service_id: str,
+                              target_port: int) -> str:
+        """Generate a public Railway domain (xxx.up.railway.app) for the service so
+        the customer's login-protected dashboard is reachable over HTTPS. Returns
+        the bare domain (no scheme). targetPort must match the port the dashboard
+        binds inside the container (DASHBOARD_PORT)."""
+        q = """
+        mutation($input: ServiceDomainCreateInput!) {
+          serviceDomainCreate(input: $input) { domain }
+        }"""
+        inp = {"environmentId": environment_id, "serviceId": service_id,
+               "targetPort": target_port}
+        return self.gql(q, {"input": inp})["serviceDomainCreate"]["domain"]
+
     def volume_create(self, project_id: str, environment_id: str,
                       service_id: str, mount_path: str = "/data") -> str:
         q = """
@@ -270,10 +296,16 @@ def _checkpoint(sub: dict, **updates) -> dict:
 
 
 # ── Variable set (runbook §4, complete — nothing left to add by hand) ─────────
-def deploy_variables(sub: dict, secrets: dict) -> dict:
+def deploy_variables(sub: dict, secrets: dict,
+                     dashboard_password: str | None = None) -> dict:
     """The FULL environment for a customer bot: the per-customer values from the
     submission plus the /data state paths from .env.example. The Kalshi key goes
-    in as the single-line KALSHI_PRIVATE_KEY_PEM_B64 (can't be mangled)."""
+    in as the single-line KALSHI_PRIVATE_KEY_PEM_B64 (can't be mangled).
+
+    dashboard_password must be passed by provision() from the persisted checkpoint
+    so it stays STABLE across resumes/reconciles (variables_upsert re-applies this
+    set on every run — a freshly-generated password each time would silently rotate
+    the customer's login). Defaults to a one-off value only for standalone callers."""
     pem_b64 = base64.b64encode(secrets.get("kalshi_private_key_pem", "").encode()).decode()
     variables = {
         "KALSHI_API_KEY_ID": secrets.get("kalshi_api_key_id", ""),
@@ -291,6 +323,17 @@ def deploy_variables(sub: dict, secrets: dict) -> dict:
         "BILLING_STATE_PATH": "/data/billing_state.json",
         "STATUS_SNAPSHOT_PATH": "/data/status_snapshot.json",
         "HEALTH_LOG_PATH": "/data/health.log",
+        # Self-service dashboard + Telegram /risk override files (all on /data so
+        # customer tuning survives redeploys). A strong per-customer password is
+        # generated here; the customer changes their setup at the bot's public URL.
+        "DASHBOARD_PASSWORD": dashboard_password or _gen_dashboard_password(),
+        "DASHBOARD_PORT": DASHBOARD_PORT,
+        "DASHBOARD_SECRET_PATH": "/data/dashboard_secret",
+        "RISK_OVERRIDE_PATH": "/data/risk_override.json",
+        "RESERVE_OVERRIDE_PATH": "/data/reserve_override.json",
+        "FORMAT_OVERRIDE_PATH": "/data/format_override.json",
+        "TELEGRAM_PREFS_PATH": "/data/telegram_prefs.json",
+        "MODE_OVERRIDE_PATH": "/data/mode_override.json",
         # Performance fee stays a disabled placeholder (runbook §9b).
         "PERF_FEE_PCT": "0.0",
         "BILLING_LOG_PATH": "/data/billing.log",
@@ -373,7 +416,13 @@ def provision(sub_id: str, client: RailwayClient | None = None,
             log.info("%s: project %s created.", sub_id, project_id)
 
         secrets = _decrypt_secrets(sub)
-        variables = deploy_variables(sub, secrets)
+        # The dashboard password is generated ONCE and persisted in the checkpoint
+        # so resumes/reconciles reuse it (variables_upsert re-applies the full set
+        # each run; a fresh password each time would rotate the customer's login).
+        dash_pw = prov.get("dashboard_password") or _gen_dashboard_password()
+        if not prov.get("dashboard_password"):
+            _checkpoint(sub, dashboard_password=dash_pw)
+        variables = deploy_variables(sub, secrets, dashboard_password=dash_pw)
 
         # §2 service from the FlipPulse repo, variables injected at creation so
         # the very first build boots with a full config.
@@ -392,6 +441,20 @@ def provision(sub_id: str, client: RailwayClient | None = None,
             _checkpoint(sub, volume_id=volume_id, step="attach_volume")
             log.info("%s: volume %s mounted at /data.", sub_id, volume_id)
 
+        # Public HTTPS domain so the customer can reach their dashboard. Best-effort:
+        # a failure here must NOT block the bot from trading, so it's logged and the
+        # operator is told to generate the domain by hand rather than aborting.
+        if not prov.get("dashboard_domain"):
+            try:
+                domain = client.service_domain_create(
+                    prov["environment_id"], prov["service_id"], int(DASHBOARD_PORT))
+                _checkpoint(sub, dashboard_domain=domain, step="create_domain")
+                log.info("%s: dashboard domain %s created.", sub_id, domain)
+            except ProvisionError as e:
+                _checkpoint(sub, dashboard_domain_error=str(e))
+                log.warning("%s: dashboard domain not created (%s) — bot still "
+                            "provisions; generate a domain manually.", sub_id, e)
+
         # §4 upsert the full variable set (idempotent — also heals a resumed run
         # where service_create's inline variables never landed).
         client.variables_upsert(prov["project_id"], prov["environment_id"],
@@ -409,13 +472,23 @@ def provision(sub_id: str, client: RailwayClient | None = None,
         prov = _checkpoint(sub, status="provisioned", step="verify",
                            deployment_id=deployment["id"],
                            provisioned_at=datetime.now(timezone.utc).isoformat())
+        if prov.get("dashboard_domain"):
+            dash_line = (f"Dashboard: https://{prov['dashboard_domain']}\n"
+                         f"  ↳ Password: {dash_pw}\n"
+                         f"  ↳ Send both to the customer (see CUSTOMER_ONBOARDING.md).\n")
+        else:
+            dash_line = ("Dashboard: domain NOT auto-created — open the Railway "
+                         "service → Settings → Networking → Generate Domain "
+                         f"(target port {DASHBOARD_PORT}). Password: {dash_pw}\n")
         _notify_operator(
             "✅ FlipPulse bot provisioned\n"
             f"Customer: {sub.get('full_name')} ({handle})\n"
             f"Format: {sub.get('trading_format')} · paper balance "
             f"${float(sub.get('starting_balance', 0)):,.2f}\n"
             f"Project: https://railway.app/project/{prov['project_id']}\n"
-            f"Mode: PAPER (DEMO_MODE=true) — going live stays manual.\n"
+            + dash_line +
+            f"Mode: PAPER (DEMO_MODE=true) — the customer can go live from the "
+            f"dashboard or Telegram /live confirm (or flip DEMO_MODE + redeploy).\n"
             f"Submission: {sub_id}")
         return prov
 

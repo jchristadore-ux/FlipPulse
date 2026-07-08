@@ -50,6 +50,12 @@ class FakeRailway:
         assert mount_path == "/data"
         return "vol-1"
 
+    def service_domain_create(self, environment_id, service_id, target_port):
+        self.calls.append("service_domain_create")
+        self._maybe_fail("create_domain")
+        self.domain_target_port = target_port
+        return "jane-doe-bot-production.up.railway.app"
+
     def variables_upsert(self, project_id, environment_id, service_id, variables):
         self.calls.append("variables_upsert")
         self.variables = dict(variables)
@@ -131,6 +137,54 @@ def test_full_variable_set_injected(submission):
                 "HEALTH_LOG_PATH", "BILLING_LOG_PATH"):
         assert v[key].startswith("/data/"), key
     assert v["PERF_FEE_PCT"] == "0.0"                  # fee stays disabled
+
+
+def test_dashboard_domain_and_password_provisioned(submission, tmp_path, monkeypatch):
+    """The dashboard is reachable end-to-end from provisioning: a public domain is
+    generated (targeting DASHBOARD_PORT), the password is injected, and both are
+    surfaced to the operator."""
+    alerts = []
+    monkeypatch.setattr(prov_mod, "_notify_operator", lambda text: alerts.append(text))
+    client = FakeRailway()
+    prov = prov_mod.provision(submission["id"], client=client)
+
+    assert prov["dashboard_domain"] == "jane-doe-bot-production.up.railway.app"
+    assert client.domain_target_port == int(prov_mod.DASHBOARD_PORT)
+    v = client.variables
+    assert v["DASHBOARD_PORT"] == prov_mod.DASHBOARD_PORT
+    assert v["DASHBOARD_PASSWORD"] and len(v["DASHBOARD_PASSWORD"]) >= 16
+    # Success alert carries the URL + password for the operator to relay.
+    success = alerts[-1]
+    assert "https://jane-doe-bot-production.up.railway.app" in success
+    assert v["DASHBOARD_PASSWORD"] in success
+
+
+def test_dashboard_password_is_stable_across_resume(submission, tmp_path):
+    """A resumed run must reuse the SAME dashboard password — variables_upsert
+    re-applies the full set every run, so a fresh password would silently rotate
+    the customer's login on every reconcile/redeploy."""
+    first = FakeRailway(fail_on="volume_create")
+    with pytest.raises(prov_mod.ProvisionError):
+        prov_mod.provision(submission["id"], client=first)
+    pw1 = first.variables["DASHBOARD_PASSWORD"]           # captured at service_create
+
+    resume = FakeRailway()
+    prov_mod.provision(submission["id"], client=resume)
+    pw2 = resume.variables["DASHBOARD_PASSWORD"]          # re-applied via variables_upsert
+    assert pw1 == pw2
+
+
+def test_dashboard_domain_failure_is_non_fatal(submission, tmp_path, monkeypatch):
+    """If Railway won't mint a domain, the bot still provisions (it can trade);
+    the operator is told to add the domain by hand."""
+    alerts = []
+    monkeypatch.setattr(prov_mod, "_notify_operator", lambda text: alerts.append(text))
+    client = FakeRailway(fail_on="create_domain")
+    prov = prov_mod.provision(submission["id"], client=client)
+    assert prov["status"] == "provisioned"               # not blocked
+    assert "dashboard_domain" not in prov
+    assert "dashboard_domain_error" in prov
+    assert "Generate Domain" in alerts[-1]               # operator guidance
 
 
 def test_unpaid_submission_is_gated(submission, tmp_path):

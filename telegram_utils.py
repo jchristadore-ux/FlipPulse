@@ -15,6 +15,7 @@ Design rules:
   - _telegram_enabled flag gates everything after validation
 """
 
+import json
 import logging
 import os
 import threading
@@ -49,6 +50,36 @@ def _float_env(name: str, default: float) -> float:
         return float(os.environ.get(name, "").strip() or default)
     except (TypeError, ValueError):
         return default
+
+
+# ── Notification preferences (set from the web dashboard) ──────────────────────
+# The customer can mute routine trade alerts (entry / win / loss) from their
+# dashboard, which writes booleans to TELEGRAM_PREFS_PATH on the /data volume.
+# ONLY these three routine categories are mutable — guardrail, halt, recovery and
+# connection alerts go through send_telegram_message() and are always delivered so
+# a customer can never accidentally silence a safety-critical message. Read is
+# cached on the file's mtime and never raises (a missing/corrupt file = all on).
+TELEGRAM_PREFS_PATH = os.environ.get("TELEGRAM_PREFS_PATH", "").strip() or "/data/telegram_prefs.json"
+_prefs_cache: "tuple[float, dict] | None" = None  # (mtime, prefs)
+
+
+def notifications_enabled(category: str) -> bool:
+    """Whether a routine alert category (trade_entry / wins / losses) is enabled.
+    Defaults to True for any unknown/unset category."""
+    global _prefs_cache
+    try:
+        mtime = os.path.getmtime(TELEGRAM_PREFS_PATH)
+    except OSError:
+        return True                        # no prefs file → everything on
+    if _prefs_cache is None or _prefs_cache[0] != mtime:
+        try:
+            with open(TELEGRAM_PREFS_PATH) as f:
+                data = json.load(f)
+            prefs = data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return True
+        _prefs_cache = (mtime, prefs)
+    return bool(_prefs_cache[1].get(category, True))
 
 
 def _parse_recipients(chat: str, operator: str) -> list:
@@ -119,7 +150,7 @@ def send_trade_entry_notification(ticker: str, direction: str, cost: float,
                                    ob_pct: float = 0.0, edge_pct: float = 0.0,
                                    timestamp: Optional[datetime] = None) -> None:
     """Send a trade entry alert. Fires on every order placed."""
-    if not _telegram_enabled:
+    if not _telegram_enabled or not notifications_enabled("trade_entry"):
         return
     ts  = (timestamp or datetime.now(timezone.utc)).strftime("%H:%M UTC")
     pos = "🟢 YES" if direction.upper() == "YES" else "🔴 NO"
@@ -138,7 +169,7 @@ def send_win_notification(profit: float, balance: float, daily_pnl: float,
                            wins: int = 0, losses: int = 0,
                            timestamp: Optional[datetime] = None) -> None:
     """Send a WIN alert on every settled winning trade."""
-    if not _telegram_enabled:
+    if not _telegram_enabled or not notifications_enabled("wins"):
         return
     if profit <= 0:
         log.debug("send_win_notification called with profit=%.4f — suppressed.", profit)
@@ -161,7 +192,7 @@ def send_loss_notification(loss: float, balance: float, daily_pnl: float,
                             ticker: str, direction: str, streak: int,
                             wins: int = 0, losses: int = 0) -> None:
     """Send a LOSS alert on every settled losing trade."""
-    if not _telegram_enabled:
+    if not _telegram_enabled or not notifications_enabled("losses"):
         return
     ts         = datetime.now(timezone.utc).strftime("%H:%M UTC")
     pos        = "YES" if direction.upper() == "YES" else "NO"
