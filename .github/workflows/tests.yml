@@ -1,0 +1,26 @@
+name: tests
+
+# Runs the automated test suite (including the provisioner state-machine tests)
+# with no local setup. Fires automatically on every push and pull request, and
+# can be launched by hand from the GitHub "Actions" tab via "Run workflow".
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -q
