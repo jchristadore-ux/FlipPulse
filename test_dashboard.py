@@ -56,6 +56,7 @@ def _settings(tmp_path, snap=_SNAP):
         reserve_path=str(tmp_path / "reserve.json"),
         format_path=str(tmp_path / "format.json"),
         telegram_path=str(tmp_path / "tg.json"),
+        mode_path=str(tmp_path / "mode.json"),
     )
 
 
@@ -114,6 +115,36 @@ def test_set_format_valid_and_invalid(tmp_path):
     assert json.loads(open(s.format_path).read())["trading_format"] == "aggressive"
     ok2, msg2 = s.set_format("banana")
     assert not ok2 and "unknown" in msg2.lower()
+
+
+def test_set_mode_live_requires_confirmation(tmp_path):
+    s = _settings(tmp_path)
+    ok, msg = s.set_mode(go_live=True, confirm=False)
+    assert not ok and "confirm" in msg.lower()
+    assert not os.path.exists(s.mode_path)              # nothing written
+    ok2, msg2 = s.set_mode(go_live=True, confirm=True)
+    assert ok2 and "LIVE" in msg2
+    assert json.loads(open(s.mode_path).read())["demo_mode"] is False
+
+
+def test_set_mode_paper_no_confirmation_needed(tmp_path):
+    s = _settings(tmp_path)
+    ok, msg = s.set_mode(go_live=False, confirm=False)
+    assert ok and "PAPER" in msg
+    assert json.loads(open(s.mode_path).read())["demo_mode"] is True
+
+
+def test_state_reports_pending_flip(tmp_path):
+    # snapshot says paper (running); override asks for live → pending "live".
+    s = _settings(tmp_path)
+    s.set_mode(go_live=True, confirm=True)
+    assert s.state()["pending_mode"] == "live"
+
+
+def test_apply_mode_via_body(tmp_path):
+    s = _settings(tmp_path)
+    ok, msgs = s.apply({"mode": "live", "confirm": True})
+    assert ok and json.loads(open(s.mode_path).read())["demo_mode"] is False
 
 
 def test_set_telegram_merges(tmp_path):
@@ -251,6 +282,61 @@ def test_boot_format_falls_back_to_env(tmp_path, monkeypatch):
     monkeypatch.setenv("FORMAT_OVERRIDE_PATH", str(tmp_path / "missing.json"))
     monkeypatch.setenv("TRADING_FORMAT", "conservative")
     assert bot._boot_trading_format() == "conservative"
+
+
+# ── engine side: paper↔live boot mode + restart trigger ────────────────────────
+def test_boot_demo_mode_override(tmp_path, monkeypatch):
+    path = str(tmp_path / "mode.json")
+    monkeypatch.setattr(bot, "MODE_OVERRIDE_PATH", path)
+    monkeypatch.setenv("DEMO_MODE", "true")
+    # Override to live wins over the paper env default.
+    with open(path, "w") as f:
+        json.dump({"demo_mode": False}, f)
+    assert bot._boot_demo_mode() is False
+    # Corrupt/absent → env default (paper).
+    with open(path, "w") as f:
+        f.write("{bad")
+    assert bot._boot_demo_mode() is True
+
+
+def test_mode_restart_triggers_only_when_flat(tmp_path, monkeypatch):
+    path = str(tmp_path / "mode.json")
+    monkeypatch.setattr(bot, "MODE_OVERRIDE_PATH", path)
+    monkeypatch.setattr(bot, "DEMO_MODE", True)          # running paper
+    exits = []
+    monkeypatch.setattr(bot.os, "_exit", lambda code: exits.append(code))
+    monkeypatch.setattr(bot.logging, "shutdown", lambda: None)
+    monkeypatch.setattr(bot.tg, "send_telegram_message", lambda text: True)
+
+    # No override → no restart.
+    bot.open_orders.clear()
+    bot._maybe_restart_for_mode_change()
+    assert exits == []
+
+    # Override to live, but a position is open → wait, no restart.
+    with open(path, "w") as f:
+        json.dump({"demo_mode": False}, f)
+    bot.open_orders["x"] = {"ticker": "KXBTC"}
+    bot._maybe_restart_for_mode_change()
+    assert exits == []
+
+    # Flat now → restart with non-zero code.
+    bot.open_orders.clear()
+    bot._maybe_restart_for_mode_change()
+    assert exits == [3]
+
+
+def test_mode_restart_noop_when_override_matches(tmp_path, monkeypatch):
+    path = str(tmp_path / "mode.json")
+    monkeypatch.setattr(bot, "MODE_OVERRIDE_PATH", path)
+    monkeypatch.setattr(bot, "DEMO_MODE", True)
+    exits = []
+    monkeypatch.setattr(bot.os, "_exit", lambda code: exits.append(code))
+    bot.open_orders.clear()
+    with open(path, "w") as f:
+        json.dump({"demo_mode": True}, f)                # same as running → no-op
+    bot._maybe_restart_for_mode_change()
+    assert exits == []
 
 
 # ── telegram side: notification prefs ──────────────────────────────────────────

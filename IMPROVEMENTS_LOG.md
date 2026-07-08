@@ -25,7 +25,8 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 |---------|------------|------|---------|----------|----------|
 | IMP-001 | 2026-07-08 | command bot / sizing | Telegram `/risk` command lets a customer change their full-size stake % at runtime | Medium | Done |
 | IMP-002 | 2026-07-08 | dashboard / sizing / telegram | Self-service web dashboard (login) to change risk %, trading format, Telegram alerts, and set-aside reserve | High | Done |
-| IMP-004 | 2026-07-08 | provisioning / dashboard | Autoprovision the dashboard: generate the Railway public domain + stable password and surface URL/password to the operator; docs (`DASHBOARD.md`) | High | In Progress |
+| IMP-004 | 2026-07-08 | provisioning / dashboard | Autoprovision the dashboard: generate the Railway public domain + stable password and surface URL/password to the operator; docs (`DASHBOARD.md`) | High | Done |
+| IMP-005 | 2026-07-08 | dashboard / command bot / engine | Paper↔live flip from the dashboard and Telegram (`/live confirm` · `/paper`), confirmation-gated, applied by a clean auto-restart when flat | High | In Progress |
 
 ---
 
@@ -97,6 +98,29 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 - **Impact / risk:** Provisioning-only; the bot/engine is unchanged. Domain creation is
   non-fatal and the password is stable. Covered by new `test_provisioner.py` cases
   (domain + password surfaced, password stable across resume, domain failure non-fatal).
+
+### IMP-005 — Paper↔live flip (dashboard + Telegram)
+- **Added:** 2026-07-08
+- **Area:** dashboard / command bot / engine
+- **Priority:** High
+- **Status:** In Progress (PR on `claude/paper-live-flip`)
+- **Problem / motivation:** Going live required an operator env change + redeploy; the
+  owner wanted customers to self-serve the switch from the dashboard and Telegram.
+- **Decisions (confirmed with owner):** customer + operator may flip (behind a
+  confirmation); the flip auto-restarts the bot to apply.
+- **Change:** `DEMO_MODE` is boot-time and gates the whole trading path, so a flip is
+  applied safely by (1) writing the desired mode to `MODE_OVERRIDE_PATH` on `/data`
+  (dashboard "Trading mode" card, gated by a confirm checkbox; Telegram `/live confirm`
+  and `/paper`), and (2) the engine restarting into it via `_maybe_restart_for_mode_change()`
+  **only once flat** (no open position) — so an in-flight trade is never abandoned. Exit
+  is non-zero → Railway `ON_FAILURE` boots a fresh process that reads the new mode at
+  startup (`_boot_demo_mode()`). Snapshot carries `pending_demo_mode`; `/status`, `/mode`
+  and the dashboard show the armed flip. Provisioner injects `MODE_OVERRIDE_PATH`.
+- **Impact / risk:** Reverses the prior "going live is manual" invariant (owner-approved).
+  Mitigated by: mandatory confirmation for live; restart only when flat; reverting to
+  paper is always one tap/`/paper`; dashboard/command_bot stay decoupled (file-only IPC).
+  Covered by `test_dashboard.py` + `test_command_bot.py` (confirm gating, pending state,
+  boot-mode override, flat-only restart trigger).
 
 <!--
 Template for a detailed entry — copy below when an item needs more than one line.

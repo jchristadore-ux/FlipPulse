@@ -50,6 +50,9 @@ HEALTH_LOG_PATH      = os.environ.get("HEALTH_LOG_PATH", "").strip() or "/data/h
 # Where /risk writes the customer's chosen full-size fraction for the engine to
 # read. Must match bot.py's RISK_OVERRIDE_PATH (same default, same /data volume).
 RISK_OVERRIDE_PATH   = os.environ.get("RISK_OVERRIDE_PATH", "").strip() or "/data/risk_override.json"
+# Where /live and /paper write the desired mode for the engine to restart into.
+# Must match bot.py's MODE_OVERRIDE_PATH.
+MODE_OVERRIDE_PATH   = os.environ.get("MODE_OVERRIDE_PATH", "").strip() or "/data/mode_override.json"
 
 
 def _env_pct(name: str, default_frac: float) -> float:
@@ -72,6 +75,8 @@ HELP = (
     "/health-log [n] — last n lines of the health/activity log (default 20)\n"
     "/risk — show your current risk %; /risk <percent> to change it "
     "(e.g. /risk 8), /risk reset for the default\n"
+    "/mode — show paper/live mode; /live confirm to go LIVE (real money), "
+    "/paper to go back to paper\n"
     "/help — this message"
 )
 
@@ -105,11 +110,13 @@ class CommandHandler:
     def __init__(self, authorized_chats: set,
                  snapshot_path: str = STATUS_SNAPSHOT_PATH,
                  health_log_path: str = HEALTH_LOG_PATH,
-                 risk_override_path: str = RISK_OVERRIDE_PATH) -> None:
+                 risk_override_path: str = RISK_OVERRIDE_PATH,
+                 mode_override_path: str = MODE_OVERRIDE_PATH) -> None:
         self.authorized = {str(c) for c in authorized_chats}
         self.snapshot_path = snapshot_path
         self.health_log_path = health_log_path
         self.risk_override_path = risk_override_path
+        self.mode_override_path = mode_override_path
 
     def handle(self, chat_id, text: str) -> Optional[str]:
         chat_id = str(chat_id)
@@ -131,6 +138,8 @@ class CommandHandler:
             return self._do_health_log(args)
         if cmd == "risk":
             return self._do_risk(args, chat_id)
+        if cmd in ("mode", "live", "paper"):
+            return self._do_mode(cmd, args, chat_id)
         return f"Unknown command.\n{HELP}"
 
     # ── /status ────────────────────────────────────────────────────────────────
@@ -141,6 +150,8 @@ class CommandHandler:
                     f"{self.snapshot_path} once it's booted and STATUS_SNAPSHOT_PATH "
                     "is set — give it a minute after deploy.")
         mode = "LIVE 🔴" if snap.get("demo_mode") is False else "PAPER 🟡"
+        if snap.get("pending_demo_mode") is not None:
+            mode += f" → {'PAPER' if snap.get('pending_demo_mode') else 'LIVE'} (once flat)"
         bal = snap.get("balance")
         pnl = snap.get("session_pnl")
         wins = snap.get("wins", 0) or 0
@@ -285,6 +296,61 @@ class CommandHandler:
                     "The previous setting is still in effect.")
         return ("✅ Risk override cleared — back to the configured default. "
                 "Takes effect on the next trade.")
+
+    # ── /mode · /live · /paper ────────────────────────────────────────────────────
+    def _current_mode(self) -> Optional[bool]:
+        """Running demo_mode from the snapshot (True=paper, False=live), or None."""
+        snap = self._read_snapshot()
+        if snap is None:
+            return None
+        val = snap.get("demo_mode")
+        return val if isinstance(val, bool) else None
+
+    def _do_mode(self, cmd: str, args, chat_id: str) -> str:
+        demo = self._current_mode()
+        cur = "unknown (bot still booting)" if demo is None else ("PAPER 🟡" if demo else "LIVE 🔴")
+        if cmd == "mode":
+            snap = self._read_snapshot() or {}
+            pend = snap.get("pending_demo_mode")
+            extra = ""
+            if pend is not None:
+                extra = f"\n⏳ Switching to {'PAPER' if pend else 'LIVE'} once the bot is flat."
+            return (f"Trading mode: {cur}.{extra}\n"
+                    f"Go live with /live confirm (real money); /paper to go back.")
+        if cmd == "paper":
+            if demo is True:
+                return "Already in PAPER mode 🟡."
+            if not self._write_mode(True, chat_id):
+                return "Couldn't save the mode change (storage unavailable)."
+            return ("↩️ Switching to PAPER — the bot will restart into paper mode once "
+                    "it's flat (no open position).")
+        # cmd == "live"
+        if demo is False:
+            return "Already in LIVE mode 🔴 (real money)."
+        if (args[0].strip().lower() if args else "") != "confirm":
+            return ("⚠️ LIVE trading uses REAL money from your Kalshi account.\n"
+                    "To proceed, reply:  /live confirm\n"
+                    "(You can switch back anytime with /paper.)")
+        if not self._write_mode(False, chat_id):
+            return "Couldn't save the mode change (storage unavailable)."
+        return ("🔴 Going LIVE — the bot will restart into live trading with REAL money "
+                "once it's flat (no open position). Use /paper to switch back.")
+
+    def _write_mode(self, demo_mode: bool, chat_id: str) -> bool:
+        payload = {"demo_mode": bool(demo_mode), "set_by": str(chat_id),
+                   "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        try:
+            parent = os.path.dirname(self.mode_override_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp = self.mode_override_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(payload, f)
+            os.replace(tmp, self.mode_override_path)
+            return True
+        except OSError as exc:
+            log.warning("Failed to write mode override (%s).", exc)
+            return False
 
     @staticmethod
     def _fmt_age(updated_at: Optional[str]) -> str:

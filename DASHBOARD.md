@@ -12,9 +12,12 @@ What the customer can change:
 | **Set aside ($)** | Ring-fences a dollar amount the bot will never stake — it trades only the balance above it. | Instantly |
 | **Telegram alerts** | Mute routine trade-entry / win / loss alerts. Safety, halt and recovery alerts always stay on. | Instantly |
 | **Trading format** | Overall posture: Conservative / Balanced / Aggressive. | Next restart |
+| **Paper ↔ Live** | Switch between paper (simulated) and live (real-money) trading. Going live requires confirmation. | On next flat position (auto-restart) |
 
 > The dashboard **only changes bot settings**. Funds never leave Kalshi, and it
-> cannot place trades, withdraw, or switch a bot from paper to live.
+> cannot place trades or withdraw. Going live is gated behind an explicit
+> confirmation and applies by cleanly restarting the bot once it holds no open
+> position.
 
 ---
 
@@ -44,8 +47,32 @@ Then:
 
 **Forgot your password?** Contact us — we'll reset it for you.
 
-Prefer Telegram? You can also change your risk without the dashboard by messaging
-your bot **`/risk 8`** (and `/risk` to check it). See the setup guide.
+### Going live (real money)
+
+Your bot starts in **paper** mode (simulated — no real money). When you're ready to
+trade for real:
+
+1. In the **Trading mode** card, tick **"I understand this will trade real money"**.
+2. Tap **Go LIVE** and confirm the prompt.
+3. The bot finishes any open position, then restarts into live mode (a few seconds).
+   The mode badge turns **LIVE 🔴**.
+
+To go back, tap **Switch to paper trading** at any time — no confirmation needed.
+
+> Make sure your Kalshi account is funded before going live. Going live trades your
+> real Kalshi balance using the same risk %, reserve, and format you've set.
+
+### Using Telegram instead
+
+You can do everything from your bot's Telegram chat too:
+
+| Message | Does |
+|---|---|
+| `/risk 8` | Set risk to 8% (`/risk` to check) |
+| `/mode` | Show paper/live mode |
+| `/live confirm` | Go LIVE (real money) — `/live` alone shows the warning first |
+| `/paper` | Switch back to paper |
+| `/status` | Balance, PnL, open positions, mode |
 
 ---
 
