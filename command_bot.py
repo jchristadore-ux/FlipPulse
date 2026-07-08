@@ -1,12 +1,14 @@
 """command_bot.py — single-customer Telegram command listener for FlipPulse.
 
 The customer's own bot already *sends* alerts (telegram_utils.py). This module
-lets that same bot *answer* two read-only commands so the customer (and the
-operator) can check on it from Telegram without any dashboard:
+lets that same bot *answer* commands so the customer (and the operator) can check
+on it — and retune their own risk — from Telegram without any dashboard:
 
   /status      — current mode (paper/live), balance, PnL, open positions /
                  ladder state, session state, and the last tick time.
   /health-log  — tail of the recent health/activity log.
+  /risk        — show the current full-size risk %, or `/risk <percent>` to set it
+                 (e.g. `/risk 8`); `/risk reset` restores the configured default.
   /help        — list the commands.
 
 Design (single-customer long-poll listener):
@@ -14,8 +16,12 @@ Design (single-customer long-poll listener):
     webhook, no extra service. railway.toml still just runs `python bot.py`.
   * Only messages from authorized chat ids (TELEGRAM_CHAT_ID plus any
     TELEGRAM_OPERATOR_CHAT_ID) are answered; everything else is ignored.
-  * Commands are READ-ONLY. Nothing here can place a trade, change a parameter,
-    or flip DEMO_MODE — it only reports state the bot already writes to disk.
+  * The read commands (/status, /health-log) only report state the bot writes to
+    disk. The single write command, /risk, cannot place a trade or flip DEMO_MODE
+    — it only tunes the ONE full-size stake knob, and does so by dropping a
+    clamped value into RISK_OVERRIDE_PATH for the engine to pick up. bot.py
+    re-clamps it into [RISK_MIN_TRADE_PCT, MAX_TRADE_PCT] and keeps every
+    downside guardrail, so this module stays fully decoupled from the trading loop.
   * `/status` reads the JSON snapshot bot.py writes to STATUS_SNAPSHOT_PATH each
     decision cycle; `/health-log` tails HEALTH_LOG_PATH, which this module wires
     up as a rotating file copy of the bot's log output.
@@ -41,11 +47,31 @@ log = logging.getLogger("FlipPulse.command_bot")
 # .env.example so a properly-configured deploy needs no extra wiring.
 STATUS_SNAPSHOT_PATH = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip() or "/data/status_snapshot.json"
 HEALTH_LOG_PATH      = os.environ.get("HEALTH_LOG_PATH", "").strip() or "/data/health.log"
+# Where /risk writes the customer's chosen full-size fraction for the engine to
+# read. Must match bot.py's RISK_OVERRIDE_PATH (same default, same /data volume).
+RISK_OVERRIDE_PATH   = os.environ.get("RISK_OVERRIDE_PATH", "").strip() or "/data/risk_override.json"
+
+
+def _env_pct(name: str, default_frac: float) -> float:
+    """A fraction env var (e.g. MAX_TRADE_PCT=0.15) read as a PERCENT (15.0).
+    Used only as a fallback bound before the first status snapshot exists."""
+    try:
+        return float((os.environ.get(name, "") or "").strip() or default_frac) * 100.0
+    except ValueError:
+        return default_frac * 100.0
+
+
+# Fallback clamp bounds (in percent) used only until bot.py has written a snapshot
+# carrying the live risk_min_pct / risk_max_pct. Kept in lock-step with bot.py.
+RISK_MIN_PCT_FALLBACK = _env_pct("RISK_MIN_TRADE_PCT", 0.01)
+RISK_MAX_PCT_FALLBACK = _env_pct("MAX_TRADE_PCT", 0.15)
 
 HELP = (
     "FlipPulse commands:\n"
     "/status — mode, balance, PnL, open positions / ladder state, last tick\n"
     "/health-log [n] — last n lines of the health/activity log (default 20)\n"
+    "/risk — show your current risk %; /risk <percent> to change it "
+    "(e.g. /risk 8), /risk reset for the default\n"
     "/help — this message"
 )
 
@@ -78,10 +104,12 @@ def attach_health_log(path: str = HEALTH_LOG_PATH) -> bool:
 class CommandHandler:
     def __init__(self, authorized_chats: set,
                  snapshot_path: str = STATUS_SNAPSHOT_PATH,
-                 health_log_path: str = HEALTH_LOG_PATH) -> None:
+                 health_log_path: str = HEALTH_LOG_PATH,
+                 risk_override_path: str = RISK_OVERRIDE_PATH) -> None:
         self.authorized = {str(c) for c in authorized_chats}
         self.snapshot_path = snapshot_path
         self.health_log_path = health_log_path
+        self.risk_override_path = risk_override_path
 
     def handle(self, chat_id, text: str) -> Optional[str]:
         chat_id = str(chat_id)
@@ -101,6 +129,8 @@ class CommandHandler:
             return self._do_status()
         if cmd == "health-log":
             return self._do_health_log(args)
+        if cmd == "risk":
+            return self._do_risk(args, chat_id)
         return f"Unknown command.\n{HELP}"
 
     # ── /status ────────────────────────────────────────────────────────────────
@@ -139,6 +169,9 @@ class CommandHandler:
         elif isinstance(size, (int, float)):
             size_str = f" · size ${size:,.2f}"
         lines.append(f"Ladder/mode: {active_mode}{size_str}")
+        norm = snap.get("normal_trade_pct")
+        if isinstance(norm, (int, float)):
+            lines.append(f"Risk (full-size): {norm:.1f}% — change with /risk")
         open_str = f"{open_n}"
         if tickers:
             open_str += " [" + ", ".join(t[-15:] for t in tickers if t) + "]"
@@ -157,6 +190,101 @@ class CommandHandler:
                 return json.load(f)
         except (FileNotFoundError, ValueError, OSError):
             return None
+
+    # ── /risk ────────────────────────────────────────────────────────────────────
+    def _risk_bounds(self, snap: Optional[dict]) -> tuple:
+        """(min_pct, max_pct) clamp band. Prefer the live bounds the engine writes
+        into the snapshot; fall back to the env-derived defaults before the first
+        snapshot exists."""
+        lo = hi = None
+        if snap is not None:
+            lo = snap.get("risk_min_pct")
+            hi = snap.get("risk_max_pct")
+        lo = float(lo) if isinstance(lo, (int, float)) else RISK_MIN_PCT_FALLBACK
+        hi = float(hi) if isinstance(hi, (int, float)) else RISK_MAX_PCT_FALLBACK
+        if hi < lo:                       # defensive: never invert the band
+            lo, hi = hi, lo
+        return lo, hi
+
+    def _current_risk_pct(self, snap: Optional[dict]) -> Optional[float]:
+        """The full-size risk % currently in force (reflects any live override)."""
+        if snap is None:
+            return None
+        val = snap.get("normal_trade_pct")
+        return float(val) if isinstance(val, (int, float)) else None
+
+    def _do_risk(self, args, chat_id: str) -> str:
+        snap = self._read_snapshot()
+        lo, hi = self._risk_bounds(snap)
+        # No argument → report current setting and the allowed range.
+        if not args:
+            cur = self._current_risk_pct(snap)
+            cur_str = f"{cur:.1f}%" if cur is not None else "unknown (bot still booting)"
+            return (
+                f"🎯 Risk (full-size stake): {cur_str} of balance per trade.\n"
+                f"Change it with e.g. `/risk 8` (allowed {lo:.0f}–{hi:.0f}%). "
+                f"`/risk reset` restores the configured default.\n"
+                f"Recovery mode and all safety guardrails still apply on top."
+            )
+        arg = args[0].strip().lower()
+        if arg in ("reset", "default", "off", "clear"):
+            return self._clear_risk_override()
+        # Parse a percentage. Accept "8", "8%", or a fraction like "0.08".
+        raw = arg.rstrip("%")
+        try:
+            val = float(raw)
+        except ValueError:
+            return (f"Couldn't read '{args[0]}' as a number. Try `/risk 8` for 8%, "
+                    f"or `/risk reset` for the default.")
+        if val != val or val <= 0:        # NaN or non-positive
+            return "Risk must be a positive percentage, e.g. `/risk 8`."
+        # A bare value ≤ 1 (and no % sign) is read as a fraction (0.08 → 8%);
+        # anything larger is read as a percent (8 → 8%).
+        pct = val * 100.0 if (val <= 1 and not arg.endswith("%")) else val
+        clamped = max(lo, min(pct, hi))
+        note = ""
+        if abs(clamped - pct) > 1e-9:
+            note = f"\n(‘{pct:.1f}%’ was outside {lo:.0f}–{hi:.0f}% — clamped to {clamped:.1f}%.)"
+        ok = self._write_risk_override(clamped, chat_id)
+        if not ok:
+            return ("Couldn't save the new risk setting (storage unavailable). "
+                    "No change was made — please try again.")
+        return (f"✅ Risk set to {clamped:.1f}% of balance per trade.{note}\n"
+                f"Takes effect on the next trade. `/risk reset` restores the default.")
+
+    def _write_risk_override(self, pct: float, chat_id: str) -> bool:
+        """Atomically persist the chosen full-size fraction for the engine to read.
+        Stores the FRACTION (0.08) the engine expects, plus context for auditing."""
+        payload = {
+            "normal_trade_pct": round(pct / 100.0, 6),
+            "pct": round(pct, 4),
+            "set_by": str(chat_id),
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        try:
+            parent = os.path.dirname(self.risk_override_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp = self.risk_override_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(payload, f)
+            os.replace(tmp, self.risk_override_path)
+            return True
+        except OSError as exc:
+            log.warning("Failed to write risk override (%s).", exc)
+            return False
+
+    def _clear_risk_override(self) -> str:
+        try:
+            os.remove(self.risk_override_path)
+        except FileNotFoundError:
+            return "Risk was already at the configured default — nothing to reset."
+        except OSError as exc:
+            log.warning("Failed to clear risk override (%s).", exc)
+            return ("Couldn't clear the override (storage unavailable). "
+                    "The previous setting is still in effect.")
+        return ("✅ Risk override cleared — back to the configured default. "
+                "Takes effect on the next trade.")
 
     @staticmethod
     def _fmt_age(updated_at: Optional[str]) -> str:

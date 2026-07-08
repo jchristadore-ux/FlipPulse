@@ -23,11 +23,28 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 
 | ID      | Date Added | Area | Summary | Priority | Status   |
 |---------|------------|------|---------|----------|----------|
-| _(none yet)_ | | | | | |
+| IMP-001 | 2026-07-08 | command bot / sizing | Telegram `/risk` command lets a customer change their full-size stake % at runtime | Medium | In Progress |
 
 ---
 
 ## Notes / Details
+
+### IMP-001 — Telegram `/risk` command to change stake percentage
+- **Added:** 2026-07-08
+- **Area:** command bot / position sizing
+- **Priority:** Medium
+- **Status:** In Progress (PR on `claude/telegram-risk-change`)
+- **Problem / motivation:** Customers could only *view* state over Telegram; changing
+  their risk (full-size stake %) meant an env change + redeploy.
+- **Change:** New `/risk` command in `command_bot.py` — `/risk` shows the current %,
+  `/risk <percent>` sets it (e.g. `/risk 8`), `/risk reset` restores the default. The
+  command validates and clamps the value, then drops it into `RISK_OVERRIDE_PATH` on
+  the `/data` volume. The engine reads it back at the sizing chokepoint
+  (`bot.effective_normal_trade_pct`), re-clamped into `[RISK_MIN_TRADE_PCT, MAX_TRADE_PCT]`.
+- **Impact / risk:** Touches the safety-critical sizing path. Mitigated by: hard
+  floor/ceiling clamp in BOTH the command and the engine; recovery/probation
+  de-risking and all guardrails still layer on top; command_bot stays decoupled
+  (file-based IPC, no engine import). Covered by `test_command_bot.py`.
 
 <!--
 Template for a detailed entry — copy below when an item needs more than one line.
