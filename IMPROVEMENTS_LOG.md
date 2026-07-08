@@ -23,7 +23,8 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 
 | ID      | Date Added | Area | Summary | Priority | Status   |
 |---------|------------|------|---------|----------|----------|
-| IMP-001 | 2026-07-08 | command bot / sizing | Telegram `/risk` command lets a customer change their full-size stake % at runtime | Medium | In Progress |
+| IMP-001 | 2026-07-08 | command bot / sizing | Telegram `/risk` command lets a customer change their full-size stake % at runtime | Medium | Done |
+| IMP-002 | 2026-07-08 | dashboard / sizing / telegram | Self-service web dashboard (login) to change risk %, trading format, Telegram alerts, and set-aside reserve | High | In Progress |
 
 ---
 
@@ -45,6 +46,36 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
   floor/ceiling clamp in BOTH the command and the engine; recovery/probation
   de-risking and all guardrails still layer on top; command_bot stays decoupled
   (file-based IPC, no engine import). Covered by `test_command_bot.py`.
+
+### IMP-002 — Self-service customer dashboard
+- **Added:** 2026-07-08
+- **Area:** dashboard (new `dashboard.py`) / sizing / telegram
+- **Priority:** High
+- **Status:** In Progress (PR on `claude/user-dashboard`)
+- **Problem / motivation:** Customers could only view state / change risk over Telegram.
+  They needed a proper login-protected place to fine-tune their setup.
+- **Change:** Each bot now serves its own login-protected web dashboard (stdlib
+  `http.server`, no new deps, daemon thread — mirrors `command_bot.py`). Password +
+  signed session cookie (`DASHBOARD_PASSWORD`). Lets the customer change:
+  **risk %** (reuses `risk_override.json`), **set-aside reserve** (new
+  `reserve_override.json`; engine subtracts it from the tradeable balance at the
+  `active_trade_size` chokepoint), **Telegram alerts** (new `telegram_prefs.json`;
+  mutes routine entry/win/loss alerts, safety/halt alerts stay on), and **trading
+  format** (new `format_override.json`, applied at next boot). Fully decoupled —
+  the dashboard never imports the engine; it reads the status snapshot and writes
+  `/data` override files the engine re-validates/clamps on its side.
+- **Decisions (confirmed with owner):** embedded per-bot dashboard (not central);
+  password + session-cookie login; **max-loss deferred** (daily-loss caps were
+  removed by doctrine in v9.4.0 — needs a separate decision, see IMP-003 below).
+- **Impact / risk:** Touches the safety-critical sizing path (reserve) and the
+  alert path. Mitigated by double-clamping, snapshot-based decoupling, safety
+  alerts never mutable, and dashboard disabled unless `DASHBOARD_PASSWORD` is set.
+  Covered by `test_dashboard.py` (settings I/O, session tokens, live HTTP flow,
+  reserve sizing, format override, telegram gating).
+- **Follow-ups:** (a) auto-generate a Railway public domain for the bot service at
+  provision time so the dashboard URL is handed to the customer automatically
+  (currently a manual Railway step); (b) live trading-format switch without a
+  restart; (c) IMP-003: revisit the customer "max loss" control / doctrine.
 
 <!--
 Template for a detailed entry — copy below when an item needs more than one line.

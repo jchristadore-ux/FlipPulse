@@ -291,6 +291,17 @@ def deploy_variables(sub: dict, secrets: dict) -> dict:
         "BILLING_STATE_PATH": "/data/billing_state.json",
         "STATUS_SNAPSHOT_PATH": "/data/status_snapshot.json",
         "HEALTH_LOG_PATH": "/data/health.log",
+        # Self-service dashboard + Telegram /risk override files (all on /data so
+        # customer tuning survives redeploys). A strong per-customer password is
+        # generated here; the customer changes their setup at the bot's public URL.
+        # NOTE: os.urandom (not the stdlib `secrets` module) because the decrypted-
+        # secrets dict is bound to the name `secrets` in this function's signature.
+        "DASHBOARD_PASSWORD": base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("="),
+        "DASHBOARD_SECRET_PATH": "/data/dashboard_secret",
+        "RISK_OVERRIDE_PATH": "/data/risk_override.json",
+        "RESERVE_OVERRIDE_PATH": "/data/reserve_override.json",
+        "FORMAT_OVERRIDE_PATH": "/data/format_override.json",
+        "TELEGRAM_PREFS_PATH": "/data/telegram_prefs.json",
         # Performance fee stays a disabled placeholder (runbook §9b).
         "PERF_FEE_PCT": "0.0",
         "BILLING_LOG_PATH": "/data/billing.log",
