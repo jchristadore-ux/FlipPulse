@@ -333,6 +333,7 @@ def deploy_variables(sub: dict, secrets: dict,
         "RESERVE_OVERRIDE_PATH": "/data/reserve_override.json",
         "FORMAT_OVERRIDE_PATH": "/data/format_override.json",
         "TELEGRAM_PREFS_PATH": "/data/telegram_prefs.json",
+        "MODE_OVERRIDE_PATH": "/data/mode_override.json",
         # Performance fee stays a disabled placeholder (runbook §9b).
         "PERF_FEE_PCT": "0.0",
         "BILLING_LOG_PATH": "/data/billing.log",
@@ -486,7 +487,8 @@ def provision(sub_id: str, client: RailwayClient | None = None,
             f"${float(sub.get('starting_balance', 0)):,.2f}\n"
             f"Project: https://railway.app/project/{prov['project_id']}\n"
             + dash_line +
-            f"Mode: PAPER (DEMO_MODE=true) — going live stays manual.\n"
+            f"Mode: PAPER (DEMO_MODE=true) — the customer can go live from the "
+            f"dashboard or Telegram /live confirm (or flip DEMO_MODE + redeploy).\n"
             f"Submission: {sub_id}")
         return prov
 

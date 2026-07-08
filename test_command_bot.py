@@ -46,11 +46,13 @@ def _handler(tmp_path, snap=None):
         snapshot_path=str(snap_path),
         health_log_path=str(tmp_path / "health.log"),
         risk_override_path=str(tmp_path / "risk_override.json"),
+        mode_override_path=str(tmp_path / "mode_override.json"),
     )
 
 
 # Snapshot carrying live bounds (1%–15%) as bot.py writes them.
-_SNAP = {"normal_trade_pct": 10.0, "risk_min_pct": 1.0, "risk_max_pct": 15.0}
+_SNAP = {"normal_trade_pct": 10.0, "risk_min_pct": 1.0, "risk_max_pct": 15.0,
+         "demo_mode": True}
 
 
 # ── authorization ─────────────────────────────────────────────────────────────
@@ -142,6 +144,58 @@ def test_risk_reset_when_none_set(tmp_path):
     h = _handler(tmp_path, _SNAP)
     reply = h.handle("123", "/risk reset")
     assert "already" in reply.lower()
+
+
+# ── /mode · /live · /paper ─────────────────────────────────────────────────────
+def _mode_file(h):
+    return json.loads(open(h.mode_override_path).read())
+
+
+def test_live_requires_confirm(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    reply = h.handle("123", "/live")
+    assert "confirm" in reply.lower() and "REAL money" in reply
+    assert not os.path.exists(h.mode_override_path)      # nothing written yet
+
+
+def test_live_confirm_writes_live(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    reply = h.handle("123", "/live confirm")
+    assert "LIVE" in reply
+    assert _mode_file(h)["demo_mode"] is False and _mode_file(h)["set_by"] == "123"
+
+
+def test_paper_switches_back_without_confirm(tmp_path):
+    live_snap = dict(_SNAP, demo_mode=False)
+    h = _handler(tmp_path, live_snap)
+    reply = h.handle("123", "/paper")
+    assert "PAPER" in reply
+    assert _mode_file(h)["demo_mode"] is True
+
+
+def test_paper_when_already_paper_is_noop(tmp_path):
+    h = _handler(tmp_path, _SNAP)                          # snapshot says paper
+    reply = h.handle("123", "/paper")
+    assert "Already in PAPER" in reply
+    assert not os.path.exists(h.mode_override_path)
+
+
+def test_live_when_already_live_is_noop(tmp_path):
+    h = _handler(tmp_path, dict(_SNAP, demo_mode=False))
+    reply = h.handle("123", "/live confirm")
+    assert "Already in LIVE" in reply
+
+
+def test_mode_shows_current_and_pending(tmp_path):
+    h = _handler(tmp_path, dict(_SNAP, demo_mode=True, pending_demo_mode=False))
+    reply = h.handle("123", "/mode")
+    assert "PAPER" in reply and "once the bot is flat" in reply
+
+
+def test_mode_flip_ignored_for_stranger(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    assert h.handle("999", "/live confirm") is None
+    assert not os.path.exists(h.mode_override_path)
 
 
 # ── engine side: bot.effective_normal_trade_pct ───────────────────────────────

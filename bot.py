@@ -467,7 +467,38 @@ def _load_raw_pem() -> str:
 
 
 _RAW_PEM            = _load_raw_pem()
-DEMO_MODE           = _env_bool("DEMO_MODE", True)
+
+# ── Paper ↔ live mode override (dashboard / Telegram) ─────────────────────────
+# DEMO_MODE gates the whole trading path and is fixed for a process run, so a
+# customer/operator flip between paper and live is applied by (1) writing the
+# desired mode to MODE_OVERRIDE_PATH on the /data volume and (2) the running bot
+# restarting cleanly into that mode the next time it is FLAT (no open position) —
+# see _maybe_restart_for_mode_change() in the main loop. The override wins over the
+# provisioned DEMO_MODE env var; deleting the file falls back to it. Going LIVE
+# always requires an explicit confirmation on the dashboard / via `/live confirm`.
+MODE_OVERRIDE_PATH  = os.environ.get("MODE_OVERRIDE_PATH", "").strip() or "/data/mode_override.json"
+
+
+def _read_mode_override() -> "bool | None":
+    """The customer/operator's desired DEMO_MODE from MODE_OVERRIDE_PATH, or None if
+    no valid override is present. Best-effort — a missing/corrupt file means 'no
+    override, use the env default'."""
+    try:
+        with open(MODE_OVERRIDE_PATH) as f:
+            val = json.load(f).get("demo_mode")
+    except (OSError, ValueError, TypeError):
+        return None
+    return bool(val) if isinstance(val, bool) else None
+
+
+def _boot_demo_mode() -> bool:
+    """The mode to boot in: the persisted override when set, else the DEMO_MODE env
+    var provisioned at signup (defaults to paper)."""
+    override = _read_mode_override()
+    return override if override is not None else _env_bool("DEMO_MODE", True)
+
+
+DEMO_MODE           = _boot_demo_mode()
 POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
 
 # ── Capital & sizing (PERCENTAGE-BASED — v10.0.0) ─────────────────────────────
@@ -2958,6 +2989,11 @@ def write_status_snapshot(balance: float) -> None:
             "version": BOT_VERSION,
             "trading_format": TRADING_FORMAT,
             "demo_mode": DEMO_MODE,
+            # A requested-but-not-yet-applied paper↔live flip (applies on the next
+            # flat cycle via restart). None unless a flip is pending; the dashboard
+            # and /status show it so the user knows the switch is armed.
+            "pending_demo_mode": (t if (t := _read_mode_override()) is not None
+                                  and t != DEMO_MODE else None),
             "balance": round(float(balance), 2),
             "session_pnl": round(float(session_pnl), 2),
             "wins": wins,
@@ -3232,6 +3268,29 @@ def maybe_roll_session_day(current_balance: float) -> bool:
 # MAIN LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _maybe_restart_for_mode_change() -> None:
+    """Apply a pending paper↔live flip. If MODE_OVERRIDE_PATH now differs from the
+    running DEMO_MODE and the bot is FLAT (no open position), restart into the new
+    mode. Restarting only when flat guarantees an in-flight position is never
+    abandoned by the switch. The exit is non-zero so Railway's ON_FAILURE restart
+    policy boots a fresh process that reads the new mode at startup (DEMO_MODE =
+    _boot_demo_mode()). No-op when no flip is pending. Never raises."""
+    try:
+        target = _read_mode_override()
+        if target is None or target == DEMO_MODE or open_orders:
+            return
+        new_mode = "PAPER 🟡" if target else "LIVE 🔴"
+        log.warning("Mode flip requested → %s. Bot is flat; restarting to apply.", new_mode)
+        tg.send_telegram_message(
+            f"🔀 Switching to {new_mode}. Restarting now to apply — back in a few "
+            f"seconds trading in {'paper' if target else 'LIVE (real money)'} mode.")
+    except Exception as e:  # a flip must never crash the loop; retry next cycle
+        log.warning("Mode-change check error (will retry): %s", e)
+        return
+    logging.shutdown()
+    os._exit(3)             # non-zero → Railway ON_FAILURE restart → boot reads new mode
+
+
 def main() -> None:
     # ── CRITICAL GLOBAL DECLARATION RULE ─────────────────────────────────────
     # The following module-level mutable containers must NEVER appear here:
@@ -3352,6 +3411,9 @@ def main() -> None:
 
     while not _shutdown_requested:
         try:
+            # Apply a pending paper↔live flip as soon as the bot is flat (checked
+            # first so it also fires while halted, when there is no open position).
+            _maybe_restart_for_mode_change()
             if _session_halted:
                 # Halt is paused-for-the-day, not forever: poll often enough to
                 # catch the UTC rollover that clears it (maybe_roll_session_day),

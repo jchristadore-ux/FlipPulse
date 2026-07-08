@@ -56,6 +56,7 @@ RISK_OVERRIDE_PATH    = os.environ.get("RISK_OVERRIDE_PATH", "").strip() or "/da
 RESERVE_OVERRIDE_PATH = os.environ.get("RESERVE_OVERRIDE_PATH", "").strip() or "/data/reserve_override.json"
 FORMAT_OVERRIDE_PATH  = os.environ.get("FORMAT_OVERRIDE_PATH", "").strip() or "/data/format_override.json"
 TELEGRAM_PREFS_PATH   = os.environ.get("TELEGRAM_PREFS_PATH", "").strip() or "/data/telegram_prefs.json"
+MODE_OVERRIDE_PATH    = os.environ.get("MODE_OVERRIDE_PATH", "").strip() or "/data/mode_override.json"
 # Where the signing secret is persisted so sessions survive a restart (falls back
 # to an ephemeral per-boot secret if the volume isn't writable).
 SECRET_PATH           = os.environ.get("DASHBOARD_SECRET_PATH", "").strip() or "/data/dashboard_secret"
@@ -79,12 +80,14 @@ class Settings:
                  risk_path: str = RISK_OVERRIDE_PATH,
                  reserve_path: str = RESERVE_OVERRIDE_PATH,
                  format_path: str = FORMAT_OVERRIDE_PATH,
-                 telegram_path: str = TELEGRAM_PREFS_PATH) -> None:
+                 telegram_path: str = TELEGRAM_PREFS_PATH,
+                 mode_path: str = MODE_OVERRIDE_PATH) -> None:
         self.snapshot_path = snapshot_path
         self.risk_path = risk_path
         self.reserve_path = reserve_path
         self.format_path = format_path
         self.telegram_path = telegram_path
+        self.mode_path = mode_path
 
     # -- reads -------------------------------------------------------------------
     def _read_json(self, path: str) -> Optional[dict]:
@@ -119,9 +122,19 @@ class Settings:
             reserve = r.get("reserve_dollars", 0.0)
         fmt_override = (self._read_json(self.format_path) or {}).get("trading_format")
         prefs = self.telegram_prefs()
+        # Running mode from the snapshot; a pending flip is the override file (or the
+        # snapshot's own pending marker) differing from what's running.
+        running_demo = snap.get("demo_mode") if snap else None
+        override_demo = (self._read_json(self.mode_path) or {}).get("demo_mode")
+        pending_mode = None
+        if isinstance(override_demo, bool) and override_demo != running_demo:
+            pending_mode = "paper" if override_demo else "live"
+        elif snap and snap.get("pending_demo_mode") is not None:
+            pending_mode = "paper" if snap.get("pending_demo_mode") else "live"
         return {
             "connected": snap is not None,
             "mode": ("live" if snap and snap.get("demo_mode") is False else "paper"),
+            "pending_mode": pending_mode,
             "balance": (snap or {}).get("balance"),
             "tradeable_balance": (snap or {}).get("tradeable_balance"),
             "session_pnl": (snap or {}).get("session_pnl"),
@@ -191,6 +204,22 @@ class Settings:
         return ok, (f"Trading format set to {key}. This one takes effect on the "
                     f"bot's next restart.")
 
+    def set_mode(self, go_live: bool, confirm: bool) -> Tuple[bool, str]:
+        """Request a paper↔live flip. Going LIVE requires explicit confirmation
+        (real money). Writes the desired mode; the engine restarts into it once
+        flat. Switching to paper is always allowed without confirmation."""
+        if go_live and not confirm:
+            return False, ("Going live needs confirmation — tick the box first. This "
+                           "trades REAL money.")
+        ok = self._write_json(self.mode_path, {
+            "demo_mode": (not go_live), "set_by": "dashboard", "updated_at": self._stamp()})
+        if not ok:
+            return False, "Couldn't save the mode change (storage unavailable)."
+        if go_live:
+            return True, ("⚠️ Going LIVE — the bot will restart into live trading with "
+                          "REAL money once it's flat (no open position).")
+        return True, "Switching to PAPER — the bot restarts into paper mode once flat."
+
     def set_telegram(self, prefs: dict) -> Tuple[bool, str]:
         cur = self.telegram_prefs()
         for c in TELEGRAM_CATEGORIES:
@@ -215,6 +244,10 @@ class Settings:
             ok_all &= ok; msgs.append(m)
         if "telegram" in body and isinstance(body["telegram"], dict):
             ok, m = self.set_telegram(body["telegram"])
+            ok_all &= ok; msgs.append(m)
+        if "mode" in body:
+            go_live = str(body["mode"]).strip().lower() == "live"
+            ok, m = self.set_mode(go_live, bool(body.get("confirm")))
             ok_all &= ok; msgs.append(m)
         if not msgs:
             return False, ["No recognized settings in request."]
@@ -381,9 +414,11 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             self._json(400, {"error": "invalid JSON"})
             return
+        # Always 200 for a well-formed, authorized request — the `ok` flag conveys
+        # whether the change was applied (a rejected/clamped setting is not a server
+        # error). The client keys off `ok` + `messages`.
         ok, msgs = self.settings.apply(body)
-        self._json(200 if ok else 500, {"ok": ok, "messages": msgs,
-                                        "state": self.settings.state()})
+        self._json(200, {"ok": ok, "messages": msgs, "state": self.settings.state()})
 
 
 # ── HTML rendering ─────────────────────────────────────────────────────────────
@@ -408,7 +443,15 @@ input[type=number],select{width:100%;padding:10px;border-radius:8px;border:1px s
 button{background:#3b82f6;color:#fff;border:0;border-radius:8px;padding:11px 16px;
  font-size:15px;font-weight:600;cursor:pointer}
 button.ghost{background:#232936;color:#c3c9d6}
+button.danger{background:#dc2626;color:#fff}
 button:disabled{opacity:.5;cursor:default}
+.mode-badge{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
+.mode-badge.paper{background:#3a2f10;color:#f5c451}
+.mode-badge.live{background:#3a1214;color:#ff6b6b}
+.warn{background:#2a2410;border:1px solid #4a3d13;color:#f5c451;border-radius:8px;
+ padding:10px 12px;font-size:13px;margin:0 0 12px}
+.confirm-row{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px;font-size:13px;color:#c3c9d6}
+.confirm-row input{margin-top:3px}
 .stat{display:flex;justify-content:space-between;font-size:14px;padding:4px 0}
 .stat b{font-variant-numeric:tabular-nums}
 .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;
@@ -458,7 +501,30 @@ def _dashboard_page(st: dict) -> str:
     risk_val = f"{risk:.1f}" if isinstance(risk, (int, float)) else ""
     lo, hi = st.get("risk_min_pct", 1), st.get("risk_max_pct", 15)
     reserve = st.get("reserve_dollars", 0.0)
-    mode_pill = f'<span class="pill">{html.escape(st.get("mode","?").upper())}</span>'
+    is_live = st.get("mode") == "live"
+    pending = st.get("pending_mode")
+    mode_pill = (f'<span class="mode-badge {"live" if is_live else "paper"}">'
+                 f'{"LIVE 🔴" if is_live else "PAPER 🟡"}</span>')
+    pending_banner = (f'<div class="warn">⏳ Switching to <b>{pending.upper()}</b> — '
+                      f'takes effect the moment the bot is flat (no open position). '
+                      f'You can cancel by switching back.</div>' if pending else "")
+    if is_live:
+        mode_card = (
+            '<h2>Trading mode — LIVE 🔴</h2>'
+            '<p class="hint">Your bot is trading with <b>real money</b>. '
+            'You can return to paper (simulated) trading at any time.</p>'
+            + pending_banner +
+            '<button class="ghost" data-save="paper">Switch to paper trading</button>')
+    else:
+        mode_card = (
+            '<h2>Trading mode — PAPER 🟡</h2>'
+            '<p class="hint">Your bot is trading in <b>paper (simulated)</b> mode — no '
+            'real money at risk. Going live trades your real Kalshi balance.</p>'
+            + pending_banner +
+            '<div class="confirm-row"><input type="checkbox" id="livechk">'
+            '<label for="livechk" style="margin:0">I understand this will trade '
+            '<b>real money</b> from my Kalshi account.</label></div>'
+            '<button class="danger" data-save="live">Go LIVE</button>')
     conn = ("" if st.get("connected") else
             '<div class="msg err" style="display:block">Bot is still booting — '
             'values will populate shortly. You can still save changes.</div>')
@@ -476,6 +542,10 @@ def _dashboard_page(st: dict) -> str:
     <div class="stat"><span>Balance</span><b>{_fmt_money(st.get("balance"))}</b></div>
     <div class="stat"><span>In play (after set-aside)</span><b>{_fmt_money(st.get("tradeable_balance"))}</b></div>
     <div class="stat"><span>Session PnL</span><b>{_fmt_money(st.get("session_pnl"))}</b></div>
+  </div>
+
+  <div class="card">
+    {mode_card}
   </div>
 
   <div class="card">
@@ -538,6 +608,15 @@ document.querySelectorAll('[data-save]').forEach(b => b.addEventListener('click'
     const tg = {{}};
     document.querySelectorAll('[data-tg]').forEach(c => tg[c.getAttribute('data-tg')] = c.checked);
     return save({{telegram: tg}});
+  }}
+  if(k==='live'){{
+    const chk = document.getElementById('livechk');
+    if(!chk || !chk.checked){{ show(false, 'Tick the box to confirm real-money trading first.'); return; }}
+    if(!confirm('Go LIVE? Your bot will trade REAL money from your Kalshi account.')) return;
+    return save({{mode:'live', confirm:true}}).then(()=>setTimeout(()=>location.reload(),1200));
+  }}
+  if(k==='paper'){{
+    return save({{mode:'paper'}}).then(()=>setTimeout(()=>location.reload(),1200));
   }}
 }}));
 </script>
