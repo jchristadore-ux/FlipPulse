@@ -511,13 +511,17 @@ def stripe_webhook():
         log.warning("Bad Stripe webhook: %s", e)
         return ("", 400)
     if event["type"] == "checkout.session.completed":
-        sid = event["data"]["object"].get("client_reference_id")
+        # event["data"]["object"] is a StripeObject, not a dict — .get() raises
+        # AttributeError on stripe ≥ 8 (see _stripe_get), which 500'd every real
+        # completed checkout and left paid customers stuck on payment_status=pending.
+        session = event["data"]["object"]
+        sid = _stripe_get(session, "client_reference_id")
         p = SUBMISSIONS_DIR / f"{sid}.json"
         if sid and p.exists():
             d = json.loads(p.read_text())
             d["payment_status"] = "paid"
-            d["stripe_customer"] = event["data"]["object"].get("customer")
-            d["stripe_subscription"] = event["data"]["object"].get("subscription")
+            d["stripe_customer"] = _stripe_get(session, "customer")
+            d["stripe_subscription"] = _stripe_get(session, "subscription")
             p.write_text(json.dumps(d, indent=2))
             log.info("Submission %s marked paid.", sid)
             # Payment confirmed → provision the customer's Railway bot with no
