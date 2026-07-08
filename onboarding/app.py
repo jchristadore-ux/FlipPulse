@@ -241,8 +241,10 @@ def _validate_telegram_setup(token: str, chat_id: str) -> "str | None":
 
 
 def _slug(text: str) -> str:
+    # Lowercase alnum + dashes, capped so it stays a valid Railway project name
+    # (used as "flippulse-<handle>" and "<handle>-bot").
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
-    return s or "customer"
+    return (s[:40].strip("-") or "customer")
 
 
 def _send_operator_message(text: str) -> None:
@@ -297,6 +299,40 @@ def _submit_rate_limited(ip: str) -> bool:
     return False
 
 
+# Stripe ids resolved from a product to its default price are cached so we don't
+# re-hit the API on every signup. Keyed by the configured prod_… id.
+_price_id_cache: "dict[str, str]" = {}
+
+
+def _resolve_price_id(configured: str) -> str:
+    """Return a usable Stripe **Price** id for a configured value.
+
+    The Stripe dashboard shows a product's `prod_…` id far more prominently than
+    its `price_…` id, so operators routinely paste the product id into
+    STRIPE_MONTHLY_PRICE_ID / STRIPE_SETUP_PRICE_ID — which Checkout rejects with
+    "No such price: 'prod_…'". Rather than fail the signup, if we're handed a
+    product id we look up that product's default price and use it. A real price
+    id (or anything else) is returned unchanged."""
+    pid = (configured or "").strip()
+    if not pid.startswith("prod_"):
+        return pid                               # already a price id (or empty)
+    if pid in _price_id_cache:
+        return _price_id_cache[pid]
+    import stripe
+    product = stripe.Product.retrieve(pid)
+    default_price = product.get("default_price")
+    price_id = default_price if isinstance(default_price, str) else (
+        (default_price or {}).get("id"))
+    if not price_id:
+        raise RuntimeError(
+            f"Stripe product {pid} has no default price — set a default price on "
+            f"the product, or configure a price id (price_…) instead of the "
+            f"product id.")
+    _price_id_cache[pid] = price_id
+    log.info("Resolved Stripe product %s → default price %s.", pid, price_id)
+    return price_id
+
+
 def _start_stripe_checkout(sub: dict):
     """Create a Stripe Checkout session (setup fee + monthly subscription, card on
     file). Returns the redirect URL, or None if Stripe is not configured."""
@@ -304,9 +340,9 @@ def _start_stripe_checkout(sub: dict):
         return None
     import stripe
     stripe.api_key = STRIPE_SECRET_KEY
-    line_items = [{"price": STRIPE_MONTHLY_PRICE, "quantity": 1}]
+    line_items = [{"price": _resolve_price_id(STRIPE_MONTHLY_PRICE), "quantity": 1}]
     if STRIPE_SETUP_PRICE:                      # one-time setup fee on the first invoice
-        line_items.append({"price": STRIPE_SETUP_PRICE, "quantity": 1})
+        line_items.append({"price": _resolve_price_id(STRIPE_SETUP_PRICE), "quantity": 1})
     base = PUBLIC_BASE_URL or request.host_url.rstrip("/")
     session = stripe.checkout.Session.create(
         mode="subscription",
@@ -373,7 +409,10 @@ def submit():
             error="Onboarding is temporarily unavailable — please contact us."))
 
     now = datetime.now(timezone.utc)
-    handle = _slug(f.get("full_name"))
+    # The customer may choose their own handle (names their bot + dashboard as
+    # "flippulse-<handle>"); it's slugified for safety and falls back to their
+    # name when left blank.
+    handle = _slug(f.get("handle")) if (f.get("handle") or "").strip() else _slug(f.get("full_name"))
     sub_id = f"{now.strftime('%Y%m%d-%H%M%S')}_{handle}_{uuid.uuid4().hex[:6]}"
     submission = {
         "id": sub_id,
@@ -414,7 +453,9 @@ def submit():
             f"Customer: {submission['full_name']} <{submission['email']}>\n"
             f"Submission: {sub_id} (saved, payment_status=pending)\n"
             f"Error: {type(e).__name__}: {e}\n"
-            "Action: send them a payment link / invoice manually.")
+            "Action: send them a payment link / invoice manually.\n"
+            "To provision the bot now anyway (skips the paid gate):\n"
+            f"  python admin_cli.py provision {sub_id}")
         return redirect(url_for("success", pay="pending"))
     if checkout_url:
         return redirect(checkout_url, code=303)

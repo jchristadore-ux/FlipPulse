@@ -79,6 +79,11 @@
       <input type="text" name="full_name" required>
       <label>Email <span class="req">*</span></label>
       <input type="email" name="email" required>
+      <label>Bot handle <span class="hint" style="display:inline; font-weight:400;">(optional)</span></label>
+      <input type="text" name="handle" placeholder="e.g. john-btc" maxlength="40"
+             pattern="[A-Za-z0-9\- ]*">
+      <div class="hint">Names your bot &amp; dashboard as <b>flippulse-&lt;handle&gt;</b>. Letters, numbers
+        and dashes only. Leave blank to use your name.</div>
       <label>Starting balance you'll fund (USD) <span class="req">*</span></label>
       <input type="text" name="starting_balance" placeholder="e.g. 1000" required>
       <div class="hint">Sizing is a % of your balance, so any amount works and it compounds as you grow.</div>
