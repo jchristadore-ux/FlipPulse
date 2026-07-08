@@ -32,3 +32,13 @@ guide.
 > **Sizing is percentage-based.** You don't set per-customer dollar stakes — you set the
 > customer's starting balance (`PAPER_BALANCE`) and their chosen format, and every trade
 > is sized as a percentage of the live balance. See §1 of the administrator guide.
+
+## Customer self-service dashboard
+
+Every provisioned bot serves a **login-protected web dashboard** so the customer can
+tune their own risk %, set-aside reserve, Telegram alerts, and trading format — no
+redeploy. Autoprovisioning generates the URL + password and sends them to you in the
+provisioning alert; you just relay them to the customer.
+
+- **[`DASHBOARD.md`](DASHBOARD.md)** — the exact steps to give the customer to sign in
+  and use it, plus the operator setup (automatic + manual fallback).
