@@ -54,7 +54,7 @@ Environment variables:
 | `ONBOARDING_PRICE_SETUP` / `ONBOARDING_PRICE_MONTHLY` | optional | Display-only pricing on the form (default `99` / `99`). |
 | `ONBOARDING_PERF_PCT` | optional | Placeholder for a future performance fee; default `0` and **not shown** on the form. |
 | `RAILWAY_API_TOKEN` | for auto-provisioning | Railway account/workspace token — enables zero-touch bot deployment on payment. |
-| `RAILWAY_TEAM_ID` | if workspace token | Workspace to create customer projects in. |
+| `RAILWAY_PROJECT_ID` / `RAILWAY_ENVIRONMENT_ID` | auto on Railway | The project + environment customer bots are deployed into as sibling services. Railway injects both into the onboarding service; set them only when running outside Railway. |
 | `AUTO_PROVISION` | optional (default `true`) | Provision automatically on `checkout.session.completed`. `false` = use the `/admin` button or CLI. |
 | `PROVISION_REPO` / `PROVISION_REPO_BRANCH` | optional | Repo/branch every customer bot deploys from (default `jchristadore-ux/FlipPulse` @ `release` — the pinned fleet branch; promote with `git push origin main:release`). |
 | `BOT_OPERATOR_CHAT_ID` | recommended | Injected into every provisioned bot as `TELEGRAM_OPERATOR_CHAT_ID` so all customer-bot alerts fan out to you. |

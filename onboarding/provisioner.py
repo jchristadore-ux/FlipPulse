@@ -9,7 +9,9 @@ public GraphQL API (https://backboard.railway.app/graphql/v2).
 
 Flow (mirrors ADMINISTRATOR_ONBOARDING.md §2–§6, one checkpoint per section):
 
-    create_project      §2  New Project
+    locate_project      §2  Reuse the SHARED project the onboarding runs in
+                            (RAILWAY_PROJECT_ID/RAILWAY_ENVIRONMENT_ID) — the
+                            customer bot is a sibling service, not a new project
     create_service      §2  Deploy from GitHub repo (root directory blank →
                             repo-root railway.toml → `python bot.py`)
     attach_volume       §3  Volume mounted at /data
@@ -54,7 +56,17 @@ SUBMISSIONS_DIR = Path(os.environ.get("SUBMISSIONS_DIR", Path(__file__).parent /
 
 RAILWAY_API_URL   = os.environ.get("RAILWAY_API_URL", "https://backboard.railway.app/graphql/v2")
 RAILWAY_API_TOKEN = os.environ.get("RAILWAY_API_TOKEN", "").strip()
-RAILWAY_TEAM_ID   = os.environ.get("RAILWAY_TEAM_ID", "").strip()      # optional (workspace)
+
+# Customer bots are deployed as sibling SERVICES inside the SAME Railway project
+# the onboarding service itself runs in — right next to the rest of the fleet —
+# NOT as a brand-new project each. Creating a project per customer produced an
+# unclaimed "temporary project" (deleted in 21h, un-deployable) whenever it
+# wasn't tied to a workspace. Railway injects RAILWAY_PROJECT_ID and
+# RAILWAY_ENVIRONMENT_ID into every running service, so onboarding self-discovers
+# where to place the new service. Both are overridable for local/testing or when
+# running onboarding outside Railway.
+RAILWAY_PROJECT_ID     = os.environ.get("RAILWAY_PROJECT_ID", "").strip()
+RAILWAY_ENVIRONMENT_ID = os.environ.get("RAILWAY_ENVIRONMENT_ID", "").strip()
 
 # The repo every customer service deploys from — identical code for everyone,
 # only the variables differ (runbook §2).
@@ -105,7 +117,7 @@ DEPLOY_OK_STATUSES      = {"SUCCESS"}
 DEPLOY_PENDING_STATUSES = {"QUEUED", "WAITING", "INITIALIZING", "BUILDING", "DEPLOYING"}
 DEPLOY_FAILED_STATUSES  = {"FAILED", "CRASHED", "REMOVED", "SKIPPED"}
 
-STEPS = ("create_project", "create_service", "attach_volume",
+STEPS = ("locate_project", "create_service", "attach_volume",
          "create_domain", "set_variables", "deploy", "verify")
 
 
@@ -166,26 +178,6 @@ class RailwayClient:
                              f"Railway API unreachable after {self.MAX_TRIES} tries: {last_exc}")
 
     # — mutations / queries used by the provisioning flow —
-
-    def project_create(self, name: str) -> tuple[str, str]:
-        """Create a project; returns (project_id, production_environment_id)."""
-        q = """
-        mutation($input: ProjectCreateInput!) {
-          projectCreate(input: $input) {
-            id
-            environments { edges { node { id name } } }
-          }
-        }"""
-        inp: dict = {"name": name}
-        if RAILWAY_TEAM_ID:
-            inp["teamId"] = RAILWAY_TEAM_ID
-        data = self.gql(q, {"input": inp})["projectCreate"]
-        envs = [e["node"] for e in data["environments"]["edges"]]
-        if not envs:
-            raise ProvisionError("create_project", "Project created but has no environment.")
-        # Prefer the default "production" environment; fall back to the first.
-        env = next((e for e in envs if e["name"] == "production"), envs[0])
-        return data["id"], env["id"]
 
     def service_create(self, project_id: str, name: str,
                        repo: str, branch: str, variables: dict) -> str:
@@ -263,9 +255,11 @@ class RailwayClient:
         rows = self.gql(q, {"deploymentId": deployment_id, "limit": limit})["deploymentLogs"]
         return [r.get("message", "") for r in rows]
 
-    def project_delete(self, project_id: str) -> None:
-        q = "mutation($id: String!) { projectDelete(id: $id) }"
-        self.gql(q, {"id": project_id})
+    def service_delete(self, service_id: str) -> None:
+        """Delete a single customer service. Deprovision removes just the bot's
+        service (never the shared project — that would take down the whole fleet)."""
+        q = "mutation($id: String!) { serviceDelete(id: $id) }"
+        self.gql(q, {"id": service_id})
 
 
 # ── Submission persistence ────────────────────────────────────────────────────
@@ -408,12 +402,25 @@ def provision(sub_id: str, client: RailwayClient | None = None,
         _checkpoint(sub, status="in_progress", error=None,
                     started_at=prov.get("started_at") or datetime.now(timezone.utc).isoformat())
 
-        # §2 create the Railway project (one project per customer).
-        if not prov.get("project_id"):
-            project_id, environment_id = client.project_create(f"flippulse-{handle}")
-            _checkpoint(sub, project_id=project_id, environment_id=environment_id,
-                        step="create_project")
-            log.info("%s: project %s created.", sub_id, project_id)
+        # §2 target the SHARED project the onboarding runs in — the customer bot
+        # is a sibling service, not a new project (see the RAILWAY_PROJECT_ID note
+        # above). The project id is constant, so if an earlier attempt (or the
+        # retired per-project code) recorded a DIFFERENT project, its service/volume
+        # ids belong to that dead project — drop them so we recreate cleanly here.
+        if not (RAILWAY_PROJECT_ID and RAILWAY_ENVIRONMENT_ID):
+            raise ProvisionError("locate_project",
+                "RAILWAY_PROJECT_ID / RAILWAY_ENVIRONMENT_ID are not set — cannot find "
+                "the shared project to deploy the customer service into. Railway injects "
+                "these into every service automatically; set them explicitly only when "
+                "running onboarding outside Railway.")
+        if prov.get("project_id") and prov.get("project_id") != RAILWAY_PROJECT_ID:
+            log.warning("%s: recorded project %s != shared project %s — recreating the "
+                        "service in the shared project.",
+                        sub_id, prov.get("project_id"), RAILWAY_PROJECT_ID)
+            for stale in ("service_id", "volume_id", "dashboard_domain"):
+                prov.pop(stale, None)
+        _checkpoint(sub, project_id=RAILWAY_PROJECT_ID,
+                    environment_id=RAILWAY_ENVIRONMENT_ID, step="locate_project")
 
         secrets = _decrypt_secrets(sub)
         # The dashboard password is generated ONCE and persisted in the checkpoint
@@ -546,20 +553,21 @@ def _verify_boot_logs(client: RailwayClient, deployment_id: str, sub: dict) -> N
 
 
 def deprovision(sub_id: str, client: RailwayClient | None = None) -> None:
-    """Delete the customer's Railway project (explicit operator action only —
+    """Delete the customer's Railway SERVICE (explicit operator action only —
     never called automatically, so a failed provision keeps its partial state
-    for inspection/resume)."""
+    for inspection/resume). Only the one bot's service is removed; the shared
+    project (and every other customer bot in it) is never touched."""
     sub = load_submission(sub_id)
     prov = sub.get("provisioning") or {}
-    project_id = prov.get("project_id")
-    if not project_id:
-        raise ProvisionError("deprovision", f"{sub_id} has no provisioned project recorded.")
-    (client or RailwayClient()).project_delete(project_id)
+    service_id = prov.get("service_id")
+    if not service_id:
+        raise ProvisionError("deprovision", f"{sub_id} has no provisioned service recorded.")
+    (client or RailwayClient()).service_delete(service_id)
     sub["provisioning"] = {"status": "deprovisioned",
-                           "deleted_project_id": project_id,
+                           "deleted_service_id": service_id,
                            "updated_at": datetime.now(timezone.utc).isoformat()}
     _save_submission(sub)
-    log.info("%s: project %s deleted.", sub_id, project_id)
+    log.info("%s: service %s deleted.", sub_id, service_id)
 
 
 # ── Background queue (webhook → async provisioning) ───────────────────────────

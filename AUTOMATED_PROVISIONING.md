@@ -25,7 +25,9 @@ Stripe webhook: checkout.session.completed  →  submission marked "paid"
 provisioner.enqueue(id)          (background worker inside the onboarding service)
   ↓
 Railway GraphQL API:
-  projectCreate                  → new project "flippulse-<handle>"
+  (locate shared project)        → RAILWAY_PROJECT_ID / RAILWAY_ENVIRONMENT_ID of
+                                   the onboarding service — the bot is a sibling
+                                   service in that project, NOT a new project
   serviceCreate                  → service "<handle>-bot" from the FlipPulse repo,
                                    FULL variable set injected at creation
   volumeCreate                   → volume mounted at /data
@@ -51,7 +53,7 @@ flowchart LR
     O -->|enqueue| Q[In-process queue\nmax 2 workers]
     Q --> P[provisioner.py\nstate machine]
     P -->|GraphQL /v2| R[Railway API]
-    R --> B[Customer bot\nproject flippulse-handle]
+    R --> B[Customer bot\nservice in the shared project]
     P -->|success / failure| T[Operator Telegram]
     B -->|boot alert, /status| CT[Customer Telegram]
 ```
@@ -70,7 +72,7 @@ sequenceDiagram
     App->>App: mark submission paid
     App->>Prov: enqueue(id)  — returns 200 to Stripe immediately
     Prov->>Prov: acquire lockfile (one attempt per submission)
-    Prov->>RW: projectCreate("flippulse-jane")
+    Prov->>Prov: locate shared project (RAILWAY_PROJECT_ID/ENVIRONMENT_ID)
     Prov->>Prov: checkpoint project_id + environment_id
     Prov->>RW: serviceCreate(repo, branch, variables)
     Prov->>RW: volumeCreate(mountPath="/data")
@@ -99,7 +101,8 @@ sequenceDiagram
    | Variable | Required | Value |
    |---|---|---|
    | `RAILWAY_API_TOKEN` | **yes** | The token from step 1. Enables all automation. |
-   | `RAILWAY_TEAM_ID` | if workspace token | Team/workspace id to create projects in. |
+   | `RAILWAY_PROJECT_ID` | auto on Railway | The project customer bots are deployed into (as sibling services). Railway injects this into the onboarding service automatically; set it only when running onboarding outside Railway. |
+   | `RAILWAY_ENVIRONMENT_ID` | auto on Railway | The environment within that project (usually `production`). Also injected by Railway automatically. |
    | `AUTO_PROVISION` | no (default `true`) | `false` = webhook only marks paid; you use the `/admin` button or CLI. |
    | `PROVISION_REPO` | no (default `jchristadore-ux/FlipPulse`) | Repo every bot deploys from. |
    | `PROVISION_REPO_BRANCH` | no (default `release`) | Branch customer bots deploy from. Defaults to `release`, NOT `main` — Railway auto-redeploys every tracking service on push, so a fleet on `main` restarts (and can brick) every customer bot on any bad merge. Develop on `main`, keep one in-house canary bot tracking `main`, and promote deliberately with `git push origin main:release`. |
@@ -117,7 +120,7 @@ sequenceDiagram
 
 - [ ] `/healthz` shows `railway: true` and `auto_provision: true`
 - [ ] Stripe webhook delivers `checkout.session.completed` (Stripe dashboard → webhook → 200s)
-- [ ] A test signup (Stripe test mode) produces a Railway project with a green deploy
+- [ ] A test signup (Stripe test mode) produces a new service **in the onboarding's own project** with a green deploy
 - [ ] The provisioning result arrived on your operator Telegram
 - [ ] `/admin` shows the customer as “✅ running” with a working project link
 - [ ] You did not open the Railway UI
@@ -133,7 +136,7 @@ below remains manual.
 |---|---|---|---|
 | §0 | Read the Telegram alert, open `/admin` or `admin_cli.py show`, copy values | Stripe webhook hands the submission id straight to the provisioner; secrets are decrypted in memory | `app.py stripe_webhook` → `provisioner.provision()` |
 | §0 | Confirm `payment_status` is `paid` | Provisioning is **gated on paid** (`require_paid=True` on the webhook path); operator button/CLI can override for manually-billed customers | `provisioner.provision()` payment gate |
-| §2.1 | Railway UI: New Project → Deploy from GitHub repo → name it | `projectCreate` → `flippulse-<handle>`; `serviceCreate` with `source.repo = FlipPulse`, `branch = release` (the pinned fleet branch) | `RailwayClient.project_create / service_create` |
+| §2.1 | Railway UI: New Project → Deploy from GitHub repo → name it | The bot is created as a **sibling service in the onboarding's own project** (via `RAILWAY_PROJECT_ID` / `RAILWAY_ENVIRONMENT_ID`, injected by Railway) — no per-customer project. `serviceCreate` with `source.repo = FlipPulse`, `branch = release` (the pinned fleet branch) | `provisioner.provision()` (locate) + `RailwayClient.service_create` |
 | §2.2 | Set Root Directory blank (the make-or-break setting) | `serviceCreate` never sets a root directory, so it's blank **by construction** — the repo-root `railway.toml` (`python bot.py`) always applies. The "empty repo / Bird_Bot" failure mode can no longer happen: the repo is pinned in `PROVISION_REPO` | `RailwayClient.service_create` |
 | §2 | Accept the crash-loop until vars are pasted | Gone: the full variable set is passed **inside `serviceCreate`**, so the first build already has its config | `deploy_variables()` inline at creation |
 | §3 | UI: Volumes → New Volume → mount `/data` | `volumeCreate(mountPath="/data")` | `RailwayClient.volume_create` |
@@ -147,9 +150,10 @@ below remains manual.
 | §9 | Stripe products/webhook | Unchanged (already automated); the webhook now *also* triggers provisioning | `app.py` |
 | Troubleshooting: truncated PEM | Re-paste the B64 line | Can't occur: the key goes API-to-API as one base64 line, never through a clipboard | — |
 
-**Required credentials, in one place:** `RAILWAY_API_TOKEN` (+ optional
-`RAILWAY_TEAM_ID`), `ONBOARDING_FERNET_KEY` (already required),
-`STRIPE_WEBHOOK_SECRET` (already recommended). No new secret types.
+**Required credentials, in one place:** `RAILWAY_API_TOKEN`,
+`ONBOARDING_FERNET_KEY` (already required), `STRIPE_WEBHOOK_SECRET` (already
+recommended). `RAILWAY_PROJECT_ID` / `RAILWAY_ENVIRONMENT_ID` are injected by
+Railway automatically — no new secret types.
 
 ---
 
@@ -203,16 +207,16 @@ and cleanup is an explicit operator command.
 | Failure | Detected by | What happens | Recovery |
 |---|---|---|---|
 | Railway API 429/5xx/network | HTTP layer | Retried in-place, 4 tries, backoff 2s/4s/8s | Automatic |
-| `projectCreate` fails | GraphQL error | Status `failed@create_project`, operator alerted | Retry resumes from scratch (nothing was created) |
-| `serviceCreate` fails | GraphQL error | Project id already checkpointed | Retry reuses the project, creates only the service |
-| Volume / variables fail | GraphQL error | Ids so far checkpointed | Retry skips project+service, resumes at volume |
+| Shared project ids missing | `locate_project` guard | Status `failed@locate_project`, operator alerted | Set `RAILWAY_PROJECT_ID`/`RAILWAY_ENVIRONMENT_ID` (Railway injects them on-platform) and retry |
+| `serviceCreate` fails | GraphQL error | Shared project id already checkpointed | Retry reuses the project, creates only the service |
+| Volume / variables fail | GraphQL error | Ids so far checkpointed | Retry skips the service, resumes at volume |
 | Deployment `FAILED`/`CRASHED` | Status poll | Fails with the last 5 log lines in the alert | Fix cause (usually a bad customer key → have them rotate + resubmit), then retry |
 | Deployment hangs | 10-min timeout | `failed@deploy` with last status | Retry (it just redeploys and re-polls) |
 | Boot markers missing | Log scan | `failed@verify` — deploy is green but the bot didn't prove Kalshi auth | Inspect service logs via the alert's project link, retry after fix |
 | Double trigger (Stripe retries webhooks!) | `O_EXCL` lockfile + status check | Second attempt refuses: "already in progress"; already-provisioned submissions are a **no-op** | Automatic (idempotency) |
 | Worker/process dies mid-run | Lockfile staleness (45 min) | Lock expires; submission still shows its last checkpoint | Retry resumes |
 | Service restarts with jobs queued (queue is in-memory; Stripe won't retry an acknowledged event) | **Boot sweep** (`reconcile_pending()` on app start) | Every *paid* submission whose provisioning never finished (never attempted, `failed`, or `in_progress` with a stale checkpoint) is re-enqueued; operator gets one summary alert. `deprovisioned` customers are never resurrected | Automatic |
-| Operator wants it gone | — | `python admin_cli.py deprovision <id>` — confirms by handle, deletes the Railway project | Explicit only |
+| Operator wants it gone | — | `python admin_cli.py deprovision <id>` — confirms by handle, deletes only that bot's **service** (never the shared project) | Explicit only |
 
 **Retry surfaces** (all resume from the last checkpoint, all safe to repeat):
 the **`↻ Retry provisioning`** button on `/admin/<id>`, or

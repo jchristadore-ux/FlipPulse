@@ -15,7 +15,7 @@ Usage:
 Automated provisioning (also needs RAILWAY_API_TOKEN; see AUTOMATED_PROVISIONING.md):
     ... python admin_cli.py provision   <submission_id>   # create/resume the Railway bot
     ... python admin_cli.py status      <submission_id>   # show provisioning state
-    ... python admin_cli.py deprovision <submission_id>   # DELETE the customer's Railway project
+    ... python admin_cli.py deprovision <submission_id>   # DELETE the customer's Railway service (bot)
 """
 
 from __future__ import annotations
@@ -127,13 +127,14 @@ def cmd_status(sub_id: str) -> None:
 def cmd_deprovision(sub_id: str) -> None:
     import provisioner
     sub = _load(sub_id)
-    project_id = (sub.get("provisioning") or {}).get("project_id")
-    answer = input(f"DELETE Railway project {project_id} for {sub.get('full_name')!r}? "
-                   "This stops their bot. Type the customer handle to confirm: ")
+    service_id = (sub.get("provisioning") or {}).get("service_id")
+    answer = input(f"DELETE Railway service {service_id} for {sub.get('full_name')!r}? "
+                   "This stops their bot (the shared project and other bots are "
+                   "untouched). Type the customer handle to confirm: ")
     if answer.strip() != sub.get("handle"):
         sys.exit("Aborted — handle did not match.")
     provisioner.deprovision(sub_id)
-    print("🗑 Project deleted; submission marked deprovisioned.")
+    print("🗑 Service deleted; submission marked deprovisioned.")
 
 
 def main() -> None:
