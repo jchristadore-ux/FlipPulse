@@ -24,7 +24,8 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 | ID      | Date Added | Area | Summary | Priority | Status   |
 |---------|------------|------|---------|----------|----------|
 | IMP-001 | 2026-07-08 | command bot / sizing | Telegram `/risk` command lets a customer change their full-size stake % at runtime | Medium | Done |
-| IMP-002 | 2026-07-08 | dashboard / sizing / telegram | Self-service web dashboard (login) to change risk %, trading format, Telegram alerts, and set-aside reserve | High | In Progress |
+| IMP-002 | 2026-07-08 | dashboard / sizing / telegram | Self-service web dashboard (login) to change risk %, trading format, Telegram alerts, and set-aside reserve | High | Done |
+| IMP-004 | 2026-07-08 | provisioning / dashboard | Autoprovision the dashboard: generate the Railway public domain + stable password and surface URL/password to the operator; docs (`DASHBOARD.md`) | High | In Progress |
 
 ---
 
@@ -51,7 +52,7 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 - **Added:** 2026-07-08
 - **Area:** dashboard (new `dashboard.py`) / sizing / telegram
 - **Priority:** High
-- **Status:** In Progress (PR on `claude/user-dashboard`)
+- **Status:** Done (merged from `claude/user-dashboard`)
 - **Problem / motivation:** Customers could only view state / change risk over Telegram.
   They needed a proper login-protected place to fine-tune their setup.
 - **Change:** Each bot now serves its own login-protected web dashboard (stdlib
@@ -72,10 +73,30 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
   alerts never mutable, and dashboard disabled unless `DASHBOARD_PASSWORD` is set.
   Covered by `test_dashboard.py` (settings I/O, session tokens, live HTTP flow,
   reserve sizing, format override, telegram gating).
-- **Follow-ups:** (a) auto-generate a Railway public domain for the bot service at
-  provision time so the dashboard URL is handed to the customer automatically
-  (currently a manual Railway step); (b) live trading-format switch without a
-  restart; (c) IMP-003: revisit the customer "max loss" control / doctrine.
+- **Follow-ups:** (a) ~~auto-generate a Railway public domain at provision time~~ —
+  done in IMP-004; (b) live trading-format switch without a restart; (c) IMP-003:
+  revisit the customer "max loss" control / doctrine.
+
+### IMP-004 — Autoprovision the dashboard (domain + password + docs)
+- **Added:** 2026-07-08
+- **Area:** onboarding provisioner / dashboard
+- **Priority:** High
+- **Status:** In Progress (PR on `claude/dashboard-provisioning`)
+- **Problem / motivation:** The dashboard shipped (IMP-002) but reaching it needed a
+  manual Railway "Generate Domain" step, and the operator had no URL/password to give
+  the customer.
+- **Change:** `onboarding/provisioner.py` now (1) generates a strong `DASHBOARD_PASSWORD`
+  once and persists it in the provisioning checkpoint so it's STABLE across
+  resumes/reconciles (previously `deploy_variables` minted a new one every call, which
+  `variables_upsert` would re-apply — silently rotating the customer's login); (2) adds
+  a `create_domain` step calling Railway `serviceDomainCreate` targeting `DASHBOARD_PORT`
+  (8080), best-effort so a domain failure never blocks the bot from trading; (3) injects
+  `DASHBOARD_PORT`; (4) puts the dashboard URL + password in the operator success alert.
+  New `DASHBOARD.md` documents the customer access steps and operator setup, linked from
+  `CUSTOMER_ONBOARDING.md`.
+- **Impact / risk:** Provisioning-only; the bot/engine is unchanged. Domain creation is
+  non-fatal and the password is stable. Covered by new `test_provisioner.py` cases
+  (domain + password surfaced, password stable across resume, domain failure non-fatal).
 
 <!--
 Template for a detailed entry — copy below when an item needs more than one line.
