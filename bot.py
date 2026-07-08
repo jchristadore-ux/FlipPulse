@@ -422,7 +422,27 @@ if "--list-formats" in sys.argv:
 for _arg in sys.argv[1:]:
     if _arg.startswith("--format="):
         os.environ.setdefault("TRADING_FORMAT", _arg.split("=", 1)[1])
-TRADING_FORMAT = apply_format(os.environ.get("TRADING_FORMAT", "balanced"))
+
+
+def _boot_trading_format() -> str:
+    """The format to boot with: the customer's dashboard choice (persisted to the
+    /data volume) when present, otherwise the TRADING_FORMAT env var provisioned at
+    signup. The dashboard writes {"trading_format": "..."} to FORMAT_OVERRIDE_PATH;
+    because a format bundles gate thresholds read once here at startup, a change
+    only takes effect on the next boot. Best-effort — a missing/corrupt file just
+    falls back to the env value."""
+    path = os.environ.get("FORMAT_OVERRIDE_PATH", "").strip() or "/data/format_override.json"
+    try:
+        with open(path) as f:
+            chosen = str(json.load(f).get("trading_format", "")).strip()
+        if chosen:
+            return chosen
+    except (OSError, ValueError, TypeError):
+        pass
+    return os.environ.get("TRADING_FORMAT", "balanced")
+
+
+TRADING_FORMAT = apply_format(_boot_trading_format())
 
 KALSHI_API_KEY_ID   = _require("KALSHI_API_KEY_ID")
 
@@ -481,6 +501,20 @@ RISK_OVERRIDE_PATH = os.environ.get("RISK_OVERRIDE_PATH", "").strip() or "/data/
 # it can ever reach sizing, so a fat-finger "/risk 90" can neither exceed the sane
 # ceiling nor drop the stake to a dust amount that never fills.
 RISK_MIN_TRADE_PCT = _env_float("RISK_MIN_TRADE_PCT", 0.01)
+
+# ── Customer reserve / "set aside" (dashboard) ────────────────────────────────
+# The customer can ring-fence a dollar amount of their balance from trading via
+# the web dashboard (dashboard.py), which drops it into RESERVE_OVERRIDE_PATH on
+# the /data volume. The engine subtracts it from the balance used for sizing at
+# the single dollar-resolution point (active_trade_size), so the reserve is never
+# staked — the bot trades only the balance ABOVE it and de-risks toward zero size
+# as the tradeable remainder shrinks. Withdrawals still happen on Kalshi; this
+# only tells the bot how much to leave untouched. Decoupled by file, like /risk.
+RESERVE_OVERRIDE_PATH = os.environ.get("RESERVE_OVERRIDE_PATH", "").strip() or "/data/reserve_override.json"
+# The customer's chosen Trading Format from the dashboard, persisted here so it
+# survives redeploys and is applied at the NEXT boot (a format bundles gate
+# thresholds read once at startup, so it takes effect on restart — see boot below).
+FORMAT_OVERRIDE_PATH  = os.environ.get("FORMAT_OVERRIDE_PATH", "").strip() or "/data/format_override.json"
 # NOTE: the fixed-dollar-era knobs MAX_BET_FRACTION, KELLY_FRACTION and
 # KELLY_RECOVERY_MULT were removed in the v10 cleanup — sizing is purely the
 # percentage knobs above (kelly math is used only as a positive-expectancy
@@ -1517,6 +1551,41 @@ def effective_normal_trade_pct() -> float:
     return max(RISK_MIN_TRADE_PCT, min(frac, MAX_TRADE_PCT))
 
 
+# Cache the parsed reserve on the file's mtime, same pattern as the risk override.
+_reserve_cache: "tuple[float, float] | None" = None  # (mtime, dollars)
+
+
+def effective_reserve() -> float:
+    """The dollar amount the customer has ring-fenced from trading via the
+    dashboard (RESERVE_OVERRIDE_PATH), or 0.0 if none/invalid. Cached on the file's
+    mtime. Never raises. Clamped to ≥ 0 — a negative reserve is meaningless and is
+    treated as no reserve."""
+    global _reserve_cache
+    try:
+        mtime = os.path.getmtime(RESERVE_OVERRIDE_PATH)
+    except OSError:
+        _reserve_cache = None
+        return 0.0
+    if _reserve_cache is not None and _reserve_cache[0] == mtime:
+        return _reserve_cache[1]
+    try:
+        with open(RESERVE_OVERRIDE_PATH) as f:
+            amt = float(json.load(f).get("reserve_dollars"))
+    except (OSError, ValueError, TypeError):
+        _reserve_cache = None
+        return 0.0
+    amt = amt if amt > 0 else 0.0         # negative/NaN/0 → no reserve
+    _reserve_cache = (mtime, amt)
+    return amt
+
+
+def tradeable_balance(balance: float) -> float:
+    """The balance the bot is allowed to stake: the live balance minus the
+    customer's reserve, floored at 0. All sizing works off this, so the reserve is
+    never risked and the stake auto-de-risks to 0 as the tradeable remainder does."""
+    return max(0.0, balance - effective_reserve())
+
+
 def active_trade_fraction() -> float:
     """The stake FRACTION of the current balance for the active mode. Single
     source of truth for sizing posture: recovery (deepest claw-back) → probation
@@ -1530,13 +1599,17 @@ def active_trade_fraction() -> float:
 
 
 def active_trade_size(balance: float) -> float:
-    """The DOLLAR stake for the current mode = active fraction × balance, clamped
-    by the hard MAX_TRADE_PCT ceiling and by cash on hand. Because the fraction is
-    of the CURRENT balance, the stake re-scales on every trade — it compounds as
-    the account grows and auto-de-risks as it shrinks. Single dollar-resolution
-    point; every position-sizing path derives from this."""
+    """The DOLLAR stake for the current mode = active fraction × TRADEABLE balance,
+    clamped by the hard MAX_TRADE_PCT ceiling and by cash on hand. The tradeable
+    balance is the live balance minus the customer's reserve (set aside), so the
+    reserve is never staked and the stake auto-de-risks to 0 as the tradeable
+    remainder shrinks. Because the fraction is of the CURRENT balance, the stake
+    re-scales on every trade — it compounds as the account grows and de-risks as it
+    shrinks. Single dollar-resolution point; every position-sizing path derives
+    from this."""
+    usable = tradeable_balance(balance)
     frac = min(active_trade_fraction(), MAX_TRADE_PCT)
-    return round(min(frac * balance, balance), 2)
+    return round(min(frac * usable, usable), 2)
 
 
 def in_clawback() -> bool:
@@ -2899,6 +2972,10 @@ def write_status_snapshot(balance: float) -> None:
             "normal_trade_pct": round(effective_normal_trade_pct() * 100, 2),
             "risk_min_pct": round(RISK_MIN_TRADE_PCT * 100, 2),
             "risk_max_pct": round(MAX_TRADE_PCT * 100, 2),
+            # Customer reserve (set aside) + the balance actually in play, and the
+            # live trading format — all surfaced so the dashboard can render them.
+            "reserve_dollars": round(effective_reserve(), 2),
+            "tradeable_balance": round(tradeable_balance(balance), 2),
             "billing": billing.snapshot(balance),
             "open_positions": len(open_orders),
             "open_tickers": [o.get("ticker", "") for o in open_orders.values()],
@@ -3378,5 +3455,14 @@ if __name__ == "__main__":
         command_bot.start_command_bot()
     except Exception as _cb_err:  # pragma: no cover - must never break trading
         log.warning("Command bot not started: %s", _cb_err)
+
+    # Customer self-service web dashboard (login-protected). Runs in a daemon
+    # thread reading/writing the same /data override files as /risk; a no-op when
+    # DASHBOARD_PASSWORD is unset. Guarded so it can never stop the bot booting.
+    try:
+        import dashboard
+        dashboard.start_dashboard()
+    except Exception as _db_err:  # pragma: no cover - must never break trading
+        log.warning("Dashboard not started: %s", _db_err)
 
     main()
