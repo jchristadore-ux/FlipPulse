@@ -109,6 +109,16 @@ PERF_PCT      = os.environ.get("ONBOARDING_PERF_PCT", "0")   # placeholder — f
 VALID_FORMATS = ("conservative", "balanced", "aggressive")
 SECRET_FIELDS = ("kalshi_api_key_id", "kalshi_private_key_pem", "telegram_bot_token")
 
+# Consent checkboxes on the signup form — each must be individually checked so
+# the customer's acceptance of the risk disclosure, the software-only/no-advice
+# terms, eligibility, and the full agreement is recorded separately rather than
+# lumped into one box. Keep in sync with the checkboxes in templates/form.html.
+CONSENT_FIELDS = ("ack_risk", "ack_software", "ack_eligibility", "agree")
+
+# Bump when the Risk Disclosure & Agreement text in form.html changes materially,
+# so each stored submission is provably tied to the terms version accepted.
+TERMS_VERSION = "2026-07-09"
+
 # Boot reconciliation: the provisioning queue is in-memory, so a restart between
 # Stripe's webhook (already acknowledged with a 200 — Stripe won't retry) and
 # the worker finishing would otherwise strand a PAID customer with no bot and no
@@ -426,8 +436,13 @@ def submit():
         return redirect(url_for("form", error="Please complete: " + ", ".join(missing)))
     if f.get("trading_format") not in VALID_FORMATS:
         return redirect(url_for("form", error="Pick a trading format."))
-    if not f.get("agree"):
-        return redirect(url_for("form", error="Please accept the terms to continue."))
+    # Every consent box is separately required so acceptance of the risk
+    # disclosure, the software-only/no-advice terms, eligibility, and the full
+    # agreement is individually recorded — not a single lumped "agree".
+    if not all(f.get(c) for c in CONSENT_FIELDS):
+        return redirect(url_for("form", error=(
+            "Please read the Risk Disclosure & Agreement and check each "
+            "acknowledgment box to continue.")))
     try:
         balance = float(str(f.get("starting_balance")).replace(",", "").replace("$", ""))
         if balance <= 0:
@@ -469,6 +484,14 @@ def submit():
         "starting_balance": round(balance, 2),
         "telegram_chat_id": f.get("telegram_chat_id").strip(),
         "payment_status": "pending",
+        # Proof of consent: which terms version was accepted, when, from where.
+        "consent": {
+            "accepted": list(CONSENT_FIELDS),
+            "terms_version": TERMS_VERSION,
+            "accepted_at": now.isoformat(),
+            "ip": request.remote_addr or "",
+            "user_agent": request.headers.get("User-Agent", "")[:300],
+        },
         # secrets — encrypted at rest, decryptable only with ONBOARDING_FERNET_KEY
         "secrets_encrypted": {
             "kalshi_api_key_id": _encrypt(f.get("kalshi_api_key_id").strip()),
