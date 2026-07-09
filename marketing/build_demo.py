@@ -90,7 +90,7 @@ SCENES = [
           "<div class='sub'>Every trade, win, and daily summary<br>straight to your <b>Telegram</b>.</div>"),
     # 7 — CTA
     scene(f"<img class='logo' src='{LOGO}'><div class='big'>Pulse the<br><span class='grad'>markets.</span></div>"
-          "<div class='price'>$99 setup &middot; $99/mo</div>"
+          "<div class='price'>$150 setup &middot; $99/mo</div>"
           "<div class='tag'>Start in paper mode &mdash; go live when you're ready.</div>"
           "<div class='foot'>FLIPPULSE</div>"),
 ]

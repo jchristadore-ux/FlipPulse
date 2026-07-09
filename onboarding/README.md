@@ -7,7 +7,7 @@ submit it:
    token) at rest and writes a **submission file** to `submissions/` — the backend
    admin file you open to deploy.
 2. **Alerts you** (the operator) on Telegram with a non-secret summary.
-3. Launches **Stripe Checkout** to collect the **$99 setup fee** and start the
+3. Launches **Stripe Checkout** to collect the **$150 setup fee** and start the
    **$99/mo subscription**, keeping the card on file for any future invoices.
 4. **Provisions the customer's bot automatically** once Stripe confirms payment:
    the built-in provisioner (`provisioner.py`) creates the Railway project,
@@ -46,12 +46,14 @@ Environment variables:
 | `ONBOARDING_TELEGRAM_CHAT_ID` | recommended | Your chat id for signup alerts. |
 | `STRIPE_SECRET_KEY` | for payment | Stripe secret key (`sk_live_...` / `sk_test_...`). |
 | `STRIPE_MONTHLY_PRICE_ID` | for payment | Recurring $99/mo **Price** id (`price_...`). If you paste a **Product** id (`prod_...`) by mistake — the id the Stripe dashboard shows most prominently — the service auto-resolves it to that product's default price so checkout still works. |
-| `STRIPE_SETUP_PRICE_ID` | for payment | One-time $99 setup **Price** id (`price_...`); a `prod_...` is auto-resolved to its default price too. |
+| `STRIPE_SETUP_PRICE_ID` | for payment | One-time $150 setup **Price** id (`price_...`); a `prod_...` is auto-resolved to its default price too. |
 | `STRIPE_WEBHOOK_SECRET` | **required with Stripe** | Verifies `checkout.session.completed` so a submission is marked **paid** (which triggers auto-provisioning). Without it, paid customers are never marked paid and never provisioned — the app logs an ERROR at boot, `/healthz` reports `ok: false`, and the webhook returns 500 so Stripe flags the endpoint. |
+| `FOUNDING_COUPON_ID` | optional | A Stripe **coupon** id (e.g. the "Founder 100" `$249-off-once` coupon, id like `10xGeLZu`) auto-applied to **every** signup — no code for the customer to type. When the coupon is exhausted/expired, checkout retries once at full price so signups never break; unset it to end the offer. Mutually exclusive with `STRIPE_ALLOW_PROMO_CODES`. |
+| `STRIPE_ALLOW_PROMO_CODES` | optional | `true` shows an "Add promotion code" box on the Stripe Checkout page so customers can type a code (e.g. `FOUNDER100`). Ignored when `FOUNDING_COUPON_ID` is set (Stripe rejects a session using both). |
 | `ADMIN_TOKEN` | optional | Enables the operator dashboard at `/admin`. Unset = dashboard disabled (routes 404). |
 | `PUBLIC_BASE_URL` | optional | Public https URL (for Stripe success/cancel redirects). Defaults to the request host. |
 | `SUBMISSIONS_DIR` | optional | Where submission files are written (default `./submissions`; put on a Railway volume to persist). |
-| `ONBOARDING_PRICE_SETUP` / `ONBOARDING_PRICE_MONTHLY` | optional | Display-only pricing on the form (default `99` / `99`). |
+| `ONBOARDING_PRICE_SETUP` / `ONBOARDING_PRICE_MONTHLY` | optional | Display-only pricing on the form (default `150` / `99`). |
 | `ONBOARDING_PERF_PCT` | optional | Placeholder for a future performance fee; default `0` and **not shown** on the form. |
 | `RAILWAY_API_TOKEN` | for auto-provisioning | Railway account/workspace token — enables zero-touch bot deployment on payment. |
 | `RAILWAY_PROJECT_ID` / `RAILWAY_ENVIRONMENT_ID` | auto on Railway | The project + environment customer bots are deployed into as sibling services. Railway injects both into the onboarding service; set them only when running outside Railway. |

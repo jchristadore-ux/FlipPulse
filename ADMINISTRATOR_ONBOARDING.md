@@ -241,7 +241,7 @@ Do **not** do this during initial onboarding. When the customer is ready:
 
 | Charge | Amount | When | How |
 |---|---|---|---|
-| **Setup fee** | **$99** | Once, at signup | Stripe (first invoice) |
+| **Setup fee** | **$150** | Once, at signup | Stripe (first invoice) |
 | **Subscription** | **$99 / month** | Monthly | Stripe recurring |
 | ~~Performance fee~~ | **— on hold (not charged)** | — | Placeholder — see §9b to re-enable later |
 
@@ -258,7 +258,7 @@ Do **not** do this during initial onboarding. When the customer is ready:
 2. **Products & Prices:**
    - Product "FlipPulse Membership" → recurring **Price $99/month** → copy its
      `price_...` id → `STRIPE_MONTHLY_PRICE_ID`.
-   - Product "FlipPulse Setup" → one-time **Price $99** → copy its id →
+   - Product "FlipPulse Setup" → one-time **Price $150** → copy its id →
      `STRIPE_SETUP_PRICE_ID`.
 3. In the **onboarding service** (`onboarding/`) set `STRIPE_SECRET_KEY`,
    `STRIPE_MONTHLY_PRICE_ID`, `STRIPE_SETUP_PRICE_ID`, and `PUBLIC_BASE_URL` (its public
@@ -273,6 +273,31 @@ Do **not** do this during initial onboarding. When the customer is ready:
 
 See [`onboarding/README.md`](onboarding/README.md) for the full env-var list and how to
 deploy the form as its own Railway service.
+
+### 9a-i. Early-adopter offer — "Founder 100" (live)
+
+The launch offer: **the first 100 subscribers pay $0 on their first invoice** — the
+$150 setup fee **and** the first month ($99) are both waived — then normal $99/month
+billing begins from month 2. Regular list price stays **$150 setup + $99/mo**, so the
+discount is real and time-limited. It never touches the recurring price, so LTV is
+intact.
+
+**Stripe side (one-time):**
+1. Dashboard → **Product catalog → Coupons → + New** → **Amount off → $249.00 USD**
+   (= $150 setup + $99 first month), Duration **Once**, **Max redemptions 100**. Name it
+   `FOUNDING100`. Save — copy its **coupon id** (looks like `10xGeLZu`).
+2. Cap is enforced by Stripe's `max_redemptions`; when it hits 100 the coupon stops
+   applying automatically.
+
+**Onboarding service side — pick ONE delivery mode** (Stripe rejects a session that
+uses both):
+- **Automatic (recommended):** set `FOUNDING_COUPON_ID` to the coupon id. Every signup
+  gets the discount with nothing to type. When the coupon is exhausted/expired, checkout
+  **retries once at full price** so signups never break — the offer just ends. Unset the
+  var to end it early.
+- **Code-based:** leave `FOUNDING_COUPON_ID` unset, set `STRIPE_ALLOW_PROMO_CODES=true`,
+  and on the coupon create a **promotion code** (e.g. `FOUNDER100`) to hand out. The
+  Checkout page then shows an "Add promotion code" box.
 
 ### 9b. (Later) re-enabling a performance fee — currently DISABLED
 

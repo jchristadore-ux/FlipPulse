@@ -8,7 +8,7 @@ that content now lives in the administrator guide below.
 
 Customers sign up through the **digital onboarding form** —
 [`onboarding/`](onboarding/README.md) (Flask). On submit it encrypts their keys into a
-backend submission file, alerts you on Telegram, and takes payment via Stripe ($99 setup
+backend submission file, alerts you on Telegram, and takes payment via Stripe ($150 setup
 + $99/mo, card kept on file). You then run
 `onboarding/admin_cli.py show <id>` to get the deploy variables — see the administrator
 guide.

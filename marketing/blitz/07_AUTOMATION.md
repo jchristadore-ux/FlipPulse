@@ -28,7 +28,7 @@ trades <3min to expiry, 3-loss streak pause, maker-only orders 1¢ inside
 spread); percentage-of-balance sizing (Conservative 5%/Balanced 10%/Aggressive
 20% normal stakes, recovery sizing ~1/3 after a loss); every account starts in
 paper mode; funds stay in the customer's own Kalshi account (CFTC-regulated);
-Telegram alerts + /status; $99 setup + $99/mo flat, cancel anytime.
+Telegram alerts + /status; $150 setup + $99/mo flat, cancel anytime.
 
 Voice: calm quant, dry humor, receipts over hype, honest about losses and
 boring days. NEVER write: guaranteed, passive income, risk-free, get rich, any
@@ -139,7 +139,7 @@ joins group `lead-magnet`; one email every 2 days; templates — subject / core)
 3. `Where your money sits (the only question that matters)` — custody
    explainer (FB03 content); CTA: reply with questions (replies = deliverability gold).
 4. `Paper mode: the free trial that actually proves something` — TH06 content
-   condensed; CTA: `Start in paper mode — $99 setup + $99/mo` → go.flippulse.com.
+   condensed; CTA: `Start in paper mode — $150 setup + $99/mo` → go.flippulse.com.
 5. `What $99/month actually buys (and when NOT to buy it)` — TH08 content +
    honest "don't sign up if..." list (money you can't lose / expecting
    guaranteed returns / want 50 trades a day). This email converts best

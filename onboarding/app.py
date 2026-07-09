@@ -74,6 +74,17 @@ STRIPE_MONTHLY_PRICE= os.environ.get("STRIPE_MONTHLY_PRICE_ID", "").strip()
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
 PUBLIC_BASE_URL     = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
 
+# Founding-customer offer (e.g. the "Founder 100" $249-off-first-invoice coupon).
+# Two mutually-exclusive delivery modes — Stripe rejects a session that uses both:
+#   • FOUNDING_COUPON_ID set  → the coupon is auto-applied to every signup (no code
+#     to type). If the coupon is exhausted/expired/invalid, checkout retries once
+#     WITHOUT it so signups never break — the offer just quietly ends.
+#   • else STRIPE_ALLOW_PROMO_CODES truthy → the Checkout page shows an "Add
+#     promotion code" box so customers can enter a code (e.g. FOUNDER100).
+# Leave both unset for full-price checkout.
+FOUNDING_COUPON_ID      = os.environ.get("FOUNDING_COUPON_ID", "").strip()
+STRIPE_ALLOW_PROMO_CODES = os.environ.get("STRIPE_ALLOW_PROMO_CODES", "").strip().lower() in ("1", "true", "yes")
+
 # The webhook secret is REQUIRED whenever Stripe is live: without it the
 # checkout.session.completed webhook cannot be verified, so paid customers are
 # never marked paid and auto-provisioning never fires — silently. Fail loudly
@@ -91,7 +102,7 @@ if STRIPE_SECRET_KEY and not STRIPE_WEBHOOK_SECRET:
 AUTO_PROVISION = os.environ.get("AUTO_PROVISION", "true").strip().lower() in ("1", "true", "yes")
 
 # Display-only pricing (kept in sync with the docs / Stripe prices).
-PRICE_SETUP   = os.environ.get("ONBOARDING_PRICE_SETUP", "99")
+PRICE_SETUP   = os.environ.get("ONBOARDING_PRICE_SETUP", "150")
 PRICE_MONTHLY = os.environ.get("ONBOARDING_PRICE_MONTHLY", "99")
 PERF_PCT      = os.environ.get("ONBOARDING_PERF_PCT", "0")   # placeholder — fee not shown/charged
 
@@ -359,7 +370,7 @@ def _start_stripe_checkout(sub: dict):
     if STRIPE_SETUP_PRICE:                      # one-time setup fee on the first invoice
         line_items.append({"price": _resolve_price_id(STRIPE_SETUP_PRICE), "quantity": 1})
     base = PUBLIC_BASE_URL or request.host_url.rstrip("/")
-    session = stripe.checkout.Session.create(
+    params = dict(
         mode="subscription",
         line_items=line_items,
         customer_email=sub["email"],
@@ -370,6 +381,25 @@ def _start_stripe_checkout(sub: dict):
         success_url=f"{base}{url_for('success')}?sid={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{base}{url_for('cancelled')}?submission={sub['id']}",
     )
+    # Founding offer: auto-apply the coupon, OR (mutually exclusive) let the
+    # customer type a promotion code. Never both — Stripe rejects that combo.
+    if FOUNDING_COUPON_ID:
+        params["discounts"] = [{"coupon": FOUNDING_COUPON_ID}]
+    elif STRIPE_ALLOW_PROMO_CODES:
+        params["allow_promotion_codes"] = True
+
+    try:
+        session = stripe.checkout.Session.create(**params)
+    except stripe.error.StripeError as e:
+        # The founding coupon is exhausted/expired/invalid — don't break signup.
+        # Retry once at full price so the customer can still check out; the
+        # limited-time offer has simply run its course.
+        if FOUNDING_COUPON_ID and params.pop("discounts", None) is not None:
+            log.warning("Founding coupon %s rejected (%s) — retrying checkout at "
+                        "full price", FOUNDING_COUPON_ID, e)
+            session = stripe.checkout.Session.create(**params)
+        else:
+            raise
     return session.url
 
 

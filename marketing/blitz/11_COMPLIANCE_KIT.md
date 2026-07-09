@@ -99,7 +99,7 @@ copy changes the same day:
 - "The API key the bot uses cannot withdraw funds."
 - "No Telegram command can switch a bot to live trading."
 - "Pause anytime, cancel anytime."
-- "$99 setup + $99/month, flat, no performance fee." (If the parked
+- "$150 setup + $99/month, flat, no performance fee." (If the parked
   performance fee ever returns, a full copy sweep is mandatory — grep the
   library for "flat" and "no % of profits".)
 

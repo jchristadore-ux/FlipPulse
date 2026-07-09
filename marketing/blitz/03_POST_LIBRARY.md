@@ -36,7 +36,7 @@ P&L, or a promise. If you write new posts, run them against `11_COMPLIANCE_KIT.m
 
 Every customer starts in paper (simulated) mode. Your funds stay in your own Kalshi account — a CFTC-regulated US exchange — and every decision the bot makes is sent to your own Telegram in real time. Pause any time with one tap.
 
-$99 setup + $99/month. Cancel anytime.
+$150 setup + $99/month. Cancel anytime.
 
 FlipPulse is software, not an investment adviser. Nothing we publish is financial advice. Trading involves risk, including loss of principal. Past performance — real or simulated — does not guarantee future results.`
 
@@ -56,6 +56,17 @@ FlipPulse is software, not an investment adviser. Nothing we publish is financia
 
 ## §2 — Pinned posts
 
+### 2.0 Founder 100 launch offer — `FOUNDER-LAUNCH` (Day 1; pin ABOVE the how-it-works thread until 100 spots are gone)
+
+> Runs only while the `FOUNDING100` coupon has spots left. When it's exhausted, unpin
+> these and revert CTAs to plain "$150 setup + $99/mo." Never promise it past the cap.
+> **Compliance:** the offer is about *price*, never about returns — keep every risk
+> disclosure intact (`11_COMPLIANCE_KIT.md` §2).
+
+- **X / short** `FL-X`: `We're opening FlipPulse to our first 100 members.\n\nFounders join free — $150 setup + first month, on us. $0 today, then $99/mo. Cancel anytime.\n\nStarts in paper mode, so you watch it work first.\n\n100 spots. Then it's gone.\n👉 go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss.`
+- **IG / FB / long** `FL-FB`: `Founder 100 is open.\n\nFlipPulse is an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — it runs 9 checks before every trade and does nothing the rest of the time. Every member starts in PAPER mode (simulated money), so you watch it make real decisions before a single real dollar is at stake. Your funds never leave your own Kalshi account.\n\nFor the first 100 members, we're waiving the $150 setup fee AND your first month — $0 to start, then $99/month, cancel anytime. Regular price after that is $150 setup + $99/mo.\n\nThere are exactly 100 spots. When they're gone, they're gone.\n\n👉 go.flippulse.com\n\n⚠️ FlipPulse is software, not investment advice. Trading involves risk, including loss of principal. Simulated results do not guarantee live results.`
+- **Countdown reply/story** `FL-COUNT` (reuse as spots drop): `[N] of 100 founder spots left. Setup + first month free, then $99/mo. go.flippulse.com` *(update N by hand from the Stripe coupon's redemption count.)*
+
 ### 2.1 X pinned thread — `TH-PIN` (post Day 1, pin immediately)
 1/ `Most trading bots are built to trade as much as possible.\n\nOurs is built to refuse.\n\nFlipPulse trades Kalshi's 15-minute BTC Up/Down markets — but only when 9 conditions ALL pass. Most hours: nothing.\n\nHere's how it decides, in plain English 🧵`
 2/ `First, the market: Kalshi (a CFTC-regulated US exchange) runs a BTC Up/Down contract every 15 minutes. 96 per day.\n\nEach contract pays $1 if you're right, $0 if you're wrong.\n\nSimple structure. Brutally fast. Impossible to trade well by hand, all day.`
@@ -64,7 +75,7 @@ FlipPulse is software, not an investment adviser. Nothing we publish is financia
 5/ `It also checks its own performance. After 20 settled trades, if it can't statistically prove (90% confidence) it's beating a coin flip, it stops trading.\n\nA bot that benches itself. On purpose.`
 6/ `Sizing: a % of the current balance — never a fixed bet. After a loss it cuts size to ~1/3 until it recovers. Three losses in a row = automatic pause.\n\nConservative / Balanced / Aggressive presets. You pick.`
 7/ `And you see everything. Every decision hits your Telegram in real time — including the trades it REFUSED and why:\n\n"Regime filter │ RANGING — only TRENDING allowed. Skipping."\n\nSend /status any time. Pause any time.`
-8/ `Every customer starts in paper mode — simulated money — so you watch it operate before a real dollar is at stake. Your funds stay in YOUR Kalshi account. We never touch them.\n\n$99 setup + $99/mo. Cancel anytime.\n\nLive paper feed: t.me/flippulse\nStart: go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss. Simulated results don't guarantee anything.`
+8/ `Every customer starts in paper mode — simulated money — so you watch it operate before a real dollar is at stake. Your funds stay in YOUR Kalshi account. We never touch them.\n\n$150 setup + $99/mo. Cancel anytime.\n\nLive paper feed: t.me/flippulse\nStart: go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss. Simulated results don't guarantee anything.`
 
 ### 2.2 Instagram pinned post → use carousel `C01` (§4.3).
 ### 2.3 Facebook pinned post → `FB01` (§5).
@@ -131,7 +142,7 @@ FlipPulse is software, not an investment adviser. Nothing we publish is financia
 
 **CTA / promo (max ~1 in 5 posts)**
 - `T41` `We stream a FlipPulse bot's paper-mode decisions to a public Telegram channel. Unedited. Timestamped. Including the boring days.\n\nWatch it think before you spend a dollar: t.me/flippulse\n\n⚠️ Simulated trading. Not financial advice.`
-- `T42` `How FlipPulse starts, every time:\n\n1. Sign up (5 min) — go.flippulse.com\n2. We deploy YOUR bot (own keys, own Telegram)\n3. It runs in PAPER MODE\n4. You watch it decide, live\n5. Go live only if/when you choose\n\n$99 setup + $99/mo. Cancel anytime. Risk disclosure on site.`
+- `T42` `How FlipPulse starts, every time:\n\n1. Sign up (5 min) — go.flippulse.com\n2. We deploy YOUR bot (own keys, own Telegram)\n3. It runs in PAPER MODE\n4. You watch it decide, live\n5. Go live only if/when you choose\n\n$150 setup + $99/mo. Cancel anytime. Risk disclosure on site.`
 - `T43` `$99/month. Flat.\n\nNo % of profits. No AUM fee. No upsell tiers.\n\nWe make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.`
 - `T44` `Conservative: 5% stakes, strictest filters, lowest variance\nBalanced: 10% stakes, doctrine defaults\nAggressive: 20% stakes, more setups, higher variance\n\nThree postures, one switch, chosen by you at signup. All start in paper mode. go.flippulse.com`
 - `T45` `The free doc we probably shouldn't give away: "The 9 Rules Our Bot Checks Before Risking a Dollar."\n\nThe actual entry doctrine, plain English. Steal it for your own trading, honestly.\n\nGrab it: [lead magnet link]`
@@ -189,7 +200,7 @@ FlipPulse is software, not an investment adviser. Nothing we publish is financia
 2/ `Performance fees sound aligned ("we only win when you win!") but they quietly reward the manager for VARIANCE. Big swings = big fee years. Heads they win, tails you lose alone.`
 3/ `% of account (AUM) fees reward gathering assets, not managing them well.\n\nFlat SaaS pricing rewards exactly one thing: keeping you as a happy customer next month. Retention IS the incentive.`
 4/ `It also means we don't care if you run $500 or $50k — so you'll never get a nudge from us to size up. Your bankroll is your business.`
-5/ `$99 setup + $99/mo, cancel anytime, start in paper mode. go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss.`
+5/ `$150 setup + $99/mo, cancel anytime, start in paper mode. go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss.`
 
 **TH05 — "How we almost blew up (v5 postmortem)" (Pillar D, Week 5 — the trust nuke)**
 1/ `In March an early version of our bot lost 50% of a session's (test) capital in two days.\n\nWe kept the postmortem in the codebase permanently. Here's everything that was wrong — and what it taught us about every bot you've ever been pitched 🧵`
@@ -205,7 +216,7 @@ FlipPulse is software, not an investment adviser. Nothing we publish is financia
 2/ `Every FlipPulse deployment starts in paper mode: full bot, real signals, real-time alerts, simulated money. Not a demo. The actual system with the money wire unplugged.`
 3/ `What you're really evaluating in paper mode isn't "does it make money this week" (short windows prove nothing either way). It's: do I understand WHY it trades? Do the refusals make sense? Can I live with the cadence?`
 4/ `Going live is a deliberate, manual step that only you initiate. No command, no setting, no support ticket can flip it silently. We made it inconvenient on purpose.`
-5/ `Watch a live paper feed right now, no signup: t.me/flippulse\n\nStart yours: go.flippulse.com — $99 setup + $99/mo.\n\n⚠️ Simulated results don't predict live results. Not financial advice.`
+5/ `Watch a live paper feed right now, no signup: t.me/flippulse\n\nStart yours: go.flippulse.com — $150 setup + $99/mo.\n\n⚠️ Simulated results don't predict live results. Not financial advice.`
 
 **TH07 — "Prediction markets are eating finance" (Pillar B, Week 7 — trend-surf thread)**
 1/ `Prediction markets went from novelty to a regulated, multi-billion-dollar asset class in ~3 years. If you only know Kalshi from election odds, you're missing the more interesting part 🧵`
@@ -269,7 +280,7 @@ FlipPulse is software, not an investment adviser. Nothing we publish is financia
 
 ## §5 — Facebook posts (FB01–FB15) — longer, plain-spoken, 35+ audience
 
-- `FB01` (pin) `Most trading software is sold on hype. We built FlipPulse on the opposite idea.\n\nIt's an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — Kalshi is a CFTC-regulated US exchange. The bot checks nine strict conditions before every single trade: is Bitcoin actually trending, is there real money in the order book, does spot momentum agree, has the bot statistically proven its own edge… If even one check fails, it does nothing and tells you why.\n\nEvery customer starts in paper mode — simulated money — and watches the bot make real decisions with zero risk. Your funds stay in your own Kalshi account the entire time. Every decision arrives on your own Telegram, and you can pause with one tap.\n\n$99 setup + $99/month, cancel anytime. If you'd like to watch a live paper-mode feed first (we publish one, unedited): t.me/flippulse\n\nQuestions welcome in the comments — the founder answers every one.\n\n⚠️ FlipPulse is software, not investment advice. Trading involves risk, including loss of principal. Simulated results do not guarantee live results.`
+- `FB01` (pin) `Most trading software is sold on hype. We built FlipPulse on the opposite idea.\n\nIt's an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — Kalshi is a CFTC-regulated US exchange. The bot checks nine strict conditions before every single trade: is Bitcoin actually trending, is there real money in the order book, does spot momentum agree, has the bot statistically proven its own edge… If even one check fails, it does nothing and tells you why.\n\nEvery customer starts in paper mode — simulated money — and watches the bot make real decisions with zero risk. Your funds stay in your own Kalshi account the entire time. Every decision arrives on your own Telegram, and you can pause with one tap.\n\n$150 setup + $99/month, cancel anytime. If you'd like to watch a live paper-mode feed first (we publish one, unedited): t.me/flippulse\n\nQuestions welcome in the comments — the founder answers every one.\n\n⚠️ FlipPulse is software, not investment advice. Trading involves risk, including loss of principal. Simulated results do not guarantee live results.`
 - `FB02` `Here's a screenshot most companies wouldn't post: our bot refusing to trade, 34 times in one day. Bitcoin spent the day moving sideways, and in sideways markets the signals this strategy uses are just noise — so the rules say stand down. A tool that protects you from bad days is worth more than one that promises good ones. [screenshot] ⚠️ Not financial advice.`
 - `FB03` `"Where does my money actually sit?" — the best question we get.\n\nAnswer: in YOUR Kalshi account, a CFTC-regulated US exchange. FlipPulse never holds a dollar. The bot trades through your own API key, which can place trades but cannot withdraw funds. We charge a flat software fee — $99/month — and that's the entire business model. [link] ⚠️ Trading involves risk.`
 - `FB04` `A 15-minute Bitcoin market sounds exotic, but the structure is simple: "Will Bitcoin be higher at 2:15 than at 2:00?" Contracts pay $1 if you're right, $0 if not. Risk is capped at what you paid — no leverage, no liquidations. There are 96 of these a day on Kalshi. Our bot watches all of them so nobody has to. [explainer video]`
@@ -341,7 +352,7 @@ voices — roughly 25–40 accounts.) Reply early (first 30 min after they post)
 add substance from the doctrine, never link-drop.
 
 ### 8.5 Customer testimonial request (DM/email, day 14 of their subscription)
-`Hey [name] — you've had your bot for two weeks! Two quick things:\n\n1) Anything confusing, annoying, or missing? Brutal honesty helps most.\n2) If you're enjoying the feed: would you screenshot your favorite bot alert (paper-mode ones are perfect) and let us share it (with your handle or anonymously — your call)? Real screenshots from real customers are the only marketing that works in this category.\n\nAs thanks: refer a friend and you both get a month adjusted — they skip the $99 setup, you get a free month. They just need to put your handle in the "how did you hear about us" box.`
+`Hey [name] — you've had your bot for two weeks! Two quick things:\n\n1) Anything confusing, annoying, or missing? Brutal honesty helps most.\n2) If you're enjoying the feed: would you screenshot your favorite bot alert (paper-mode ones are perfect) and let us share it (with your handle or anonymously — your call)? Real screenshots from real customers are the only marketing that works in this category.\n\nAs thanks: refer a friend and you both get a month adjusted — they skip the $150 setup, you get a free month. They just need to put your handle in the "how did you hear about us" box.`
 
 ---
 
