@@ -14,10 +14,17 @@ piece of copy you paste.
 ## Executive Summary
 
 **The business:** FlipPulse is a done-for-you automated trading bot for Kalshi's
-15-minute Bitcoin Up/Down markets. $99 setup + $99/month. Every customer starts
+15-minute Bitcoin Up/Down markets. $150 setup + $99/month. Every customer starts
 in paper mode. Funds never leave the customer's own Kalshi account (Kalshi is a
 CFTC-regulated US exchange). The bot reports every decision to the customer's
 own Telegram.
+
+**Launch offer — "Founder 100":** the first 100 members join free — the $150 setup
+fee and first month are waived ($0 today, then $99/mo). It's a $249-off-first-invoice
+Stripe coupon (`FOUNDING100`) capped at 100 redemptions; lead every launch-phase post
+with it (`03_POST_LIBRARY.md` §2.0) and drop it once the cap is hit. See
+`01_MASTER_MARKETING_PLAN.md` §1 for the framing and `ADMINISTRATOR_ONBOARDING.md` §9a-i
+for the Stripe/onboarding wiring.
 
 **The strategy in one paragraph:** We win by being the *most transparent,
 most disciplined* voice in a niche full of hype. Trading-bot marketing is a

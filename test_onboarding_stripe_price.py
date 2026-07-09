@@ -118,3 +118,73 @@ def test_checkout_uses_resolved_price_ids(monkeypatch):
     assert url == "https://checkout.stripe/x"
     prices = [li["price"] for li in captured["line_items"]]
     assert prices == ["price_month", "price_setup"]
+
+
+def _checkout_env(monkeypatch):
+    """Minimal Stripe config so _start_stripe_checkout runs, with pass-through prices."""
+    monkeypatch.setattr(app_mod, "STRIPE_SECRET_KEY", "sk_test_x")
+    monkeypatch.setattr(app_mod, "STRIPE_MONTHLY_PRICE", "price_month")
+    monkeypatch.setattr(app_mod, "STRIPE_SETUP_PRICE", "price_setup")
+
+
+def _capture_session(monkeypatch, fail_first=False):
+    """Patch stripe.checkout.Session.create, recording every call's kwargs. When
+    fail_first is set the first call raises a StripeError (simulating an exhausted
+    coupon) and the second succeeds."""
+    calls = []
+
+    class FakeSession:
+        @staticmethod
+        def create(**kwargs):
+            calls.append(kwargs)
+            if fail_first and len(calls) == 1:
+                raise stripe.error.StripeError("coupon exhausted")
+            return type("S", (), {"url": "https://checkout.stripe/x"})
+
+    monkeypatch.setattr(stripe, "checkout", type("C", (), {"Session": FakeSession}))
+    return calls
+
+
+def _run_checkout(monkeypatch):
+    sub = {"id": "sub1", "email": "a@b.c", "handle": "h", "trading_format": "balanced"}
+    with app_mod.app.test_request_context("/submit"):
+        return app_mod._start_stripe_checkout(sub)
+
+
+def test_founding_coupon_auto_applied(monkeypatch):
+    """FOUNDING_COUPON_ID set → the coupon rides on the session as a discount and
+    no promotion-code box is offered."""
+    _checkout_env(monkeypatch)
+    monkeypatch.setattr(app_mod, "FOUNDING_COUPON_ID", "10xGeLZu")
+    monkeypatch.setattr(app_mod, "STRIPE_ALLOW_PROMO_CODES", True)  # ignored when coupon set
+    calls = _capture_session(monkeypatch)
+
+    assert _run_checkout(monkeypatch) == "https://checkout.stripe/x"
+    assert calls[0]["discounts"] == [{"coupon": "10xGeLZu"}]
+    assert "allow_promotion_codes" not in calls[0]   # mutually exclusive — never both
+
+
+def test_allow_promotion_codes_when_no_coupon(monkeypatch):
+    """No coupon but STRIPE_ALLOW_PROMO_CODES → customer can type a code."""
+    _checkout_env(monkeypatch)
+    monkeypatch.setattr(app_mod, "FOUNDING_COUPON_ID", "")
+    monkeypatch.setattr(app_mod, "STRIPE_ALLOW_PROMO_CODES", True)
+    calls = _capture_session(monkeypatch)
+
+    assert _run_checkout(monkeypatch) == "https://checkout.stripe/x"
+    assert calls[0]["allow_promotion_codes"] is True
+    assert "discounts" not in calls[0]
+
+
+def test_exhausted_coupon_falls_back_to_full_price(monkeypatch):
+    """An invalid/exhausted founding coupon must not break signup: checkout retries
+    once WITHOUT the discount."""
+    _checkout_env(monkeypatch)
+    monkeypatch.setattr(app_mod, "FOUNDING_COUPON_ID", "10xGeLZu")
+    monkeypatch.setattr(app_mod, "STRIPE_ALLOW_PROMO_CODES", False)
+    calls = _capture_session(monkeypatch, fail_first=True)
+
+    assert _run_checkout(monkeypatch) == "https://checkout.stripe/x"
+    assert len(calls) == 2                          # first (with discount) failed, retried
+    assert "discounts" in calls[0]
+    assert "discounts" not in calls[1]              # retry dropped the coupon
