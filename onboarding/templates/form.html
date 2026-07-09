@@ -47,6 +47,21 @@
   .secure { background: rgba(126,242,160,0.05); border: 1px solid #24463a; border-radius: 8px;
     padding: 10px 14px; font-size: 11.5px; color: #a7c3b3; margin-top: 6px; }
   .secure b { color: #7ef2a0; }
+  .riskbar { background: rgba(242,90,90,0.10); border: 1px solid #5a2a2a; border-radius: 8px;
+    padding: 11px 14px; font-size: 12px; color: #f2b8b8; margin: 0 0 14px; }
+  .riskbar b { color: #ff9d9d; }
+  .legal { max-height: 260px; overflow-y: auto; background: #0b1524; border: 1px solid #24405f;
+    border-radius: 8px; padding: 12px 15px; font-size: 11.5px; color: #9fadc2; line-height: 1.55; }
+  .legal h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #cdd8ea;
+    margin: 14px 0 5px; font-weight: 700; }
+  .legal h3:first-child { margin-top: 0; }
+  .legal p { margin: 0 0 8px; }
+  .legal strong { color: #d4dcea; }
+  .legal a { color: #7ef2a0; }
+  .scrollnote { font-size: 10.5px; color: #6b7890; margin: 6px 2px 0; }
+  .agree input { margin-top: 2px; flex: 0 0 auto; }
+  .agree + .agree { margin-top: 10px; }
+  .foot { font-size: 10.5px; color: #63708a; line-height: 1.5; margin-top: 18px; text-align: center; }
 </style>
 </head>
 <body>
@@ -123,13 +138,143 @@
     </div>
 
     <div class="card">
-      <label class="agree"><input type="checkbox" name="agree" value="1">
-        <span>I authorize FlipPulse to deploy an automated trading bot on my Kalshi account with the
-          settings above, and I agree to the ${{ price_setup }} setup fee and ${{ price_monthly }}/month
-          subscription. I understand trading involves risk of loss and I start in paper mode.</span></label>
+      <h2>Risk Disclosure &amp; Agreement</h2>
+
+      <div class="riskbar">
+        <b>Trading event contracts involves substantial risk, including the loss of your entire
+        stake on any contract.</b> Only commit money you can afford to lose. FlipPulse cannot and
+        does not guarantee any profit or protect against loss.
+      </div>
+
+      <div class="legal" id="terms" tabindex="0">
+        <h3>1. What FlipPulse is (software only)</h3>
+        <p>FlipPulse is a software tool that automates trading on <strong>your own</strong> Kalshi
+        account according to settings <strong>you</strong> choose. FlipPulse is <strong>not</strong>
+        an investment adviser, commodity trading advisor (CTA), commodity pool operator, broker,
+        futures commission merchant, exchange, bank, or fiduciary, and is <strong>not</strong>
+        registered as any of these. FlipPulse does <strong>not</strong> provide investment, legal,
+        tax, accounting, or financial advice, and does <strong>not</strong> recommend any contract,
+        market, or trade. Nothing provided by FlipPulse is a solicitation or recommendation to buy
+        or sell anything. All content and output are for informational and educational purposes only.</p>
+
+        <h3>2. You are in control of your money and your account</h3>
+        <p>Your funds always remain in your own Kalshi account. <strong>FlipPulse never holds,
+        receives, or has the ability to withdraw your money.</strong> The Kalshi API key you provide
+        is trade-only and cannot move funds off the exchange. You may pause, cancel, or revoke the
+        bot's access at any time. You are solely responsible for your account, your configuration,
+        your funding decisions, and every order placed on your account.</p>
+
+        <h3>3. Automated trading &amp; your responsibility</h3>
+        <p>Once enabled, the software may place, modify, or cancel orders automatically, without
+        seeking your approval for each action, based on the settings you select (including your
+        chosen trading format and stake percentage). You accept full responsibility for all activity
+        and outcomes in your account. You are responsible for monitoring the bot, and you understand
+        that software, networks, exchanges, and third-party services can fail, delay, disconnect, or
+        behave unexpectedly.</p>
+
+        <h3>4. Substantial risk of loss</h3>
+        <p>Event contracts (also called prediction markets) are speculative, leveraged-like, and
+        can expire worthless. You can lose the entire amount staked on any contract and, over time,
+        <strong>all of the money you commit.</strong> You should only trade with risk capital you
+        can afford to lose entirely. Market conditions, volatility, liquidity, slippage, fees, and
+        execution delays can all work against you.</p>
+
+        <h3>5. No performance guarantee; past &amp; simulated results</h3>
+        <p><strong>Past performance — whether real, backtested, or simulated (paper mode) — is not
+        indicative of and does not guarantee future results.</strong> Any figures, backtests, or
+        paper-mode activity are hypothetical, do not represent actual trading, and may not reflect
+        the impact of real market conditions. No representation is made that any account will or is
+        likely to achieve profits or losses similar to those shown.</p>
+
+        <h3>6. Paper mode first; you control going live</h3>
+        <p>Every account starts in paper (simulated) mode. Switching to live trading with real money
+        requires a deliberate action taken by you; no Telegram message or chat command alone will move
+        your bot to live trading. You decide if and when to go live, and you accept the risks of
+        doing so.</p>
+
+        <h3>7. Eligibility &amp; lawful use</h3>
+        <p>You represent and warrant that you are at least 18 years old (and of legal age in your
+        jurisdiction), have full legal capacity to enter this agreement, and that using Kalshi and
+        trading event contracts is lawful for you where you live. You are solely responsible for
+        complying with Kalshi's terms of service and all applicable laws, rules, and regulations,
+        including any state or jurisdictional restrictions and all tax obligations. FlipPulse is an
+        independent third party and is <strong>not</strong> affiliated with, endorsed by, or sponsored
+        by Kalshi, KalshiEX LLC, or Telegram.</p>
+
+        <h3>8. Third-party services</h3>
+        <p>FlipPulse depends on third-party services it does not control (including Kalshi, Telegram,
+        payment processors, and hosting providers). FlipPulse is not responsible for their outages,
+        errors, downtime, data loss, pricing, order execution, API changes, or discontinuation.</p>
+
+        <h3>9. "As is"; no warranties</h3>
+        <p>The software and all related content are provided <strong>"as is" and "as available,"
+        without warranties of any kind,</strong> express or implied, including but not limited to
+        merchantability, fitness for a particular purpose, non-infringement, accuracy, reliability,
+        or uninterrupted or error-free operation.</p>
+
+        <h3>10. Limitation of liability</h3>
+        <p>To the maximum extent permitted by law, FlipPulse, its owner(s), operators, and affiliates
+        will <strong>not</strong> be liable for any trading losses or for any indirect, incidental,
+        special, consequential, exemplary, or punitive damages arising out of or relating to your use
+        of the software. To the maximum extent permitted by law, their total aggregate liability for
+        any claim will not exceed the fees you paid to FlipPulse in the three (3) months preceding the
+        event giving rise to the claim.</p>
+
+        <h3>11. Indemnification</h3>
+        <p>You agree to indemnify and hold harmless FlipPulse, its owner(s), operators, and affiliates
+        from any claims, losses, liabilities, damages, costs, and expenses (including reasonable legal
+        fees) arising from your use of the software, your trading activity, or your breach of this
+        agreement or of any applicable law or third-party terms.</p>
+
+        <h3>12. Fees</h3>
+        <p>You authorize the one-time <strong>${{ price_setup }}</strong> setup fee and the recurring
+        <strong>${{ price_monthly }}/month</strong> subscription, billed to your payment method until
+        you cancel. You may cancel anytime; fees already charged are non-refundable except where
+        required by law.</p>
+
+        <h3>13. Not legal, tax, or financial advice</h3>
+        <p>Nothing here is legal, tax, or financial advice. Consult your own licensed professionals
+        before trading.</p>
+      </div>
+      <div class="scrollnote">Please scroll through the full Risk Disclosure &amp; Agreement above before continuing.</div>
+
+      <label class="agree"><input type="checkbox" name="ack_risk" value="1" required>
+        <span>I understand that trading event contracts carries <strong>substantial risk</strong>,
+          that I can <strong>lose my entire stake and all funds I commit</strong>, and that
+          <strong>no past, backtested, or paper-mode result guarantees future results.</strong></span></label>
+
+      <label class="agree"><input type="checkbox" name="ack_software" value="1" required>
+        <span>I understand FlipPulse is <strong>software only</strong> — not an investment adviser,
+          CTA, broker, or fiduciary — that it does <strong>not</strong> provide investment, legal, or
+          tax advice, and that <strong>I alone am responsible</strong> for my account, my settings,
+          and every trade it places on my behalf.</span></label>
+
+      <label class="agree"><input type="checkbox" name="ack_eligibility" value="1" required>
+        <span>I confirm I am <strong>at least 18</strong>, that trading on Kalshi is
+          <strong>lawful where I live</strong>, and that I will comply with Kalshi's terms and all
+          applicable laws and taxes. My funds stay in my own Kalshi account; FlipPulse never holds
+          my money.</span></label>
+
+      <label class="agree"><input type="checkbox" name="agree" value="1" required>
+        <span>I have <strong>read and agree</strong> to the full Risk Disclosure &amp; Agreement above
+          (including the "as is," limitation-of-liability, and indemnification terms), I authorize
+          FlipPulse to deploy an automated trading bot on my Kalshi account with the settings above,
+          and I agree to the <strong>${{ price_setup }}</strong> setup fee and
+          <strong>${{ price_monthly }}/month</strong> subscription. I understand I start in paper
+          mode.</span></label>
+
       <button class="btn" type="submit">Continue to Secure Payment →</button>
     </div>
   </form>
+
+  <div class="foot">
+    FlipPulse is software that automates trading on the user's own Kalshi account. FlipPulse is not an
+    investment adviser, commodity trading advisor, broker, or fiduciary, and does not provide investment
+    advice or manage customer funds. Trading event contracts involves substantial risk, including the loss
+    of your entire stake on any contract. Past performance, whether real or simulated, is not indicative of
+    future results. Only trade with money you can afford to lose. Content is for informational and educational
+    purposes only. Not affiliated with or endorsed by Kalshi or Telegram.
+  </div>
 </div>
 </body>
 </html>
