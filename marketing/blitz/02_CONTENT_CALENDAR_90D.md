@@ -189,6 +189,12 @@ preceding Sunday (`06_SCHEDULER_SETUP.md` §5).
 ---
 
 ## Standing rules (apply every day, all 90 days)
+0. **Founders 100 Club (launch offer) runs early and often from Day 2 (Jul 14)
+   until the 100 seats fill.** Day 1 (Jul 13) is complete/frozen. Lead conversion
+   posts with the Club, drop the live "[N]/100 seats left" count in a Story most
+   days, and revert to plain "$150 setup + $99/mo" the moment the cap is hit.
+   Scheduled Founders slots live in `metricool_bulk_weeks1-4.csv` (assets `FL-*`,
+   `03_POST_LIBRARY.md` §2.0); the day-by-day execution view is `Run_the_Blitz.xlsx`.
 1. **Trend override:** if BTC makes a violent move or Kalshi/prediction markets
    hit the news, swap the day's X-pm slot for T46/T47/T48 and film V29 that
    evening. News beats calendar, always.

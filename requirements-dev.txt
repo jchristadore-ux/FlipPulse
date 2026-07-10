@@ -3,3 +3,6 @@
 -r requirements.txt
 -r onboarding/requirements.txt
 pytest>=7.0.0
+# Spreadsheet/workbook builders: business/build_model.py and
+# marketing/blitz/build_run_the_blitz.py generate .xlsx files.
+openpyxl>=3.1.0

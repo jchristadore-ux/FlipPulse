@@ -28,8 +28,10 @@ P&L, or a promise. If you write new posts, run them against `11_COMPLIANCE_KIT.m
   `🧠 9 checks before every trade`
   `📄 Starts in paper mode — watch it think first`
   `⚠️ Not financial advice. Trading involves risk.`
+  `🎟 Founders 100 Club: first 100 join free`
   `👇 See it decide, live`
 - **Link:** beacons.ai/flippulse
+- **During launch phase, add to Story highlight + link-in-bio top button:** `Founders 100 Club — first 100 join free ($0 to start, then $99/mo for life).`
 
 ### 1.4 Facebook Page — About (long)
 `FlipPulse is a done-for-you trading bot for Kalshi's 15-minute Bitcoin Up/Down markets. It monitors all 96 daily markets, and only places a trade when nine strict conditions pass — market regime, order-book depth, momentum agreement, statistical performance checks, and more. Most hours, it does nothing. That's the point.
@@ -49,23 +51,30 @@ FlipPulse is software, not an investment adviser. Nothing we publish is financia
 ### 1.7 Beacons (link-in-bio) page
 - Headline: `FlipPulse — the trading bot that mostly says no.`
 - Sub: `Automated 15-min BTC trading on Kalshi. Paper mode first. Not financial advice; trading involves risk.`
-- Buttons (in order): `▶ Watch it decide — live paper feed` → t.me/flippulse ·
-  `📄 The 9 rules it checks (free)` → lead-magnet link · `🚀 Start in paper mode — $99` → go.flippulse.com
+- Buttons (in order, launch phase): `🎟 Join the Founders 100 Club — first 100 free` → go.flippulse.com ·
+  `▶ Watch it decide — live paper feed` → t.me/flippulse ·
+  `📄 The 9 rules it checks (free)` → lead-magnet link
+- Sub-line under the top button while the Club is open: `$0 to start (setup + first month waived), then $99/mo locked in for life. [N] of 100 seats left.`
+- After the cap is hit, swap the top button back to `🚀 Start in paper mode` → go.flippulse.com.
 
 ---
 
 ## §2 — Pinned posts
 
-### 2.0 Founder 100 launch offer — `FOUNDER-LAUNCH` (Day 1; pin ABOVE the how-it-works thread until 100 spots are gone)
+### 2.0 Founders 100 Club launch offer — `FOUNDER-LAUNCH` (Day 1; pin ABOVE the how-it-works thread, and re-post early + often until 100 seats are gone)
 
-> Runs only while the `FOUNDING100` coupon has spots left. When it's exhausted, unpin
-> these and revert CTAs to plain "$150 setup + $99/mo." Never promise it past the cap.
-> **Compliance:** the offer is about *price*, never about returns — keep every risk
-> disclosure intact (`11_COMPLIANCE_KIT.md` §2).
+> The launch-phase workhorse. Runs only while the `FOUNDING100` coupon has seats left.
+> When it's exhausted, unpin these and revert CTAs to plain "$150 setup + $99/mo"
+> (Founders who joined keep their lifetime status/price). Never promise it past the cap.
+> **Post it early and often** — lead with the Club, don't bolt it onto the end of a post.
+> **Compliance:** the offer is about *price and status*, never about returns — keep every
+> risk disclosure intact (`11_COMPLIANCE_KIT.md` §2).
 
-- **X / short** `FL-X`: `We're opening FlipPulse to our first 100 members.\n\nFounders join free — $150 setup + first month, on us. $0 today, then $99/mo. Cancel anytime.\n\nStarts in paper mode, so you watch it work first.\n\n100 spots. Then it's gone.\n👉 go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss.`
-- **IG / FB / long** `FL-FB`: `Founder 100 is open.\n\nFlipPulse is an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — it runs 9 checks before every trade and does nothing the rest of the time. Every member starts in PAPER mode (simulated money), so you watch it make real decisions before a single real dollar is at stake. Your funds never leave your own Kalshi account.\n\nFor the first 100 members, we're waiving the $150 setup fee AND your first month — $0 to start, then $99/month, cancel anytime. Regular price after that is $150 setup + $99/mo.\n\nThere are exactly 100 spots. When they're gone, they're gone.\n\n👉 go.flippulse.com\n\n⚠️ FlipPulse is software, not investment advice. Trading involves risk, including loss of principal. Simulated results do not guarantee live results.`
-- **Countdown reply/story** `FL-COUNT` (reuse as spots drop): `[N] of 100 founder spots left. Setup + first month free, then $99/mo. go.flippulse.com` *(update N by hand from the Stripe coupon's redemption count.)*
+- **X / short** `FL-X`: `The Founders 100 Club is open — and it closes at 100.\n\nThe first 100 members join FlipPulse free: $150 setup + first month waived. $0 today, then $99/mo, cancel anytime.\n\nFounders lock in that $99/mo for life + first access to everything we build.\n\nStarts in paper mode, so you watch it work before a real dollar moves.\n\n100 seats. Then the Club closes.\n👉 go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss.`
+- **IG / FB / long** `FL-FB`: `The Founders 100 Club is open.\n\nThe first 100 people to join FlipPulse become Founders — for life. Here's what that means:\n\n🎟 $0 to start — we waive the full $150 setup fee AND your first month ($99). Then it's $99/month, cancel anytime.\n🔒 Your $99/mo is locked in for life — Founders are grandfathered against every future price increase.\n🏅 Permanent Founder status + first access to everything we ship next.\n\nFlipPulse is an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — it runs 9 checks before every trade and does nothing the rest of the time. Every member starts in PAPER mode (simulated money), so you watch it make real decisions before a single real dollar is at stake. Your funds never leave your own Kalshi account.\n\nThere are exactly 100 seats. When they're gone, the Club closes and pricing reverts to $150 setup + $99/mo.\n\n👉 Claim a Founder seat: go.flippulse.com\n\n⚠️ FlipPulse is software, not investment advice. Trading involves risk, including loss of principal. Simulated results do not guarantee live results.`
+- **Countdown reply/story** `FL-COUNT` (reuse as seats drop): `[N] of 100 Founders 100 Club seats left. $0 to start (setup + first month waived), then $99/mo locked in for life. go.flippulse.com` *(update N by hand from the Stripe coupon's redemption count.)*
+- **X / momentum** `FL-X2` (rotate through the launch phase; scarcity-forward): `Founders 100 Club update: [N] of 100 seats left.\n\nThe deal for the first 100: $0 to start (we eat the $150 setup + your first month), then $99/mo — locked in for life.\n\nEvery Founder started in paper mode. Every Founder keeps the price forever.\n\nWhen it's gone, it's gone: go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss.`
+- **X / value+offer** `FL-X3` (pairs the ethos with the offer): `We're not selling trades. We're selling the discipline to skip almost all of them — 9 checks before every trade, paper mode first, every decision on your Telegram.\n\nThe first 100 people to trust that get in free and stay Founders for life: $0 to start, then $99/mo locked in.\n\nSeats left: [N]/100 → go.flippulse.com\n\n⚠️ Not financial advice. Trading involves risk of loss.`
 
 ### 2.1 X pinned thread — `TH-PIN` (post Day 1, pin immediately)
 1/ `Most trading bots are built to trade as much as possible.\n\nOurs is built to refuse.\n\nFlipPulse trades Kalshi's 15-minute BTC Up/Down markets — but only when 9 conditions ALL pass. Most hours: nothing.\n\nHere's how it decides, in plain English 🧵`
@@ -142,9 +151,9 @@ FlipPulse is software, not an investment adviser. Nothing we publish is financia
 
 **CTA / promo (max ~1 in 5 posts)**
 - `T41` `We stream a FlipPulse bot's paper-mode decisions to a public Telegram channel. Unedited. Timestamped. Including the boring days.\n\nWatch it think before you spend a dollar: t.me/flippulse\n\n⚠️ Simulated trading. Not financial advice.`
-- `T42` `How FlipPulse starts, every time:\n\n1. Sign up (5 min) — go.flippulse.com\n2. We deploy YOUR bot (own keys, own Telegram)\n3. It runs in PAPER MODE\n4. You watch it decide, live\n5. Go live only if/when you choose\n\n$150 setup + $99/mo. Cancel anytime. Risk disclosure on site.`
-- `T43` `$99/month. Flat.\n\nNo % of profits. No AUM fee. No upsell tiers.\n\nWe make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.`
-- `T44` `Conservative: 5% stakes, strictest filters, lowest variance\nBalanced: 10% stakes, doctrine defaults\nAggressive: 20% stakes, more setups, higher variance\n\nThree postures, one switch, chosen by you at signup. All start in paper mode. go.flippulse.com`
+- `T42` `How FlipPulse starts, every time:\n\n1. Sign up (5 min) — go.flippulse.com\n2. We deploy YOUR bot (own keys, own Telegram)\n3. It runs in PAPER MODE\n4. You watch it decide, live\n5. Go live only if/when you choose\n\nFounders 100 Club: the first 100 pay $0 to start (setup + first month waived), then $99/mo locked in for life. Cancel anytime. Risk disclosure on site.`
+- `T43` `$99/month. Flat.\n\nNo % of profits. No AUM fee. No upsell tiers.\n\nWe make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.\n\nAnd the first 100 (Founders 100 Club) lock that $99/mo in for life: go.flippulse.com`
+- `T44` `Conservative: 5% stakes, strictest filters, lowest variance\nBalanced: 10% stakes, doctrine defaults\nAggressive: 20% stakes, more setups, higher variance\n\nThree postures, one switch, chosen by you at signup. All start in paper mode — and the first 100 join free via the Founders 100 Club ($0 to start, then $99/mo for life). go.flippulse.com`
 - `T45` `The free doc we probably shouldn't give away: "The 9 Rules Our Bot Checks Before Risking a Dollar."\n\nThe actual entry doctrine, plain English. Steal it for your own trading, honestly.\n\nGrab it: [lead magnet link]`
 
 **Trend-reactive templates (fill blanks when news hits)**
@@ -394,13 +403,18 @@ Core rotation: `#tradingbot #kalshi #predictionmarkets #algotrading #bitcoin #fi
 ## §11 — CTA & hook banks
 
 ### CTAs (rotate; one CTA per post, not three)
+- **Founders 100 Club (the launch-phase conversion CTA — use as the default "start" CTA until 100 seats are gone):** `Founders 100 Club — first 100 join free: $0 to start (setup + first month waived), then $99/mo locked in for life. go.flippulse.com`
+  - short variant: `First 100 only: $0 to start, then $99/mo for life. [N] Founder seats left → go.flippulse.com`
+  - once the cap is hit, this reverts to the plain conversion CTA below.
 - `Watch it decide, live: t.me/flippulse` (proof CTA — use most)
 - `The 9 rules it checks, free: [lead magnet link]` (capture CTA)
-- `Start in paper mode: go.flippulse.com` (conversion CTA — max 1/day)
+- `Start in paper mode: go.flippulse.com` (plain conversion CTA — use after the Club closes; max 1/day)
 - `Question about how it works? Comments are open — founder answers everything.` (engagement CTA)
 - `Follow for the daily receipts 🧾` (follow CTA — on viral-candidate posts)
 
 ### Hook bank (first lines that stop the scroll — reuse across platforms)
+0. `We're giving the first 100 members FlipPulse free — and Founder status for life.` (launch-phase scarcity hook)
+0b. `[N] Founder seats left. When they're gone, the door closes.` (countdown hook)
 1. `Our trading bot did nothing today. Here's why that's the product.`
 2. `This is a screenshot of a bot refusing to make money. Look closer.`
 3. `Every trading bot ad lies to you the same way.`

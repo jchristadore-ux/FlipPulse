@@ -30,6 +30,16 @@ spread); percentage-of-balance sizing (Conservative 5%/Balanced 10%/Aggressive
 paper mode; funds stay in the customer's own Kalshi account (CFTC-regulated);
 Telegram alerts + /status; $150 setup + $99/mo flat, cancel anytime.
 
+LAUNCH OFFER (lead with it early and often until 100 seats fill): the "Founders
+100 Club" — the first 100 members join free ($150 setup + first month waived,
+$0 today then $99/mo), and lock in Founder status for life: $99/mo price
+grandfathered forever, permanent Founder badge, first access to new features.
+Real hard cap of 100 seats (Stripe coupon FOUNDING100). Build conversion posts
+AROUND the Club, don't bolt it on the end; cite remaining seats ("[N]/100 left")
+for scarcity. CTA: "First 100 join free — $0 to start, then $99/mo for life.
+go.flippulse.com". The offer is about price + status ONLY, never returns. After
+the cap fills, revert to plain "$150 setup + $99/mo".
+
 Voice: calm quant, dry humor, receipts over hype, honest about losses and
 boring days. NEVER write: guaranteed, passive income, risk-free, get rich, any
 specific return/percentage-profit claim, any dollar P&L figure. Every post
@@ -120,7 +130,8 @@ plan). The KPI sheet's customer/MRR cells read from this tab via COUNTIF/SUMIF
    actual FlipPulse entry doctrine, in plain English. Free PDF.`, one email
    field. Success action: deliver the PDF (make it: doctrine → Claude prompt
    `rewrite as a friendly 8-page plain-English PDF outline` → lay out in Canva
-   → export PDF).
+   → export PDF). **Launch-phase banner on this page (while seats remain):**
+   `🎟 Founders 100 Club — the first 100 members join free: $0 to start, then $99/mo locked in for life. go.flippulse.com` (remove when the cap fills).
 3. That form URL is `[lead magnet link]` everywhere in the library. Add it to
    Beacons as button 2.
 
@@ -139,12 +150,22 @@ joins group `lead-magnet`; one email every 2 days; templates — subject / core)
 3. `Where your money sits (the only question that matters)` — custody
    explainer (FB03 content); CTA: reply with questions (replies = deliverability gold).
 4. `Paper mode: the free trial that actually proves something` — TH06 content
-   condensed; CTA: `Start in paper mode — $150 setup + $99/mo` → go.flippulse.com.
+   condensed; CTA (launch phase): `Join the Founders 100 Club — first 100 free: $0
+   to start, then $99/mo locked in for life` → go.flippulse.com. (After the cap:
+   `Start in paper mode — $150 setup + $99/mo`.)
 5. `What $99/month actually buys (and when NOT to buy it)` — TH08 content +
    honest "don't sign up if..." list (money you can't lose / expecting
    guaranteed returns / want 50 trades a day). This email converts best
-   precisely because of that list. Every email footer: unsubscribe + full risk
-   disclaimer (`11_COMPLIANCE_KIT.md` §1).
+   precisely because of that list. Close with the Founders 100 Club nudge while
+   seats remain (`[N]/100 left — Founders lock in $99/mo for life`). Every email
+   footer: unsubscribe + full risk disclaimer (`11_COMPLIANCE_KIT.md` §1).
+
+> **Add a launch-phase email 0** (send immediately on lead-magnet signup, before
+> the sequence above, only while seats remain): subject `The Founders 100 Club is
+> open (first 100 only)` — 4 lines: what the Club is ($0 to start, $99/mo locked
+> in for life, permanent Founder status), the hard 100-seat cap with current
+> count, one CTA to go.flippulse.com, and the risk disclaimer. Retire it when the
+> cap fills so nobody is promised a closed offer.
 
 ### 4.4 Customer emails (retention + referral)
 - **Monthly "Your bot this month"** (manual, 20 min/mo, MailerLite campaign to

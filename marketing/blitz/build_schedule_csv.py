@@ -32,22 +32,58 @@ HERE = Path(__file__).parent
 LIBRARY = HERE / "03_POST_LIBRARY.md"
 OUT = HERE / "metricool_bulk_weeks1-4.csv"
 
-# --- 1. Parse single-line assets (T## and FB##) out of the library ----------
+# --- 1. Parse single-line assets (T##, FB##, and the Founders FL-* offer) -----
 # Library lines look like:   - `T01` `...post text with \n for newlines...`
 # Some lines carry a parenthetical marker after the id, e.g. `- `FB01` (pin) `...``
 ASSET_RE = re.compile(r"^- `((?:T|FB)\d+)`(?: \([^)]*\))? `(.*)`\s*$")
+# Founders 100 Club offer assets live in §2.0 with a bolded label, e.g.
+#   - **X / short** `FL-X`: `...`
+#   - **X / momentum** `FL-X2` (rotate ...): `...`
+# (?: \([^)]*\))? tolerates a label note; `(.+)` then `[^`]*$` allows trailing
+# prose after the closing backtick, e.g. FL-COUNT's "*(update N by hand ...)*".
+FOUNDER_RE = re.compile(r"^- \*\*[^*]+\*\* `(FL-[A-Z0-9]+)`(?: \([^)]*\))?: `(.+)`[^`]*$")
 
 
 def load_assets() -> dict[str, str]:
     assets: dict[str, str] = {}
     for line in LIBRARY.read_text(encoding="utf-8").splitlines():
-        m = ASSET_RE.match(line)
+        m = ASSET_RE.match(line) or FOUNDER_RE.match(line)
         if m:
             asset_id, text = m.group(1), m.group(2)
             # The library stores newlines as the two literal chars: backslash + n
             assets[asset_id] = text.replace("\\n", "\n")
     return assets
 
+
+# --- Founders 100 Club launch offer ------------------------------------------
+# The offer must lead the launch phase "early and often." Day 1 (2026-07-13) is
+# COMPLETE and frozen; the Founders push begins Day 2 (2026-07-14). These slots
+# override the calendar's default asset with a Founders 100 Club post, rotating
+# FL-X / FL-X2 / FL-X3 / FL-COUNT / FL-FB. They're front-loaded in Week 2 and
+# stay frequent through Weeks 3-4 without smothering the receipt/doctrine posts.
+# All are Draft=TRUE: the operator drops the live "[N]/100 seats left" count and
+# confirms the coupon still has seats before publishing. Retire these the day the
+# cap fills (then re-run to revert to the plain calendar).
+FOUNDER_CUTOVER = "2026-07-14"  # Day 2; nothing on/before Day 1 (07-13) is touched
+FOUNDER_OVERRIDES = {
+    # Week 2 — open the Club loudly
+    ("2026-07-14", "13:00"): "FL-FB",   # FB launch announcement (was FB03)
+    ("2026-07-14", "19:30"): "FL-X",    # Day 2 X kickoff (was T17)
+    ("2026-07-15", "12:30"): "FL-X3",   # value + offer (was T39)
+    ("2026-07-16", "12:30"): "FL-COUNT",# countdown (was T23)
+    ("2026-07-17", "19:30"): "FL-X2",   # momentum/scarcity (was T49 [shot])
+    ("2026-07-18", "19:30"): "FL-X3",   # (was T53)
+    # Week 3 — keep the drumbeat
+    ("2026-07-20", "12:30"): "FL-COUNT",# (was T36 rerun)
+    ("2026-07-23", "12:30"): "FL-X3",   # (was T25)
+    ("2026-07-24", "13:00"): "FL-FB",   # 2nd FB Founders push (was FB07 rerun)
+    ("2026-07-25", "19:30"): "FL-X2",   # (was T54)
+    # Week 4 — final call as seats run down
+    ("2026-07-27", "12:30"): "FL-COUNT",# (was T38)
+    ("2026-07-29", "12:30"): "FL-X",    # (was T39)
+    ("2026-08-01", "19:30"): "FL-X2",   # (was T51)
+    ("2026-08-02", "19:30"): "FL-X3",   # (was T53)
+}
 
 # Thread slots become a draft stub (build the chain by hand with + Add tweet).
 THREAD_STUB = (
@@ -184,7 +220,13 @@ def main() -> None:
     assets = load_assets()
     rows = []
     missing = []
+    founder_rows = 0
     for date, time, network, asset_id, draft in SCHEDULE:
+        # Founders 100 Club override — Day 2 onward only (Day 1 stays frozen).
+        override = FOUNDER_OVERRIDES.get((date, time))
+        if override and date >= FOUNDER_CUTOVER:
+            asset_id, draft = override, True  # operator fills [N] + confirms seats
+            founder_rows += 1
         if asset_id.startswith("TH"):
             text = THREAD_STUB.format(tid=asset_id)
         elif asset_id in assets:
@@ -218,6 +260,7 @@ def main() -> None:
     print(f"Wrote {len(rows)} rows -> {OUT.name}")
     print(f"  auto-publish (Draft=FALSE): {auto}")
     print(f"  needs-you   (Draft=TRUE):  {drafts}")
+    print(f"  Founders 100 Club inserts (Day 2+): {founder_rows}")
 
 
 if __name__ == "__main__":

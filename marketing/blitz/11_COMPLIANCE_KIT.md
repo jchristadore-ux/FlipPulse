@@ -102,6 +102,16 @@ copy changes the same day:
 - "$150 setup + $99/month, flat, no performance fee." (If the parked
   performance fee ever returns, a full copy sweep is mandatory — grep the
   library for "flat" and "no % of profits".)
+- **Founders 100 Club (launch offer) truths — must stay literally true while we
+  run it:** "the first 100 members join free" = we waive the $150 setup + first
+  month (Stripe `FOUNDING100`, a real 100-redemption cap); "Founder status for
+  life" = the $99/mo price is grandfathered for those members and they keep first
+  access — it is a *price/status* promise, never a returns promise. Any "[N]/100
+  seats left" number must reflect the real Stripe redemption count. The moment the
+  cap fills, stop advertising it everywhere (unpin posts, revert CTAs, pull the
+  banners/graphics) — advertising a closed offer is the compliance risk here.
+  Scarcity/urgency about *seats and price* is fine; scarcity implying *returns*
+  ("get in before you miss the gains") is banned under §2.
 
 ## §8 — The one-line test for any new post
 *"Would I be comfortable if a regulator, a journalist, and my angriest
