@@ -17,23 +17,32 @@ reality diverges from the plan.
 **Price:** $150 setup + $99/month. Cancel anytime. Funds stay in the customer's
 own Kalshi account — FlipPulse never touches or holds money.
 
-**🚀 Launch offer — "Founder 100" (use it in every launch-phase post):**
-> **First 100 members join free.** The $150 setup fee **and** your first month are
-> on us — $0 today, then $99/month. Cancel anytime. Founding members lock in the
-> price and get first access.
+**🚀 Launch offer — the "Founders 100 Club" (lead with it in every launch-phase post,
+early and often, until the 100 seats are gone):**
+> **The first 100 members join free — and stay Founders for life.** The $150 setup fee
+> **and** your first month are on us: $0 today, then $99/month, cancel anytime. Every
+> Founder locks in that $99/mo price *forever* (grandfathered against any future price
+> rise), keeps a permanent Founder badge, and gets first access to everything we ship.
+> When the 100 seats are gone, the Club closes.
 
 - **What it actually is in Stripe:** a $249-off-first-invoice coupon (`FOUNDING100`),
   capped at 100 redemptions. It waives setup + month 1 only; the $99/mo is untouched
-  so we never train the market to expect a cheap subscription.
+  so we never train the market to expect a cheap subscription. The "Founder status for
+  life" is a permanent price-lock promise on that standing $99/mo, not a discount.
 - **Why it leads:** with zero track record, the $249 first payment is the single
   biggest thing stopping a stranger from trusting a bot with their money. Removing it
-  buys the one thing we can't manufacture — a first cohort of real, referenceable
-  users and their screenshots.
-- **Scarcity is real:** "100 spots" is a hard cap, not a gimmick — say the remaining
-  count out loud as it drops ("41 founder spots left") to drive urgency.
+  — and making the first 100 permanent, named "Founders" — buys the one thing we can't
+  manufacture: a first cohort of real, referenceable users and their screenshots.
+- **Scarcity is real:** "100 seats" is a hard cap, not a gimmick — say the remaining
+  count out loud as it drops ("41 Founder seats left") to drive urgency. Post the
+  offer *early and often* across every platform; it's the launch-phase workhorse.
+- **This is the offer, not a bolt-on:** don't tack "btw there's a discount" onto the
+  end of a post — build the post around joining the Founders 100 Club. The scarcity
+  (100 seats), the waived $249, and the lifetime Founder status ARE the message.
 - **When it ends:** at 100 signups the coupon stops applying automatically and posts
-  revert to plain "$150 setup + $99/mo." Don't promise it past the cap.
-- **CTA line:** `First 100 members: $0 to start (setup + first month free). go.flippulse.com`
+  revert to plain "$150 setup + $99/mo." Don't promise it past the cap; Founders who
+  already joined keep their lifetime status and price.
+- **CTA line:** `Founders 100 Club — first 100 join free: $0 to start (setup + first month waived), then $99/mo, Founder status locked in for life. go.flippulse.com`
 
 **The five product truths every piece of content is built from:**
 

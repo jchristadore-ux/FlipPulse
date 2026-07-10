@@ -44,6 +44,7 @@ Canva → Brand Hub (Pro) → add:
 
 ### G-2.3 End card for all videos (1080×1920)
 - Build in Canva (no AI needed): Midnight bg, logo top, `Watch it decide, live` in Space Grotesk, `t.me/flippulse` in JetBrains Mono Pulse-Green, disclaimer strip bottom. Save as template `FP-EndCard`.
+- **Launch-phase variant `FP-EndCard-Founders`:** headline `Founders 100 Club — first 100 free`, sub `$0 to start · then $99/mo for life`, `go.flippulse.com` in Pulse-Green mono, small `[N]/100 seats left` counter, disclaimer strip. Use this on every conversion-CTA video until the cap fills, then switch back to `FP-EndCard`.
 
 ---
 
@@ -88,6 +89,20 @@ Canva → Brand Hub (Pro) → add:
   (stat bars: Stake 5/10/20%, Filters strict→loose, Frequency low→high,
   Variance low→high — data from `formats.py`).
 
+### G-3.9 "Founders 100 Club" offer card (1080×1080 + 1080×1920 — the launch-phase conversion graphic)
+- Canva build (make it a template, `FP-Founders100`): Midnight bg → big Space
+  Grotesk headline `FOUNDERS 100 CLUB` top → one Pulse-Green line `First 100 join free`
+  → three mono perk rows with ✓: `🎟 $0 to start — $150 setup + first month waived`,
+  `🔒 $99/mo locked in for life`, `🏅 Permanent Founder status + first access` → a big
+  seat counter in JetBrains Mono `[N] / 100 seats left` (Amber when <25) → CTA
+  `go.flippulse.com` → disclaimer strip. Keep the pulse-line motif so it matches the feed.
+- **Ideogram (illustrated variant, ≤3 words of text):** `A minimalist dark navy poster, neon green #00E5A0 accents, a single ECG pulse line forming a subtle "100", small monospace terminal text, exclusive fintech launch aesthetic, high contrast. Text on poster: "FOUNDERS 100"`
+- Countdown story variant: same card sized 1080×1920 with the seat counter as the
+  hero and a link sticker — update `[N]` by hand from the Stripe `FOUNDING100` redemption
+  count. **Retire/redraw the day the cap fills** (revert CTAs to plain pricing).
+- **Compliance:** price + status only — never pair the seat counter with any result or
+  return figure. Disclaimer strip stays on.
+
 ### G-3.8 Meme templates
 - Keep a Canva folder `FP-Memes` with: Drake-format (top: `Bot that trades
   24/7` / bottom: `Bot that sleeps through the 2am garbage books`), tier-list
@@ -104,6 +119,9 @@ Page 1 cover: hook + pulse line. Pages 2–7: one idea per page — Space Grotes
 headline ≤7 words top, 2-line Inter body, mono log-line footer where relevant,
 page dots. Page 8 CTA: `Starts in paper mode` + `go.flippulse.com` + disclaimer
 strip. Duplicate → swap copy from `03_POST_LIBRARY.md` §4.3 outlines.
+**Launch-phase CTA page:** swap page 8 for the Founders 100 Club close —
+`First 100 join free · $0 to start, then $99/mo for life · [N]/100 seats left` +
+`go.flippulse.com` + disclaimer strip. Revert to the plain CTA page once the cap fills.
 
 ### G-4.2 Story master (1080×1920)
 Zones: top 15% safe (avatar overlap), poll/quiz sticker center-right, log

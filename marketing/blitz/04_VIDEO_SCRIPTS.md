@@ -19,6 +19,14 @@ suppresses it).
 - Hook ON SCREEN as text in the first frame + spoken in first 1.5s.
 - On-screen disclaimer in final 2s: `Not financial advice. Trading involves risk. Paper-mode/simulated content.`
 - One CTA only (verbal + end-card).
+- **Launch-phase CTA rule (until the 100 seats fill):** wherever a script says
+  "conversion CTA," make it the **Founders 100 Club** — verbal + end card:
+  *"The first 100 join free — $0 to start, then $99/mo locked in for life. Link in bio."*
+  End-card line: `Founders 100 Club — first 100 free · go.flippulse.com`. Add a small
+  `[N]/100 seats left` counter to the end card when you know the number. Once the cap
+  is hit, revert to the plain "Start in paper mode" conversion CTA. Proof/capture/follow
+  CTAs are unchanged — don't jam the offer into every video, lead with it on the
+  conversion ones and drop a scarcity mention in the others' captions early and often.
 - Length target 20–40s unless noted (retention % beats runtime).
 **Retention tricks used throughout:** open loop in hook ("wait for the third
 one"), visual change every 2–3s (zoom punch, screenshot swap), captions always
@@ -92,9 +100,9 @@ Each script below lists its TikTok caption (TT) and its paired IG caption ID.
 
 ### V06 — "Paper mode" (25s)
 - **Hook:** `This bot won't let you risk real money on day one. On purpose.`
-- **VO:** `Every FlipPulse account starts in paper mode: the full bot, real signals, real-time alerts — simulated money. Watch it for a week. A month. However long it takes YOU to be convinced. Going live is a deliberate, manual step only you can trigger. If a bot won't let you paper trade first, ask yourself why.`
-- **Shots:** Telegram feed labeled PAPER → the "go live" being a human step (checklist doc) → end card.
-- **CTA:** conversion CTA. · **Thumbnail:** `FAKE MONEY FIRST. ALWAYS.`
+- **VO:** `Every FlipPulse account starts in paper mode: the full bot, real signals, real-time alerts — simulated money. Watch it for a week. A month. However long it takes YOU to be convinced. Going live is a deliberate, manual step only you can trigger. If a bot won't let you paper trade first, ask yourself why. And right now the first 100 to join do it free — Founders 100 Club: zero to start, then ninety-nine a month, locked in for life.`
+- **Shots:** Telegram feed labeled PAPER → the "go live" being a human step (checklist doc) → Founders 100 Club end card with `[N]/100 seats left`.
+- **CTA:** conversion CTA (Founders 100 Club — launch phase). · **Thumbnail:** `FAKE MONEY FIRST. ALWAYS.`
 - **TT:** `Real bot, fake money, zero pressure 📄 #papertrading #tradingbot #kalshi #fintok` · **IG pair:** IG06
 
 ### V07 — "The 2am trap" (F4 · 25s)
@@ -176,9 +184,9 @@ Each script below lists its TikTok caption (TT) and its paired IG caption ID.
 
 ### V18 — "Onboarding speedrun" (product demo · 30s)
 - **Hook:** `From signup to a live (paper) trading bot in under 10 minutes. Timer on.`
-- **VO (over speedrun):** `Fill the form — your Kalshi key, your Telegram, pick a risk format: conservative, balanced, aggressive. We deploy YOUR bot — own keys, own alerts, isolated from everyone else's. First heartbeat hits your phone… now. It's alive, it's watching all 96 daily markets, and it's spending exactly zero real dollars until you decide otherwise.`
-- **Shots:** screen-rec of the form (blur keys!), timer overlay, first Telegram heartbeat arriving.
-- **CTA:** conversion CTA. · **Thumbnail:** `0 → BOT IN 10 MIN ⏱`
+- **VO (over speedrun):** `Fill the form — your Kalshi key, your Telegram, pick a risk format: conservative, balanced, aggressive. We deploy YOUR bot — own keys, own alerts, isolated from everyone else's. First heartbeat hits your phone… now. It's alive, it's watching all 96 daily markets, and it's spending exactly zero real dollars until you decide otherwise. And if you're one of the first 100, it cost zero to start too — that's the Founders 100 Club.`
+- **Shots:** screen-rec of the form (blur keys!), timer overlay, first Telegram heartbeat arriving, Founders 100 Club end card.
+- **CTA:** conversion CTA (Founders 100 Club — launch phase). · **Thumbnail:** `0 → BOT IN 10 MIN ⏱`
 - **TT:** `Speedran a trading bot deploy ⏱️ #tradingbot #kalshi #automation #setup` · **IG pair:** IG20
 
 ### V19 — "Choose your fighter" (F4 · 30s)
@@ -264,6 +272,21 @@ Each script below lists its TikTok caption (TT) and its paired IG caption ID.
 - **Shots:** stat cards (G-4.3), best screenshots of the month, face for the lesson.
 - **CTA:** follow + proof CTA. · **Thumbnail:** `30 DAYS. ALL RECEIPTS.`
 - **TT:** `month 1 report card 🧾 #buildinpublic #tradingbot #kalshi #fintok` · **IG pair:** IG16
+
+### V31 — "The Founders 100 Club" (offer explainer · 25s — the launch-phase conversion hero; film Week 1, rerun with fresh [N] until the cap fills)
+- **Hook (0–2s):** text+VO: `We're giving the first 100 members FlipPulse free. Here's the catch.`
+- **VO:** `The catch is there are only 100 seats. Join the Founders 100 Club and you start for zero — we waive the hundred-and-fifty-dollar setup AND your first month. Then it's ninety-nine a month… locked in for life, because Founders are grandfathered against every future price increase. You still start in paper mode, you still watch every decision on your Telegram, your funds still never leave your own Kalshi account. Same disciplined bot — you just get in as a Founder, forever. When the hundredth seat is gone, the Club closes.`
+- **Shots:** 0–3s bold `FOUNDERS 100 CLUB` title card + seat counter → 3–15s quick cuts of the paper-mode feed / refusal logs (proof it's the real product) → 15–22s the three Founder perks as ticking checklist (🎟 $0 to start · 🔒 $99/mo for life · 🏅 first access) → 22–25s end card with `[N]/100 seats left` + go.flippulse.com.
+- **Edit:** ticking counter animation on the seat number; SFX "tick" per perk.
+- **CTA:** conversion CTA (Founders 100 Club). End card: `Founders 100 Club — first 100 free · go.flippulse.com`.
+- **Thumbnail:** big text `FIRST 100 JOIN FREE` over a blurred paper-mode feed; corner sticker `[N]/100`.
+- **Goal:** conversion (all personas) · **Retention device:** the "here's the catch" open loop + live seat counter.
+- **Compliance:** offer is about price + status only; keep the final-2s disclaimer. Never imply the bot makes money.
+- **TT caption:** `first 100 join free + Founder for life 🎟 seats are going #tradingbot #kalshi #fintok #foundingmember` · **IG pair:** IG12 (or the FL-FB caption from `03_POST_LIBRARY.md` §2.0)
+
+> **Rerun rule:** re-cut V31 weekly through the launch phase with the current
+> `[N]/100` seat count in the hook and end card — scarcity is the whole point, so
+> keep the number live. Retire it the day the cap fills.
 
 ---
 

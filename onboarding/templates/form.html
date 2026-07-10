@@ -69,6 +69,22 @@
   <div class="brand">FlipPulse</div>
   <div class="tagline">Automated 15-Minute BTC Up/Down Trading on Kalshi — get set up in one form.</div>
 
+  {% if founder_offer|default(false) %}
+  {# Founders 100 Club launch banner. Shown only while a founding offer is
+     configured (see FOUNDER_OFFER_ACTIVE in app.py). Remove/disable the moment
+     the 100-seat cap fills — never advertise a closed offer. #}
+  <div style="background:linear-gradient(135deg,#0f2a22,#13233a);border:1px solid #2f7a5c;
+              border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+    <div style="color:#7ef2a0;font-weight:700;font-size:15px;">🎟 Founders 100 Club — the first 100 members join free</div>
+    <div style="color:#c9d4e6;font-size:12.5px;line-height:1.6;margin-top:6px;">
+      We waive the <b>${{ price_setup }} setup fee</b> <b>and your first month</b> —
+      $0 to start, then ${{ price_monthly }}/month, cancel anytime. Founders lock in
+      that ${{ price_monthly }}/mo <b>for life</b> and keep first access to everything we ship.
+      Limited to 100 seats — applied automatically at checkout while they last.
+    </div>
+  </div>
+  {% endif %}
+
   {% if error %}<div class="err">{{ error }}</div>{% endif %}
 
   <div class="secure" style="margin-bottom:16px;">

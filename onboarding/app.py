@@ -85,6 +85,20 @@ PUBLIC_BASE_URL     = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
 FOUNDING_COUPON_ID      = os.environ.get("FOUNDING_COUPON_ID", "").strip()
 STRIPE_ALLOW_PROMO_CODES = os.environ.get("STRIPE_ALLOW_PROMO_CODES", "").strip().lower() in ("1", "true", "yes")
 
+# Whether to show the "Founders 100 Club" launch banner on the signup form. It's
+# on whenever a founding-offer delivery mode is configured (auto-coupon or a
+# promo-code box), so the marketing promise ("first 100 join free") matches what
+# checkout will actually apply. When the coupon is exhausted the operator unsets
+# FOUNDING_COUPON_ID (or sets FOUNDER_OFFER_ACTIVE=false) and the banner drops —
+# see 11_COMPLIANCE_KIT.md §7: never advertise a closed offer.
+_founder_env = os.environ.get("FOUNDER_OFFER_ACTIVE", "").strip().lower()
+if _founder_env in ("1", "true", "yes"):
+    FOUNDER_OFFER_ACTIVE = True
+elif _founder_env in ("0", "false", "no"):
+    FOUNDER_OFFER_ACTIVE = False
+else:
+    FOUNDER_OFFER_ACTIVE = bool(FOUNDING_COUPON_ID or STRIPE_ALLOW_PROMO_CODES)
+
 # The webhook secret is REQUIRED whenever Stripe is live: without it the
 # checkout.session.completed webhook cannot be verified, so paid customers are
 # never marked paid and auto-provisioning never fires — silently. Fail loudly
@@ -417,7 +431,8 @@ def _start_stripe_checkout(sub: dict):
 def form():
     return render_template("form.html", formats=VALID_FORMATS,
                            price_setup=PRICE_SETUP, price_monthly=PRICE_MONTHLY,
-                           perf_pct=PERF_PCT, error=request.args.get("error"))
+                           perf_pct=PERF_PCT, error=request.args.get("error"),
+                           founder_offer=FOUNDER_OFFER_ACTIVE)
 
 
 @app.post("/submit")
