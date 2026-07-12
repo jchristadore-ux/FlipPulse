@@ -34,7 +34,7 @@ os.environ.setdefault("KALSHI_PRIVATE_KEY_PEM_B64",
                       base64.b64encode(_PEM.encode()).decode())
 os.environ.setdefault("DEMO_MODE", "true")
 for _persist in ("RECOVERY_PERSIST", "PROBATION_PERSIST",
-                 "BUCKET_PERSIST", "BILLING_PERSIST"):
+                 "BUCKET_PERSIST", "BILLING_PERSIST", "LIFETIME_PERSIST"):
     os.environ.setdefault(_persist, "false")
 
 import bot  # noqa: E402
