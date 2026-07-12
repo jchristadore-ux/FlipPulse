@@ -26,7 +26,7 @@ os.environ.setdefault("KALSHI_PRIVATE_KEY_PEM_B64",
                       base64.b64encode(_PEM.encode()).decode())
 os.environ.setdefault("DEMO_MODE", "true")
 for _persist in ("RECOVERY_PERSIST", "PROBATION_PERSIST", "BUCKET_PERSIST",
-                 "BILLING_PERSIST", "REPORT_PERSIST"):
+                 "BILLING_PERSIST", "REPORT_PERSIST", "LIFETIME_PERSIST"):
     os.environ.setdefault(_persist, "false")
 
 import bot  # noqa: E402  (env must be set first)
@@ -67,18 +67,31 @@ def test_window_stats_empty_is_zeroes(monkeypatch):
 
 
 # ── build_scheduled_report ────────────────────────────────────────────────────
+def _seed_lifetime(monkeypatch, wins, losses, pnl):
+    """A fresh (non-persistent) lifetime tally seeded for the current mode."""
+    ls = bot.LifetimeStats("/dev/null", persist=False)
+    for _ in range(wins):
+        ls.record(bot.DEMO_MODE, True, pnl / max(wins, 1))
+    for _ in range(losses):
+        ls.record(bot.DEMO_MODE, False, 0.0)
+    monkeypatch.setattr(bot, "lifetime", ls)
+    return ls
+
+
 def test_report_shows_today_and_all_time(monkeypatch):
-    _seed_history(monkeypatch)
+    _seed_history(monkeypatch)                 # today window: 2W/1L
+    _seed_lifetime(monkeypatch, 3, 1, 51.0)    # all-time (persistent): 3W/1L
     body = bot.build_scheduled_report(1234.56)
     assert "$1,234.56" in body
     assert "Today" in body and "All-time" in body
-    assert "67% (2W/1L)" in body     # today
-    assert "75% (3W/1L)" in body     # all-time
+    assert "67% (2W/1L)" in body     # today (from trade_history)
+    assert "75% (3W/1L)" in body     # all-time (from persistent lifetime tally)
 
 
 def test_report_handles_no_trades(monkeypatch):
     from collections import deque
     monkeypatch.setattr(bot, "trade_history", deque())
+    _seed_lifetime(monkeypatch, 0, 0, 0.0)
     body = bot.build_scheduled_report(1000.0)
     assert "no settled trades yet" in body
 

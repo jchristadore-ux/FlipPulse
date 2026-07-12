@@ -29,7 +29,7 @@ os.environ.setdefault("KALSHI_PRIVATE_KEY_PEM_B64",
                       base64.b64encode(_PEM.encode()).decode())
 os.environ.setdefault("DEMO_MODE", "true")
 for _persist in ("RECOVERY_PERSIST", "PROBATION_PERSIST",
-                 "BUCKET_PERSIST", "BILLING_PERSIST"):
+                 "BUCKET_PERSIST", "BILLING_PERSIST", "LIFETIME_PERSIST"):
     os.environ.setdefault(_persist, "false")
 
 import bot  # noqa: E402  (env must be set first)
@@ -255,6 +255,8 @@ _PERF_SNAP = dict(
     balance=1200.0, session_pnl=51.0, win_rate=75.0, wins=6, losses=2,
     wins_today=2, losses_today=1, win_rate_today=66.7, pnl_today=1.0,
     wins_week=6, losses_week=2, win_rate_week=75.0, pnl_week=51.0,
+    # persistent all-time tally (bigger than the session — proves it's used)
+    lifetime_wins=140, lifetime_losses=60, lifetime_win_rate=70.0, lifetime_pnl=825.0,
 )
 
 
@@ -263,7 +265,28 @@ def test_winrate_all_windows(tmp_path):
     reply = h.handle("123", "/winrate")
     assert "Today: 67% (2W/1L)" in reply
     assert "This week: 75% (6W/2L)" in reply
-    assert "All-time" in reply
+    # all-time uses the persistent lifetime tally, not the session W/L
+    assert "All-time: 70% (140W/60L)" in reply
+
+
+def test_winrate_all_time_uses_lifetime(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/winrate all")
+    assert "All-time: 70% (140W/60L)" in reply
+
+
+def test_pnl_all_time_uses_lifetime(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/pnl all")
+    assert "$+825.00" in reply and "(140W/60L)" in reply
+
+
+def test_status_record_uses_lifetime(tmp_path):
+    snap = dict(_PERF_SNAP, active_mode="normal", active_trade_pct=10.0,
+                active_trade_size=120.0, session_state="ACTIVE",
+                updated_at="2026-07-12T00:00:00Z")
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "Record (all-time): 140W/60L (70%)" in reply
 
 
 def test_winrate_week_only(tmp_path):

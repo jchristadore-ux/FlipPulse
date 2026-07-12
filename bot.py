@@ -652,6 +652,17 @@ PROBATION_PERSIST            = _env_bool("PROBATION_PERSIST", True)
 # RECOVERY=3%, STEP=0.035 this yields 3% → 6.5% (graduating to 10%).
 PROBATION_RUNG_STEP_PCT      = _env_float("PROBATION_RUNG_STEP_PCT", 0.035)
 
+# ── Lifetime (all-time) performance — PERSISTENT across redeploys ─────────────
+# The session W/L (live_wins/live_losses) and the in-memory trade_history reset
+# every restart, so the "all-time" win rate the customer sees kept resetting on a
+# redeploy. LifetimeStats keeps an UNBOUNDED, persisted running tally of settled
+# wins/losses and realized PnL, split by paper vs live so practice never dilutes
+# the live record. It backs the "all-time" figures in the 9am/9pm report, the
+# /winrate and /pnl commands, and the /status record line. Mount the /data volume
+# and keep LIFETIME_STATS_PATH on it (default) so it survives redeploys.
+LIFETIME_STATS_PATH = os.environ.get("LIFETIME_STATS_PATH", "").strip() or "/data/lifetime_stats.json"
+LIFETIME_PERSIST    = _env_bool("LIFETIME_PERSIST", True)
+
 # ── Dashboard / observability ─────────────────────────────────────────────────
 # The bot writes a small JSON status snapshot here once per main-loop cycle
 # (balance, PnL, W/L, active sizing mode, open positions, last signal); the
@@ -1669,6 +1680,87 @@ class BillingState:
 
 
 billing = BillingState(BILLING_STATE_PATH, BILLING_PERSIST)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LIFETIME STATS  (persistent all-time W/L + PnL — "stop the win rate resetting")
+#
+# Unbounded, disk-persisted tally of every settled trade, split by paper/live so
+# practice never dilutes the live record. Mutated IN-PLACE only, never reassigned
+# (same rule as `recovery`/`probation`). Survives redeploys when its path is on
+# the /data volume, so the all-time win rate the customer sees never resets.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LifetimeStats:
+    """Persistent all-time settled-trade tally, keyed by paper/live bucket."""
+
+    SCHEMA = 1
+
+    def __init__(self, path: str, persist: bool) -> None:
+        self._data = {"paper": {"wins": 0, "losses": 0, "pnl": 0.0},
+                      "live":  {"wins": 0, "losses": 0, "pnl": 0.0}}
+        self._path    = path
+        self._persist = persist
+        if self._persist:
+            self._load()
+
+    @staticmethod
+    def _bucket(demo_mode: bool) -> str:
+        return "paper" if demo_mode else "live"
+
+    def record(self, demo_mode: bool, won: bool, pnl: float) -> None:
+        """Fold one SETTLED trade into the all-time tally for its mode. Called once
+        per settlement. Never raises — an accounting write must not break trading."""
+        try:
+            d = self._data[self._bucket(demo_mode)]
+            d["wins" if won else "losses"] += 1
+            try:
+                d["pnl"] = round(d["pnl"] + float(pnl), 4)
+            except (TypeError, ValueError):
+                pass
+            self._save()
+        except Exception as e:  # pragma: no cover - observability must not break trading
+            log.debug("lifetime record failed: %s", e)
+
+    def stats(self, demo_mode: bool) -> "tuple[int, int, float]":
+        d = self._data[self._bucket(demo_mode)]
+        return int(d["wins"]), int(d["losses"]), round(float(d["pnl"]), 2)
+
+    def winrate(self, demo_mode: bool) -> float:
+        w, l, _ = self.stats(demo_mode)
+        n = w + l
+        return (w / n) if n else 0.0
+
+    # ── persistence (atomic JSON write) ────────────────────────────────────────
+    def _save(self) -> None:
+        if not self._persist:
+            return
+        try:
+            tmp = f"{self._path}.tmp"
+            with open(tmp, "w") as f:
+                json.dump({"schema": self.SCHEMA, "buckets": self._data}, f)
+            os.replace(tmp, self._path)   # atomic on POSIX
+        except OSError as e:
+            log.warning("Lifetime │ state save failed: %s", e)
+
+    def _load(self) -> None:
+        try:
+            with open(self._path) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            return
+        buckets = d.get("buckets", {}) if isinstance(d, dict) else {}
+        for key in ("paper", "live"):
+            b = buckets.get(key, {}) if isinstance(buckets, dict) else {}
+            if isinstance(b, dict):
+                self._data[key] = {
+                    "wins":   int(b.get("wins", 0) or 0),
+                    "losses": int(b.get("losses", 0) or 0),
+                    "pnl":    float(b.get("pnl", 0.0) or 0.0),
+                }
+
+
+lifetime = LifetimeStats(LIFETIME_STATS_PATH, LIFETIME_PERSIST)
 
 
 # Cache the parsed risk override on the file's mtime so the sizing chokepoint can
@@ -2714,6 +2806,7 @@ def resolve_open_orders() -> None:
 
             ladder_record(won, trade_pnl)
             bucket_stats.record(trade.get("entry_bucket"), won)
+            lifetime.record(DEMO_MODE, won, trade_pnl)   # persistent all-time tally
             # Recovery ENTRY hook: a full-size loss arms recovery (uses this
             # trade's recorded pre-trade balance as the target). paper_balance is
             # already updated above for this settlement.
@@ -2791,6 +2884,7 @@ def resolve_open_orders() -> None:
                         log.info("UNMATCHED LOSS │ %s │ $%.2f (pre-restart)",
                                  rec_ticker[-15:], pnl_d)
                     ladder_record(pnl_d > 0, pnl_d)
+                    lifetime.record(DEMO_MODE, pnl_d > 0, pnl_d)   # persistent all-time
                     update_live_prior()
                 continue
 
@@ -2846,6 +2940,7 @@ def resolve_open_orders() -> None:
 
             ladder_record(won, pnl)
             bucket_stats.record(trade.get("entry_bucket"), won)
+            lifetime.record(DEMO_MODE, won, pnl)   # persistent all-time tally
             # Recovery ENTRY hook: `balance` was fetched (realized) above for
             # this settled trade.
             on_trade_settled(won, trade, balance)
@@ -3290,11 +3385,13 @@ def _fmt_winrate(wins: int, losses: int) -> str:
 
 def build_scheduled_report(balance: float) -> str:
     """The twice-daily briefing body: balance, today's P&L + win rate, and the
-    all-time (this-run) figures. Pure — takes the balance, reads shared state."""
+    persistent all-time figures. Pure — takes the balance, reads shared state."""
     tz = _report_tz()
     now_local = datetime.now(tz)
     d_w, d_l, d_pnl = trade_window_stats(_tz_day_start_epoch(0, tz))
-    a_w, a_l, a_pnl = trade_window_stats(None)
+    # All-time comes from the PERSISTENT lifetime tally (survives redeploys),
+    # scoped to the current paper/live mode.
+    a_w, a_l, a_pnl = lifetime.stats(DEMO_MODE)
     mode   = "PAPER 🟡" if DEMO_MODE else "LIVE 🔴"
     active = ("Recovery" if recovery.active
               else "Probation ramp" if probation.active else "Normal")
@@ -3306,7 +3403,7 @@ def build_scheduled_report(balance: float) -> str:
         f"— Today —\n"
         f"💵 P&L: ${d_pnl:+,.2f}\n"
         f"🎯 Win rate: {_fmt_winrate(d_w, d_l)}\n"
-        f"— All-time (this run) —\n"
+        f"— All-time —\n"
         f"💵 P&L: ${a_pnl:+,.2f}\n"
         f"🎯 Win rate: {_fmt_winrate(a_w, a_l)}"
     )
@@ -3418,6 +3515,8 @@ def write_status_snapshot(balance: float) -> None:
         d_w, d_l, d_pnl = trade_window_stats(_tz_day_start_epoch(0))
         w_w, w_l, w_pnl = trade_window_stats(_tz_day_start_epoch(6))
         _wr = lambda w, l: round(w / (w + l) * 100, 1) if (w + l) else 0.0
+        # Persistent all-time tally (survives redeploys), scoped to paper/live.
+        lt_w, lt_l, lt_pnl = lifetime.stats(DEMO_MODE)
         snapshot = {
             "version": BOT_VERSION,
             "trading_format": TRADING_FORMAT,
@@ -3438,6 +3537,10 @@ def write_status_snapshot(balance: float) -> None:
             "win_rate_today": _wr(d_w, d_l), "pnl_today": d_pnl,
             "wins_week": w_w, "losses_week": w_l,
             "win_rate_week": _wr(w_w, w_l), "pnl_week": w_pnl,
+            # Persistent all-time figures (survive redeploys) — the "stop the win
+            # rate resetting" fix. Scoped to the current paper/live mode.
+            "lifetime_wins": lt_w, "lifetime_losses": lt_l,
+            "lifetime_win_rate": _wr(lt_w, lt_l), "lifetime_pnl": lt_pnl,
             "report_timezone": REPORT_TIMEZONE,
             "active_mode": active_mode,
             # Recovery Mode "No Stake Change" toggle — surfaced so /status, the

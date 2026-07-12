@@ -195,7 +195,14 @@ class CommandHandler:
             if isinstance(bal, (int, float)) and isinstance(pnl, (int, float))
             else f"Balance: {bal}  │  PnL: {pnl}",
         ]
-        if total:
+        # Prefer the PERSISTENT all-time record (survives redeploys); fall back to
+        # the session tally only before any lifetime data exists.
+        lt_w = snap.get("lifetime_wins", 0) or 0
+        lt_l = snap.get("lifetime_losses", 0) or 0
+        if lt_w + lt_l:
+            lwr = snap.get("lifetime_win_rate", 0) or 0
+            lines.append(f"Record (all-time): {lt_w}W/{lt_l}L ({lwr:.0f}%)")
+        elif total:
             wr = snap.get("win_rate", 0)
             lines.append(f"Record: {wins}W/{losses}L ({wr:.0f}%)")
         size_str = ""
@@ -250,6 +257,12 @@ class CommandHandler:
         l = snap.get(f"losses{suffix}", 0) or 0
         return int(w), int(l)
 
+    @staticmethod
+    def _lifetime_wl(snap: dict) -> tuple:
+        """(wins, losses) from the PERSISTENT all-time tally (survives redeploys)."""
+        return (int(snap.get("lifetime_wins", 0) or 0),
+                int(snap.get("lifetime_losses", 0) or 0))
+
     # ── /winrate [day|week] ──────────────────────────────────────────────────────
     def _do_winrate(self, args) -> str:
         snap = self._read_snapshot()
@@ -265,18 +278,25 @@ class CommandHandler:
             rate = snap.get(rate_key, 0) or 0
             return f"{label}: {rate:.0f}% ({w}W/{l}L)"
 
+        def all_time() -> str:
+            w, l = self._lifetime_wl(snap)
+            if not (w + l):
+                return "All-time: no settled trades yet"
+            rate = snap.get("lifetime_win_rate", 0) or 0
+            return f"All-time: {rate:.0f}% ({w}W/{l}L)"
+
         if window in ("day", "today", "d"):
             return "🎯 Win rate — " + line("Today", "_today", "win_rate_today")
         if window in ("week", "w", "7d"):
             return "🎯 Win rate — " + line("This week", "_week", "win_rate_week")
-        if window in ("all", "session", "total", "alltime", "all-time"):
-            return "🎯 Win rate — " + line("All-time (this run)", "", "win_rate")
+        if window in ("all", "session", "total", "alltime", "all-time", "lifetime"):
+            return "🎯 Win rate — " + all_time()
         # No/unknown arg → show all three.
         return (
             "🎯 Win rate\n"
             + line("Today", "_today", "win_rate_today") + "\n"
             + line("This week", "_week", "win_rate_week") + "\n"
-            + line("All-time (this run)", "", "win_rate")
+            + all_time()
             + "\n(Use /winrate day or /winrate week for one window.)"
         )
 
@@ -294,19 +314,26 @@ class CommandHandler:
                 return f"{label}: —"
             return f"{label}: ${val:+,.2f} ({w}W/{l}L)"
 
+        def all_time() -> str:
+            val = snap.get("lifetime_pnl")
+            w, l = self._lifetime_wl(snap)
+            if not isinstance(val, (int, float)):
+                return "All-time: —"
+            return f"All-time: ${val:+,.2f} ({w}W/{l}L)"
+
         if window in ("day", "today", "d"):
             return "💵 P&L — " + line("Today", "pnl_today", "_today")
         if window in ("week", "w", "7d"):
             return "💵 P&L — " + line("This week", "pnl_week", "_week")
-        if window in ("all", "session", "total", "alltime", "all-time"):
-            return "💵 P&L — " + line("Session", "session_pnl", "")
+        if window in ("all", "session", "total", "alltime", "all-time", "lifetime"):
+            return "💵 P&L — " + all_time()
         bal = snap.get("balance")
         head = f"🏦 Balance: ${bal:,.2f}\n" if isinstance(bal, (int, float)) else ""
         return (
             "💵 P&L\n" + head
             + line("Today", "pnl_today", "_today") + "\n"
             + line("This week", "pnl_week", "_week") + "\n"
-            + line("Session", "session_pnl", "")
+            + all_time()
             + "\n(Use /pnl day or /pnl week for one window.)"
         )
 
