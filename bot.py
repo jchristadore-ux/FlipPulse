@@ -3412,6 +3412,12 @@ def write_status_snapshot(balance: float) -> None:
         rate_pct, lo_pct, hi_pct = wilson_confidence(wins, total) if total > 0 else (0.0, 0.0, 0.0)
         active_mode = ("recovery" if recovery.active
                        else "probation" if probation.active else "normal")
+        # Time-windowed W/L + PnL (report-tz calendar), for /winrate and /pnl and
+        # the dashboard. "week" is a rolling 7 days. Best-effort over in-memory
+        # history (same source as the scheduled report), so the two always agree.
+        d_w, d_l, d_pnl = trade_window_stats(_tz_day_start_epoch(0))
+        w_w, w_l, w_pnl = trade_window_stats(_tz_day_start_epoch(6))
+        _wr = lambda w, l: round(w / (w + l) * 100, 1) if (w + l) else 0.0
         snapshot = {
             "version": BOT_VERSION,
             "trading_format": TRADING_FORMAT,
@@ -3427,6 +3433,12 @@ def write_status_snapshot(balance: float) -> None:
             "losses": losses,
             "win_rate": rate_pct,
             "wilson_ci": [lo_pct, hi_pct],
+            # Time-windowed figures for /winrate and /pnl (report-tz; week = 7d).
+            "wins_today": d_w, "losses_today": d_l,
+            "win_rate_today": _wr(d_w, d_l), "pnl_today": d_pnl,
+            "wins_week": w_w, "losses_week": w_l,
+            "win_rate_week": _wr(w_w, w_l), "pnl_week": w_pnl,
+            "report_timezone": REPORT_TIMEZONE,
             "active_mode": active_mode,
             # Recovery Mode "No Stake Change" toggle — surfaced so /status, the
             # dashboard, and the /recoverynostakechange command can report it.
