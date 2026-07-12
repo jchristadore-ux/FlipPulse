@@ -47,6 +47,7 @@ def _handler(tmp_path, snap=None):
         health_log_path=str(tmp_path / "health.log"),
         risk_override_path=str(tmp_path / "risk_override.json"),
         mode_override_path=str(tmp_path / "mode_override.json"),
+        nsc_override_path=str(tmp_path / "nsc_override.json"),
     )
 
 
@@ -246,3 +247,109 @@ def test_round_trip_command_to_engine(tmp_path, monkeypatch):
     monkeypatch.setattr(bot, "RISK_OVERRIDE_PATH", path)
     monkeypatch.setattr(bot, "_risk_override_cache", None)
     assert bot.effective_normal_trade_pct() == 0.06
+
+
+# ── /winrate + /pnl ───────────────────────────────────────────────────────────
+_PERF_SNAP = dict(
+    _SNAP,
+    balance=1200.0, session_pnl=51.0, win_rate=75.0, wins=6, losses=2,
+    wins_today=2, losses_today=1, win_rate_today=66.7, pnl_today=1.0,
+    wins_week=6, losses_week=2, win_rate_week=75.0, pnl_week=51.0,
+)
+
+
+def test_winrate_all_windows(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/winrate")
+    assert "Today: 67% (2W/1L)" in reply
+    assert "This week: 75% (6W/2L)" in reply
+    assert "All-time" in reply
+
+
+def test_winrate_week_only(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/winrate week")
+    assert "This week: 75% (6W/2L)" in reply
+    assert "Today" not in reply
+
+
+def test_winrate_percent_suffix_and_day(tmp_path):
+    """The guide writes '/winrate% day' — the '%' must not break routing."""
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/WinRate% day")
+    assert "Today: 67% (2W/1L)" in reply
+
+
+def test_winrate_no_snapshot_is_graceful(tmp_path):
+    h = _handler(tmp_path, snap=None)
+    assert "minute" in h.handle("123", "/winrate").lower()
+
+
+def test_pnl_all_and_week(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    allr = h.handle("123", "/pnl")
+    assert "$+1.00" in allr and "$+51.00" in allr
+    wk = h.handle("123", "/pnl week")
+    assert "This week: $+51.00 (6W/2L)" in wk
+
+
+# ── /recoverynostakechange ────────────────────────────────────────────────────
+def _nsc_file(h):
+    return json.loads(open(h.nsc_override_path).read())
+
+
+def test_nsc_status_no_arg(tmp_path):
+    h = _handler(tmp_path, dict(_SNAP, recovery_no_stake_change=False))
+    reply = h.handle("123", "/recoverynostakechange")
+    assert "OFF" in reply
+
+
+def test_nsc_on_writes_override(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    reply = h.handle("123", "/RecoveryModeNoStakeChange on")
+    assert "ON" in reply
+    assert _nsc_file(h)["enabled"] is True and _nsc_file(h)["set_by"] == "123"
+
+
+def test_nsc_off_writes_override(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    h.handle("123", "/rnsc off")
+    assert _nsc_file(h)["enabled"] is False
+
+
+def test_nsc_bad_arg_rejected_no_write(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    reply = h.handle("123", "/rnsc maybe")
+    assert "on" in reply.lower() and "off" in reply.lower()
+    assert not os.path.exists(h.nsc_override_path)
+
+
+def test_nsc_ignored_for_stranger(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    assert h.handle("999", "/rnsc on") is None
+    assert not os.path.exists(h.nsc_override_path)
+
+
+def test_nsc_round_trip_to_engine(tmp_path, monkeypatch):
+    """The toggle the command writes is exactly what the engine reads back."""
+    h = _handler(tmp_path, _SNAP)
+    h.handle("123", "/rnsc on")
+    monkeypatch.setattr(bot, "RECOVERY_NSC_OVERRIDE_PATH", h.nsc_override_path)
+    monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
+    assert bot.recovery_no_stake_change_enabled() is True
+    h.handle("123", "/rnsc off")
+    monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
+    assert bot.recovery_no_stake_change_enabled() is False
+
+
+def test_status_shows_nsc_and_recovery_wr(tmp_path):
+    snap = dict(
+        _SNAP, balance=1000.0, session_pnl=0.0, active_mode="recovery",
+        recovery_no_stake_change=True, recovery_wins=4, recovery_losses=1,
+        recovery_win_rate=80.0, recovery_winrate_restore_pct=70.0,
+        active_trade_pct=10.0, active_trade_size=100.0,
+        session_state="ACTIVE", updated_at="2026-07-12T00:00:00Z",
+    )
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "No-Stake-Change ON" in reply
+    assert "Recovery WR: 80% (4W/1L)" in reply

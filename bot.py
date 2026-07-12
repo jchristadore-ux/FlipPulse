@@ -322,6 +322,10 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone, timedelta
 from enum import Enum
+try:                                         # stdlib since 3.9; needs tzdata on slim images
+    from zoneinfo import ZoneInfo
+except Exception:                            # pragma: no cover - ancient runtime
+    ZoneInfo = None                          # type: ignore
 from typing import List, Optional, Set, Tuple
 
 import requests
@@ -561,6 +565,43 @@ FORMAT_OVERRIDE_PATH  = os.environ.get("FORMAT_OVERRIDE_PATH", "").strip() or "/
 RECOVERY_STATE_PATH = os.environ.get("RECOVERY_STATE_PATH", "recovery_state.json")
 RECOVERY_PERSIST    = _env_bool("RECOVERY_PERSIST", True)
 
+# ── Recovery Mode: "No Stake Change" (owner directive) ────────────────────────
+# WHY (owner, log-review feel): the standard recovery tier DROPS the stake to
+# RECOVERY_TRADE_PCT while clawing back, grinds the balance up over a win streak,
+# then on exit SNAPS back to the full stake (via the probation ramp) — and a
+# single full-size loss right after wipes the whole grind. Deflating.
+#
+# When RECOVERY_NO_STAKE_CHANGE is ON, recovery still TRIGGERS and TRACKS exactly
+# as before (it arms on a full-size loss, records the target balance, shows in
+# /status and the reports, and clears when the balance heals) — but it does NOT
+# touch sizing: the stake stays at the full NORMAL_TRADE_PCT (or the /risk
+# override) and the laddering overlay keeps working throughout. Because nothing
+# ever dropped, exiting recovery is a no-op on sizing — no probation ramp, no
+# jump-back, so there is no grind to wipe out.
+#
+# Toggleable at runtime (Telegram /recoverynostakechange, dashboard) without a
+# redeploy: the command writes {"enabled": bool} to RECOVERY_NSC_OVERRIDE_PATH and
+# the engine reads it back here, exactly like the /risk override. The env var is
+# the boot default; a present override file always wins. Deleting the file (or
+# toggling back) falls to the env default.
+RECOVERY_NO_STAKE_CHANGE     = _env_bool("RECOVERY_NO_STAKE_CHANGE", False)
+RECOVERY_NSC_OVERRIDE_PATH   = os.environ.get("RECOVERY_NSC_OVERRIDE_PATH", "").strip() \
+    or "/data/recovery_nsc_override.json"
+
+# ── Recovery Mode: win-rate restore (owner directive) ─────────────────────────
+# WHY (owner): if the stake is being held BELOW the full base — the standard
+# recovery tier reduced it, OR the laddering overlay demoted it under 1× — but the
+# claw-back is actually going well (a strong rolling win rate), don't keep grinding
+# at the small stake. The moment the recovery-scoped win rate reaches
+# RECOVERY_WINRATE_RESTORE_PCT (default 70%, over at least RECOVERY_WINRATE_MIN_TRADES
+# settled recovery trades), snap straight back to the full/original stake and
+# resume laddering — bypassing the slow probation ramp entirely. This is checked
+# every cycle, right beside the balance-target exit. Set the % to 1.0 (100%) or
+# disable to turn the fast path off.
+RECOVERY_WINRATE_RESTORE_ENABLED = _env_bool("RECOVERY_WINRATE_RESTORE_ENABLED", True)
+RECOVERY_WINRATE_RESTORE_PCT     = _env_float("RECOVERY_WINRATE_RESTORE_PCT", 0.70)
+RECOVERY_WINRATE_MIN_TRADES      = _env_int("RECOVERY_WINRATE_MIN_TRADES", 5)
+
 
 # ── Laddering stake overlay (opt-in) ──────────────────────────────────────────
 # Scales the Kelly stake by a performance-driven multiplier (0.5x–2x). Disabled
@@ -619,6 +660,29 @@ PROBATION_RUNG_STEP_PCT      = _env_float("PROBATION_RUNG_STEP_PCT", 0.035)
 # works even on a manual deploy that forgets the env var. On a local run with
 # no /data the per-cycle write fails silently (caught in the writer) — harmless.
 STATUS_SNAPSHOT_PATH = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip() or "/data/status_snapshot.json"
+
+# ── Scheduled Telegram report (twice-daily P&L + win rate) ─────────────────────
+# The historical owner directive was "no periodic Telegram messages." This is the
+# one deliberate exception: a concise briefing at fixed local times (default 9am
+# and 9pm US Eastern) carrying balance, today's P&L, today's win rate, and the
+# all-time (this-run) figures. Everything else stays event-driven. Fires from the
+# main loop's wall-clock check (like the session-day / month rollovers), so no
+# extra thread. The slot that last fired is persisted to REPORT_STATE_PATH so a
+# redeploy near a scheduled time can't double-send, and a slot missed while the
+# bot was down for longer than REPORT_MAX_LATE_SECS is skipped rather than sent
+# stale. Turn the whole feature off with REPORT_SCHEDULE_ENABLED=false.
+REPORT_SCHEDULE_ENABLED = _env_bool("REPORT_SCHEDULE_ENABLED", True)
+# IANA timezone the report hours are interpreted in. Needs the tzdata package
+# (in requirements.txt) on slim images; falls back to UTC if it can't be loaded.
+REPORT_TIMEZONE   = os.environ.get("REPORT_TIMEZONE", "").strip() or "America/New_York"
+# Comma-separated hours (0–23, in REPORT_TIMEZONE) to fire at. Default 9am & 9pm.
+REPORT_HOURS_RAW  = os.environ.get("REPORT_HOURS", "").strip() or "9,21"
+REPORT_STATE_PATH = os.environ.get("REPORT_STATE_PATH", "").strip() or "/data/report_state.json"
+REPORT_PERSIST    = _env_bool("REPORT_PERSIST", True)
+# A scheduled slot is only sent if the bot reaches it within this many seconds of
+# the scheduled time; a slot the bot slept/was-down through for longer is skipped
+# (marked consumed) so a stale briefing never lands hours late. Default 2h.
+REPORT_MAX_LATE_SECS = _env_int("REPORT_MAX_LATE_SECS", 7200)
 
 # ── Performance-fee billing (high-water mark) — PLACEHOLDER, DISABLED ──────────
 # TEMPORARILY REMOVED: the performance fee is not currently charged, so this
@@ -971,10 +1035,29 @@ class RecoveryState:
     def __init__(self, path: str, persist: bool) -> None:
         self.active:         bool  = False
         self.target_balance: float = 0.0
+        # Recovery-scoped settled outcomes (trades entered WHILE in recovery),
+        # feeding the win-rate restore. Reset on every entry.
+        self.wins:           int   = 0
+        self.losses:         int   = 0
         self._path    = path
         self._persist = persist
         if self._persist:
             self._load()
+
+    # ── recovery-scoped win rate (feeds the win-rate restore) ─────────────────
+    def record_result(self, won: bool) -> None:
+        """Tally one settled trade that was ENTERED while recovery was active."""
+        if not self.active:
+            return
+        if won:
+            self.wins += 1
+        else:
+            self.losses += 1
+        self._save()
+
+    def winrate(self) -> float:
+        n = self.wins + self.losses
+        return (self.wins / n) if n else 0.0
 
     # ── transitions ──────────────────────────────────────────────────────────
     def enter(self, target_balance: float, current_balance: float) -> bool:
@@ -991,17 +1074,32 @@ class RecoveryState:
             return False
         self.active         = True
         self.target_balance = round(float(target_balance), 2)
+        self.wins = self.losses = 0            # fresh recovery-scoped win-rate count
         self._save()
+        nsc = recovery_no_stake_change_enabled()
         log.warning("Recovery mode ACTIVATED after losing full-size trade.")
         log.warning("Previous balance: $%.2f", self.target_balance)
         log.warning("Recovery target: $%.2f", self.target_balance)
-        log.warning("Switching trade size to: %.1f%% of balance", RECOVERY_TRADE_PCT * 100)
-        tg.send_telegram_message(
-            f"🛟 RECOVERY MODE ACTIVATED\n"
-            f"Recovery target: ${self.target_balance:.2f}\n"
-            f"Trade size → {RECOVERY_TRADE_PCT*100:.1f}% of balance "
-            f"(was {effective_normal_trade_pct()*100:.1f}%)"
-        )
+        if nsc:
+            # "No Stake Change" mode: track the claw-back, but do NOT drop the stake.
+            log.warning("No-Stake-Change mode ON — keeping trade size at %.1f%% "
+                        "of balance; laddering stays active.",
+                        effective_normal_trade_pct() * 100)
+            tg.send_status_message(
+                f"🛟 RECOVERY MODE ACTIVATED — No Stake Change\n"
+                f"Recovery target: ${self.target_balance:.2f}\n"
+                f"Trade size stays at {effective_normal_trade_pct()*100:.1f}% of "
+                f"balance and laddering keeps working — no stake reduction, no "
+                f"jump-back on exit."
+            )
+        else:
+            log.warning("Switching trade size to: %.1f%% of balance", RECOVERY_TRADE_PCT * 100)
+            tg.send_status_message(
+                f"🛟 RECOVERY MODE ACTIVATED\n"
+                f"Recovery target: ${self.target_balance:.2f}\n"
+                f"Trade size → {RECOVERY_TRADE_PCT*100:.1f}% of balance "
+                f"(was {effective_normal_trade_pct()*100:.1f}%)"
+            )
         return True
 
     def maybe_exit(self, current_balance: float) -> bool:
@@ -1012,11 +1110,23 @@ class RecoveryState:
         if current_balance < self.target_balance:
             return False
         reached = self.target_balance
+        nsc = recovery_no_stake_change_enabled()
         self.active         = False
         self.target_balance = 0.0
+        self.wins = self.losses = 0
         self._save()
         log.warning("Recovery target reached.")
         log.warning("Recovery mode DEACTIVATED.")
+        if nsc:
+            # Stake never dropped, so there is nothing to ramp back to and no
+            # reason to pause the ladder — exit is a clean no-op on sizing.
+            log.info("No-Stake-Change mode — sizing already at full; no ramp/pause.")
+            tg.send_status_message(
+                f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
+                f"${reached:.2f}\nStake never changed (No Stake Change mode) — "
+                f"nothing to ramp back, laddering carries on."
+            )
+            return True
         log.warning("Switching trade size back to: %.1f%% of balance", effective_normal_trade_pct() * 100)
         msg = (f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
                f"${reached:.2f}\nTrade size → {effective_normal_trade_pct()*100:.1f}% of balance")
@@ -1027,8 +1137,17 @@ class RecoveryState:
             stake_ladder.pause_size_up(RECOVERY_LADDER_PAUSE_TRADES)
             msg += (f"\nLadder size-up paused for "
                     f"{RECOVERY_LADDER_PAUSE_TRADES} trades.")
-        tg.send_telegram_message(msg)
+        tg.send_status_message(msg)
         return True
+
+    def clear_for_restore(self) -> None:
+        """Exit recovery WITHOUT the balance-target / probation-ramp path — used by
+        the win-rate restore, which returns straight to the full base stake and
+        lets the ladder resume. Silent: the caller owns the log/Telegram copy."""
+        self.active         = False
+        self.target_balance = 0.0
+        self.wins = self.losses = 0
+        self._save()
 
     def reconcile_on_boot(self, current_balance: float) -> None:
         """Self-heal persisted state at startup so the bot can never resume into
@@ -1051,10 +1170,18 @@ class RecoveryState:
                     current_balance, self.target_balance, RECOVERY_TRADE_PCT * 100)
 
     def status_line(self, current_balance: float) -> str:
+        n  = self.wins + self.losses
+        wr = f" WR={self.winrate()*100:.0f}% ({self.wins}W/{self.losses}L)" if n else ""
+        if recovery_no_stake_change_enabled():
+            pct   = effective_normal_trade_pct()
+            stake = pct * current_balance
+            return (f"Recovery mode active (No Stake Change). Current balance: "
+                    f"${current_balance:.2f}. Target: ${self.target_balance:.2f}. "
+                    f"Trade size held at {pct*100:.1f}% (~${stake:.2f}); laddering active.{wr}")
         stake = RECOVERY_TRADE_PCT * current_balance
         return (f"Recovery mode active. Current balance: ${current_balance:.2f}. "
                 f"Target: ${self.target_balance:.2f}. "
-                f"Trade size: {RECOVERY_TRADE_PCT*100:.1f}% (~${stake:.2f}).")
+                f"Trade size: {RECOVERY_TRADE_PCT*100:.1f}% (~${stake:.2f}).{wr}")
 
     # ── persistence (atomic JSON write) ────────────────────────────────────────
     def _save(self) -> None:
@@ -1067,6 +1194,8 @@ class RecoveryState:
                     "schema":         self.SCHEMA,
                     "active":         self.active,
                     "target_balance": self.target_balance,
+                    "wins":           self.wins,
+                    "losses":         self.losses,
                 }, f)
             os.replace(tmp, self._path)   # atomic on POSIX
         except OSError as e:
@@ -1080,6 +1209,8 @@ class RecoveryState:
             return
         self.active         = bool(d.get("active", False))
         self.target_balance = float(d.get("target_balance", 0.0) or 0.0)
+        self.wins           = int(d.get("wins", 0) or 0)
+        self.losses         = int(d.get("losses", 0) or 0)
 
 
 recovery = RecoveryState(RECOVERY_STATE_PATH, RECOVERY_PERSIST)
@@ -1140,7 +1271,7 @@ class ProbationState:
         log.warning("Probation ramp START (%s) │ base %s → full %s via %s",
                     reason, _pct(self.rungs[0]), _pct(self.full_size),
                     " → ".join(_pct(r) for r in self.rungs + [self.full_size]))
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"🪜 PROBATION RAMP STARTED\n"
             f"{reason}: re-entering at {_pct(self.rungs[0])} of balance; will climb "
             f"{' → '.join(_pct(r) for r in self.rungs + [self.full_size])} "
@@ -1191,7 +1322,7 @@ class ProbationState:
         self.streak = 0                 # must re-prove the edge at the larger size
         log.warning("Probation ramp UP → base %.1f%% (rung %d/%d).",
                     self.current_size() * 100, self.level + 1, len(self.rungs))
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"🪜 PROBATION RAMP UP → {self.current_size()*100:.1f}% "
             f"(rung {self.level + 1}/{len(self.rungs)})"
         )
@@ -1203,7 +1334,7 @@ class ProbationState:
             return
         self.level -= 1
         log.warning("Probation ramp DOWN → base %.1f%% (loss).", self.current_size() * 100)
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"🪜 PROBATION RAMP DOWN → {self.current_size()*100:.1f}% (loss)"
         )
 
@@ -1218,7 +1349,7 @@ class ProbationState:
         # on a win rate banked at smaller stakes.
         if stake_ladder is not None and RECOVERY_LADDER_PAUSE_TRADES > 0:
             stake_ladder.pause_size_up(RECOVERY_LADDER_PAUSE_TRADES)
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"✅ PROBATION COMPLETE — full size {frac*100:.1f}% restored."
         )
 
@@ -1474,7 +1605,7 @@ class BillingState:
                 "hwm_after": self.hwm, "demo_mode": DEMO_MODE,
             })
             mode = "PAPER (not billable)" if DEMO_MODE else "LIVE"
-            tg.send_telegram_message(
+            tg.send_status_message(
                 f"💵 MONTHLY BILLING — {ended} [{mode}]\n"
                 f"End balance: ${balance:,.2f}\n"
                 f"Month change: ${gross_change:+,.2f}\n"
@@ -1570,6 +1701,33 @@ def _read_risk_override() -> "float | None":
     return frac
 
 
+# Cache the parsed "no stake change" override on the file's mtime, same pattern.
+_recovery_nsc_cache: "tuple[float, bool] | None" = None  # (mtime, enabled)
+
+
+def recovery_no_stake_change_enabled() -> bool:
+    """Whether Recovery Mode is in "No Stake Change" mode: the runtime override
+    (Telegram/dashboard) when present, otherwise the RECOVERY_NO_STAKE_CHANGE env
+    default. Cached on the file's mtime. Never raises — a missing/corrupt file
+    simply falls back to the env default."""
+    global _recovery_nsc_cache
+    try:
+        mtime = os.path.getmtime(RECOVERY_NSC_OVERRIDE_PATH)
+    except OSError:
+        _recovery_nsc_cache = None
+        return RECOVERY_NO_STAKE_CHANGE
+    if _recovery_nsc_cache is not None and _recovery_nsc_cache[0] == mtime:
+        return _recovery_nsc_cache[1]
+    try:
+        with open(RECOVERY_NSC_OVERRIDE_PATH) as f:
+            enabled = bool(json.load(f).get("enabled"))
+    except (OSError, ValueError, TypeError):
+        _recovery_nsc_cache = None
+        return RECOVERY_NO_STAKE_CHANGE
+    _recovery_nsc_cache = (mtime, enabled)
+    return enabled
+
+
 def effective_normal_trade_pct() -> float:
     """The active full-size stake FRACTION: the customer's runtime /risk override
     when one is set, otherwise the NORMAL_TRADE_PCT default. Always clamped into
@@ -1621,8 +1779,12 @@ def active_trade_fraction() -> float:
     """The stake FRACTION of the current balance for the active mode. Single
     source of truth for sizing posture: recovery (deepest claw-back) → probation
     ramp → normal. The hard MAX_TRADE_PCT ceiling is applied when this fraction is
-    resolved to dollars (active_trade_size / kelly_bet)."""
-    if recovery.active:
+    resolved to dollars (active_trade_size / kelly_bet).
+
+    Recovery Mode "No Stake Change" exception: when that toggle is on, recovery
+    still tracks/labels but must NOT drop the stake — sizing stays at the full
+    normal fraction so the claw-back happens at the same stake, laddering intact."""
+    if recovery.active and not recovery_no_stake_change_enabled():
         return RECOVERY_TRADE_PCT
     if probation.active:
         return probation.current_size()
@@ -1644,11 +1806,17 @@ def active_trade_size(balance: float) -> float:
 
 
 def in_clawback() -> bool:
-    """True while clawing back a loss (recovery OR probation ramp). In this state
-    the laddering overlay is capped at the active base — it may size DOWN but
-    never UP — so a win rate earned at small stakes cannot re-arm full size in one
-    jump."""
-    return recovery.active or probation.active
+    """True while clawing back a loss at a REDUCED base (standard recovery OR
+    probation ramp). In this state the laddering overlay is capped at the active
+    base — it may size DOWN but never UP — so a win rate earned at small stakes
+    cannot re-arm full size in one jump.
+
+    Recovery Mode "No Stake Change" is deliberately NOT a clawback state here: the
+    stake never dropped, so the ladder must keep working normally (size up and
+    down) throughout — that's the whole point of the toggle."""
+    if recovery.active and not recovery_no_stake_change_enabled():
+        return True
+    return probation.active
 
 
 def on_trade_settled(won: bool, trade_rec: dict, current_balance: float) -> None:
@@ -1671,6 +1839,67 @@ def probation_record(won: bool, trade_rec: dict, current_balance: "float | None"
     if (trade_rec or {}).get("mode_at_entry") != "probation":
         return
     probation.record_result(bool(won), current_balance)
+
+
+def recovery_winrate_record(won: bool, trade_rec: dict) -> None:
+    """Feed the recovery win-rate restore: tally a settled trade that was ENTERED
+    while recovery was active (mode_at_entry == 'recovery'). The trade whose loss
+    ARMED recovery is stamped 'normal', so it correctly does not count here."""
+    if (trade_rec or {}).get("mode_at_entry") != "recovery":
+        return
+    recovery.record_result(bool(won))
+
+
+def stake_below_base(balance: float) -> bool:
+    """True when the current per-trade stake is being held BELOW the full/base
+    normal stake — either because the active-mode fraction is reduced (standard
+    recovery drops it to RECOVERY_TRADE_PCT) or because the laddering overlay is
+    currently demoted/paused under 1× base. Used as the precondition for the
+    recovery win-rate restore."""
+    if active_trade_fraction() < effective_normal_trade_pct() - 1e-9:
+        return True
+    if stake_ladder is not None:
+        try:
+            return stake_ladder.peek_multiplier(balance) < 1.0 - 1e-9
+        except Exception:      # pragma: no cover - never let a peek break the loop
+            return False
+    return False
+
+
+def maybe_winrate_restore(current_balance: float) -> bool:
+    """Recovery win-rate restore (owner directive). While recovery is active and
+    the stake is being held below the base, a strong recovery-scoped win rate
+    (≥ RECOVERY_WINRATE_RESTORE_PCT over ≥ RECOVERY_WINRATE_MIN_TRADES settled
+    recovery trades) returns straight to the full/original stake and resumes
+    laddering — bypassing the slow probation ramp. Returns True when it fires."""
+    if not RECOVERY_WINRATE_RESTORE_ENABLED or not recovery.active:
+        return False
+    n = recovery.wins + recovery.losses
+    if n < RECOVERY_WINRATE_MIN_TRADES:
+        return False
+    wr = recovery.winrate()
+    if wr < RECOVERY_WINRATE_RESTORE_PCT:
+        return False
+    if not stake_below_base(current_balance):
+        return False
+    wins, losses = recovery.wins, recovery.losses
+    recovery.clear_for_restore()          # exit recovery, no probation ramp
+    probation.cancel()                    # belt-and-suspenders: ensure no ramp
+    # Return to the base stake and let the ladder ladder up from here again.
+    if stake_ladder is not None:
+        stake_ladder.resume_size_up()
+    pct = effective_normal_trade_pct() * 100
+    log.warning("Recovery WIN-RATE RESTORE │ WR %.0f%% (%dW/%dL) ≥ %.0f%% — back to "
+                "full stake %.1f%%, laddering resumed (no ramp).",
+                wr * 100, wins, losses, RECOVERY_WINRATE_RESTORE_PCT * 100, pct)
+    tg.send_status_message(
+        f"🚀 RECOVERY WIN-RATE RESTORE\n"
+        f"Win rate {wr*100:.0f}% ({wins}W/{losses}L) over your recovery trades "
+        f"hit the {RECOVERY_WINRATE_RESTORE_PCT*100:.0f}% mark.\n"
+        f"Returning to the full stake ({pct:.1f}% of balance) and resuming "
+        f"laddering — no slow grind, no ramp-back."
+    )
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2491,6 +2720,8 @@ def resolve_open_orders() -> None:
             on_trade_settled(won, trade, paper_balance)
             # Probation RAMP hook: a probation-mode trade advances/steps the ramp.
             probation_record(won, trade, paper_balance)
+            # Recovery win-rate restore feed: tally trades taken WHILE in recovery.
+            recovery_winrate_record(won, trade)
 
             log.info("📋 PAPER SETTLED │ %s │ %s │ %s │ sim=%s │ bal=$%.2f",
                      ticker[-15:], side, result.upper(), sim, paper_balance)
@@ -2620,6 +2851,8 @@ def resolve_open_orders() -> None:
             on_trade_settled(won, trade, balance)
             # Probation RAMP hook: a probation-mode trade advances/steps the ramp.
             probation_record(won, trade, balance)
+            # Recovery win-rate restore feed: tally trades taken WHILE in recovery.
+            recovery_winrate_record(won, trade)
 
             wlb = wilson_lower_bound(live_wins, live_wins + live_losses)
             log.info("✅ SETTLED │ %s │ %s │ $%.2f │ WR=%d/%d │ LB=%.1f%%",
@@ -2941,7 +3174,7 @@ def place_order(ticker: str, direction: str, bet_dollars: float,
 
 def telegram_boot(balance: float) -> None:
     mode = "📋 PAPER" if DEMO_MODE else "🔴 LIVE"
-    tg.send_telegram_message(
+    tg.send_status_message(
         f"🤖 FlipPulse {BOT_VERSION} STARTED\n"
         f"{mode} │ State: {session_state.value}\n"
         f"Balance: ${balance:.2f}\n"
@@ -2961,6 +3194,200 @@ def telegram_halt(reason: str, balance: float) -> None:
     tg.send_telegram_message(
         f"⛔ HALTED (PERMANENT)\nReason: {reason}\nBalance: ${balance:.2f}"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRADE-WINDOW STATS + SCHEDULED REPORT  (twice-daily P&L / win rate briefing)
+#
+# One source of truth for time-windowed performance: trade_window_stats scans the
+# in-memory trade_history (a maxlen=500 deque — best-effort, this-run only) and
+# tallies wins/losses/PnL over settled trades since a cutoff. Used by both the
+# scheduled 9am/9pm report and the /winrate command's snapshot fields, so the two
+# always agree. Works identically in paper and live (both write result + pnl onto
+# the trade rec at settlement).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _report_tz():
+    """The tz the scheduled report fires in; UTC if REPORT_TIMEZONE can't load."""
+    if ZoneInfo is None:
+        return timezone.utc
+    try:
+        return ZoneInfo(REPORT_TIMEZONE)
+    except Exception:
+        log.warning("REPORT_TIMEZONE '%s' unavailable (no tzdata?) — using UTC.",
+                    REPORT_TIMEZONE)
+        return timezone.utc
+
+
+def _report_hours() -> "list[int]":
+    """Parsed, sorted, de-duplicated valid hours (0–23) from REPORT_HOURS."""
+    out = set()
+    for tok in REPORT_HOURS_RAW.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            h = int(tok)
+        except ValueError:
+            continue
+        if 0 <= h <= 23:
+            out.add(h)
+    return sorted(out)
+
+
+def _parse_trade_epoch(rec: dict) -> "float | None":
+    """Epoch seconds for a trade rec's entry timestamp, or None if unparseable."""
+    ts = rec.get("time")
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def trade_window_stats(since_epoch: "float | None" = None) -> "tuple[int, int, float]":
+    """(wins, losses, pnl) over SETTLED trades in trade_history whose entry time is
+    at/after since_epoch (None = all in memory). PnL sums the per-trade realized
+    pnl the settlement path stamps on each rec. Never raises."""
+    wins = losses = 0
+    pnl = 0.0
+    for t in trade_history:
+        if t.get("result") not in ("win", "loss"):
+            continue
+        if since_epoch is not None:
+            te = _parse_trade_epoch(t)
+            if te is None or te < since_epoch:
+                continue
+        if t["result"] == "win":
+            wins += 1
+        else:
+            losses += 1
+        try:
+            pnl += float(t.get("pnl", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            pass
+    return wins, losses, round(pnl, 2)
+
+
+def _tz_day_start_epoch(days_ago: int = 0, tz=None) -> float:
+    """Epoch seconds for local midnight `days_ago` days back, in the report tz.
+    days_ago=0 → the start of today's local calendar day."""
+    tz = tz or _report_tz()
+    d = (datetime.now(tz) - timedelta(days=days_ago)).date()
+    return datetime(d.year, d.month, d.day, tzinfo=tz).timestamp()
+
+
+def _fmt_winrate(wins: int, losses: int) -> str:
+    total = wins + losses
+    if not total:
+        return "no settled trades yet"
+    return f"{wins / total * 100:.0f}% ({wins}W/{losses}L)"
+
+
+def build_scheduled_report(balance: float) -> str:
+    """The twice-daily briefing body: balance, today's P&L + win rate, and the
+    all-time (this-run) figures. Pure — takes the balance, reads shared state."""
+    tz = _report_tz()
+    now_local = datetime.now(tz)
+    d_w, d_l, d_pnl = trade_window_stats(_tz_day_start_epoch(0, tz))
+    a_w, a_l, a_pnl = trade_window_stats(None)
+    mode   = "PAPER 🟡" if DEMO_MODE else "LIVE 🔴"
+    active = ("Recovery" if recovery.active
+              else "Probation ramp" if probation.active else "Normal")
+    label  = "Morning" if now_local.hour < 12 else "Evening"
+    return (
+        f"📊 FlipPulse {label} Report — {now_local.strftime('%b %d, %I:%M %p %Z')}\n"
+        f"Mode: {mode} · {active}\n"
+        f"🏦 Balance: ${balance:,.2f}\n"
+        f"— Today —\n"
+        f"💵 P&L: ${d_pnl:+,.2f}\n"
+        f"🎯 Win rate: {_fmt_winrate(d_w, d_l)}\n"
+        f"— All-time (this run) —\n"
+        f"💵 P&L: ${a_pnl:+,.2f}\n"
+        f"🎯 Win rate: {_fmt_winrate(a_w, a_l)}"
+    )
+
+
+class ReportScheduler:
+    """Fires build_scheduled_report() at the configured local hours, once per slot.
+    Persists the last slot sent so a redeploy can't double-send and a long-down
+    slot is skipped rather than delivered stale. Mutated in place, never raises."""
+
+    def __init__(self, path: str, persist: bool) -> None:
+        self.last_slot: str = ""
+        self._path    = path
+        self._persist = persist
+        if self._persist:
+            self._load()
+
+    def _latest_past_slot(self, now_local: datetime):
+        """The most recent scheduled datetime ≤ now_local (today's hours, or
+        yesterday's last hour before the first fire of the day). None if none."""
+        hours = _report_hours()
+        if not hours:
+            return None
+        tz = now_local.tzinfo
+        candidates = []
+        for d_off in (0, 1):
+            day = (now_local - timedelta(days=d_off)).date()
+            for h in hours:
+                candidates.append(datetime(day.year, day.month, day.day, h, tzinfo=tz))
+        past = [c for c in candidates if c <= now_local]
+        return max(past) if past else None
+
+    def maybe_send(self, balance: float) -> bool:
+        """Check the clock and send the briefing if a fresh slot has arrived.
+        Returns True only when a message was actually sent."""
+        if not REPORT_SCHEDULE_ENABLED:
+            return False
+        try:
+            now_local = datetime.now(_report_tz())
+            slot_dt   = self._latest_past_slot(now_local)
+            if slot_dt is None:
+                return False
+            slot_key = slot_dt.strftime("%Y-%m-%d %H")
+            if slot_key == self.last_slot:
+                return False
+            # Too far past the scheduled time (slept/down through it) → consume the
+            # slot silently so the next slot fires cleanly, but don't send stale.
+            if (now_local - slot_dt).total_seconds() > REPORT_MAX_LATE_SECS:
+                self.last_slot = slot_key
+                self._save()
+                return False
+            sent = tg.send_telegram_message(build_scheduled_report(balance))
+            # Mark consumed regardless of send success so a Telegram outage doesn't
+            # make us retry the same slot every cycle for hours.
+            self.last_slot = slot_key
+            self._save()
+            return bool(sent)
+        except Exception as e:  # pragma: no cover - observability must not break trading
+            log.debug("scheduled report check failed: %s", e)
+            return False
+
+    def _save(self) -> None:
+        if not self._persist:
+            return
+        try:
+            tmp = f"{self._path}.tmp"
+            with open(tmp, "w") as f:
+                json.dump({"last_slot": self.last_slot}, f)
+            os.replace(tmp, self._path)
+        except OSError as e:
+            log.warning("Report │ state save failed: %s", e)
+
+    def _load(self) -> None:
+        try:
+            with open(self._path) as f:
+                self.last_slot = str(json.load(f).get("last_slot", "") or "")
+        except (OSError, ValueError):
+            return
+
+
+report_scheduler = ReportScheduler(REPORT_STATE_PATH, REPORT_PERSIST)
 
 
 def write_status_snapshot(balance: float) -> None:
@@ -2985,6 +3412,12 @@ def write_status_snapshot(balance: float) -> None:
         rate_pct, lo_pct, hi_pct = wilson_confidence(wins, total) if total > 0 else (0.0, 0.0, 0.0)
         active_mode = ("recovery" if recovery.active
                        else "probation" if probation.active else "normal")
+        # Time-windowed W/L + PnL (report-tz calendar), for /winrate and /pnl and
+        # the dashboard. "week" is a rolling 7 days. Best-effort over in-memory
+        # history (same source as the scheduled report), so the two always agree.
+        d_w, d_l, d_pnl = trade_window_stats(_tz_day_start_epoch(0))
+        w_w, w_l, w_pnl = trade_window_stats(_tz_day_start_epoch(6))
+        _wr = lambda w, l: round(w / (w + l) * 100, 1) if (w + l) else 0.0
         snapshot = {
             "version": BOT_VERSION,
             "trading_format": TRADING_FORMAT,
@@ -3000,7 +3433,22 @@ def write_status_snapshot(balance: float) -> None:
             "losses": losses,
             "win_rate": rate_pct,
             "wilson_ci": [lo_pct, hi_pct],
+            # Time-windowed figures for /winrate and /pnl (report-tz; week = 7d).
+            "wins_today": d_w, "losses_today": d_l,
+            "win_rate_today": _wr(d_w, d_l), "pnl_today": d_pnl,
+            "wins_week": w_w, "losses_week": w_l,
+            "win_rate_week": _wr(w_w, w_l), "pnl_week": w_pnl,
+            "report_timezone": REPORT_TIMEZONE,
             "active_mode": active_mode,
+            # Recovery Mode "No Stake Change" toggle — surfaced so /status, the
+            # dashboard, and the /recoverynostakechange command can report it.
+            "recovery_no_stake_change": recovery_no_stake_change_enabled(),
+            # Recovery-scoped win rate + the restore threshold, so /status can show
+            # progress toward the win-rate fast-exit while recovery is active.
+            "recovery_wins": recovery.wins,
+            "recovery_losses": recovery.losses,
+            "recovery_win_rate": round(recovery.winrate() * 100, 1),
+            "recovery_winrate_restore_pct": round(RECOVERY_WINRATE_RESTORE_PCT * 100, 1),
             "active_trade_pct": round(active_trade_fraction() * 100, 2),
             "active_trade_size": round(active_trade_size(balance), 2),
             # Full-size risk knob + the hard bounds the Telegram /risk command
@@ -3281,7 +3729,7 @@ def _maybe_restart_for_mode_change() -> None:
             return
         new_mode = "PAPER 🟡" if target else "LIVE 🔴"
         log.warning("Mode flip requested → %s. Bot is flat; restarting to apply.", new_mode)
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"🔀 Switching to {new_mode}. Restarting now to apply — back in a few "
             f"seconds trading in {'paper' if target else 'LIVE (real money)'} mode.")
     except Exception as e:  # a flip must never crash the loop; retry next cycle
@@ -3419,15 +3867,18 @@ def main() -> None:
                 # catch the UTC rollover that clears it (maybe_roll_session_day),
                 # then resume automatically — no redeploy needed.
                 halt_bal = paper_balance if DEMO_MODE else get_live_balance()
+                # The scheduled briefing still lands while halted (the day's
+                # summary is exactly what a paused customer wants to see).
+                report_scheduler.maybe_send(halt_bal)
                 if not maybe_roll_session_day(halt_bal):
                     log.info("Halted for the day — paused until UTC rollover.")
                     time.sleep(300)
                     continue
 
-            # Telegram policy (owner directive): messages fire ONLY on a trade
-            # entry, a trade settlement, or a triggered guardrail — no periodic
-            # heartbeat, no scheduled summaries. Liveness is pull-based: the
-            # /status and /health-log commands answer on demand.
+            # Telegram policy: messages fire on a trade entry, a trade settlement,
+            # a triggered guardrail, or the twice-daily scheduled briefing
+            # (report_scheduler, below). No other periodic heartbeat — liveness is
+            # otherwise pull-based via the /status and /health-log commands.
             ingest_btc_price()
 
             market = get_active_market()
@@ -3447,18 +3898,28 @@ def main() -> None:
 
             current_balance = paper_balance if DEMO_MODE else get_live_balance()
             maybe_roll_session_day(current_balance)
-            # Recovery EXIT check runs every cycle, independent of trading, so
-            # the bot can never wedge in recovery once balance reaches target.
-            # On a real exit, begin the graduated probation ramp instead of
-            # snapping straight back to full size (no-op if the ramp is disabled
-            # or there is no sub-full room, in which case sizing resumes normal).
-            if recovery.maybe_exit(current_balance):
-                probation.start(_probation_rungs(), effective_normal_trade_pct())
+            # Recovery win-rate restore runs first: a strong recovery win rate
+            # while the stake is held below base fast-tracks straight back to the
+            # full stake + laddering (no balance target, no probation ramp).
+            # Otherwise fall through to the normal balance-target exit.
+            if not maybe_winrate_restore(current_balance):
+                # Recovery EXIT check runs every cycle, independent of trading, so
+                # the bot can never wedge in recovery once balance reaches target.
+                # On a real exit, begin the graduated probation ramp instead of
+                # snapping straight back to full size (no-op if the ramp is disabled
+                # or there is no sub-full room, in which case sizing resumes normal).
+                # In "No Stake Change" mode the stake never dropped, so there is
+                # nothing to ramp back from — skip the ramp entirely.
+                if recovery.maybe_exit(current_balance) and not recovery_no_stake_change_enabled():
+                    probation.start(_probation_rungs(), effective_normal_trade_pct())
             # Performance-fee billing: close the month + report the fee at the UTC
             # month boundary (observability only; never moves money).
             billing.maybe_month_rollover(current_balance)
             run_decision(market, current_balance)
             write_status_snapshot(current_balance)
+            # Twice-daily P&L + win-rate briefing (9am/9pm ET by default). Idempotent
+            # per slot, so calling it every cycle only fires once per scheduled time.
+            report_scheduler.maybe_send(current_balance)
 
             resolve_cycle += 1
             if resolve_cycle % 3 == 0:
@@ -3505,7 +3966,7 @@ def main() -> None:
 
     final = paper_balance if DEMO_MODE else get_live_balance()
     log.info("Shutdown. Final balance: $%.2f", final)
-    tg.send_telegram_message(f"🛑 FlipPulse {BOT_VERSION} stopped. Final: ${final:.2f}")
+    tg.send_status_message(f"🛑 FlipPulse {BOT_VERSION} stopped. Final: ${final:.2f}")
 
 
 if __name__ == "__main__":
