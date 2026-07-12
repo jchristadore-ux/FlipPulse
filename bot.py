@@ -1085,7 +1085,7 @@ class RecoveryState:
             log.warning("No-Stake-Change mode ON — keeping trade size at %.1f%% "
                         "of balance; laddering stays active.",
                         effective_normal_trade_pct() * 100)
-            tg.send_telegram_message(
+            tg.send_status_message(
                 f"🛟 RECOVERY MODE ACTIVATED — No Stake Change\n"
                 f"Recovery target: ${self.target_balance:.2f}\n"
                 f"Trade size stays at {effective_normal_trade_pct()*100:.1f}% of "
@@ -1094,7 +1094,7 @@ class RecoveryState:
             )
         else:
             log.warning("Switching trade size to: %.1f%% of balance", RECOVERY_TRADE_PCT * 100)
-            tg.send_telegram_message(
+            tg.send_status_message(
                 f"🛟 RECOVERY MODE ACTIVATED\n"
                 f"Recovery target: ${self.target_balance:.2f}\n"
                 f"Trade size → {RECOVERY_TRADE_PCT*100:.1f}% of balance "
@@ -1121,7 +1121,7 @@ class RecoveryState:
             # Stake never dropped, so there is nothing to ramp back to and no
             # reason to pause the ladder — exit is a clean no-op on sizing.
             log.info("No-Stake-Change mode — sizing already at full; no ramp/pause.")
-            tg.send_telegram_message(
+            tg.send_status_message(
                 f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
                 f"${reached:.2f}\nStake never changed (No Stake Change mode) — "
                 f"nothing to ramp back, laddering carries on."
@@ -1137,7 +1137,7 @@ class RecoveryState:
             stake_ladder.pause_size_up(RECOVERY_LADDER_PAUSE_TRADES)
             msg += (f"\nLadder size-up paused for "
                     f"{RECOVERY_LADDER_PAUSE_TRADES} trades.")
-        tg.send_telegram_message(msg)
+        tg.send_status_message(msg)
         return True
 
     def clear_for_restore(self) -> None:
@@ -1271,7 +1271,7 @@ class ProbationState:
         log.warning("Probation ramp START (%s) │ base %s → full %s via %s",
                     reason, _pct(self.rungs[0]), _pct(self.full_size),
                     " → ".join(_pct(r) for r in self.rungs + [self.full_size]))
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"🪜 PROBATION RAMP STARTED\n"
             f"{reason}: re-entering at {_pct(self.rungs[0])} of balance; will climb "
             f"{' → '.join(_pct(r) for r in self.rungs + [self.full_size])} "
@@ -1322,7 +1322,7 @@ class ProbationState:
         self.streak = 0                 # must re-prove the edge at the larger size
         log.warning("Probation ramp UP → base %.1f%% (rung %d/%d).",
                     self.current_size() * 100, self.level + 1, len(self.rungs))
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"🪜 PROBATION RAMP UP → {self.current_size()*100:.1f}% "
             f"(rung {self.level + 1}/{len(self.rungs)})"
         )
@@ -1334,7 +1334,7 @@ class ProbationState:
             return
         self.level -= 1
         log.warning("Probation ramp DOWN → base %.1f%% (loss).", self.current_size() * 100)
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"🪜 PROBATION RAMP DOWN → {self.current_size()*100:.1f}% (loss)"
         )
 
@@ -1349,7 +1349,7 @@ class ProbationState:
         # on a win rate banked at smaller stakes.
         if stake_ladder is not None and RECOVERY_LADDER_PAUSE_TRADES > 0:
             stake_ladder.pause_size_up(RECOVERY_LADDER_PAUSE_TRADES)
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"✅ PROBATION COMPLETE — full size {frac*100:.1f}% restored."
         )
 
@@ -1605,7 +1605,7 @@ class BillingState:
                 "hwm_after": self.hwm, "demo_mode": DEMO_MODE,
             })
             mode = "PAPER (not billable)" if DEMO_MODE else "LIVE"
-            tg.send_telegram_message(
+            tg.send_status_message(
                 f"💵 MONTHLY BILLING — {ended} [{mode}]\n"
                 f"End balance: ${balance:,.2f}\n"
                 f"Month change: ${gross_change:+,.2f}\n"
@@ -1892,7 +1892,7 @@ def maybe_winrate_restore(current_balance: float) -> bool:
     log.warning("Recovery WIN-RATE RESTORE │ WR %.0f%% (%dW/%dL) ≥ %.0f%% — back to "
                 "full stake %.1f%%, laddering resumed (no ramp).",
                 wr * 100, wins, losses, RECOVERY_WINRATE_RESTORE_PCT * 100, pct)
-    tg.send_telegram_message(
+    tg.send_status_message(
         f"🚀 RECOVERY WIN-RATE RESTORE\n"
         f"Win rate {wr*100:.0f}% ({wins}W/{losses}L) over your recovery trades "
         f"hit the {RECOVERY_WINRATE_RESTORE_PCT*100:.0f}% mark.\n"
@@ -3174,7 +3174,7 @@ def place_order(ticker: str, direction: str, bet_dollars: float,
 
 def telegram_boot(balance: float) -> None:
     mode = "📋 PAPER" if DEMO_MODE else "🔴 LIVE"
-    tg.send_telegram_message(
+    tg.send_status_message(
         f"🤖 FlipPulse {BOT_VERSION} STARTED\n"
         f"{mode} │ State: {session_state.value}\n"
         f"Balance: ${balance:.2f}\n"
@@ -3729,7 +3729,7 @@ def _maybe_restart_for_mode_change() -> None:
             return
         new_mode = "PAPER 🟡" if target else "LIVE 🔴"
         log.warning("Mode flip requested → %s. Bot is flat; restarting to apply.", new_mode)
-        tg.send_telegram_message(
+        tg.send_status_message(
             f"🔀 Switching to {new_mode}. Restarting now to apply — back in a few "
             f"seconds trading in {'paper' if target else 'LIVE (real money)'} mode.")
     except Exception as e:  # a flip must never crash the loop; retry next cycle
@@ -3966,7 +3966,7 @@ def main() -> None:
 
     final = paper_balance if DEMO_MODE else get_live_balance()
     log.info("Shutdown. Final balance: $%.2f", final)
-    tg.send_telegram_message(f"🛑 FlipPulse {BOT_VERSION} stopped. Final: ${final:.2f}")
+    tg.send_status_message(f"🛑 FlipPulse {BOT_VERSION} stopped. Final: ${final:.2f}")
 
 
 if __name__ == "__main__":

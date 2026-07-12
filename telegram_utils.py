@@ -4,10 +4,16 @@ telegram_utils.py — Telegram notification module for FlipPulse
 Responsibilities:
   - Validate credentials at startup
   - Send messages with up to 2 retries
-  - Fire trade ENTRY and settlement WIN/LOSS alerts, plus guardrail/halt
-    alerts. NO periodic messages (owner directive): no heartbeat, no scheduled
-    summaries — a message means a trade or a triggered gate. Liveness checks
-    are pull-based via the /status and /health-log commands (command_bot.py).
+  - Fire trade ENTRY and settlement WIN/LOSS alerts, plus safety-critical
+    guardrail/halt alerts. In minimal-alerts mode (the default — owner directive),
+    the ONLY messages sent are: trade entry, trade settlement, the twice-daily
+    9am/9pm P&L + win-rate summary (bot.py's report_scheduler), and hard safety
+    alerts (permanent HALT, volatility circuit breaker, boot failure). All other
+    lifecycle/status chatter — boot summary, recovery/probation mode-change
+    notices, monthly billing, mode-flip restart, shutdown — routes through
+    send_status_message() and is suppressed (still logged, still on /status and
+    the daily summary). Set TELEGRAM_MINIMAL_ALERTS=false for the old, chattier
+    behavior. Liveness is otherwise pull-based via /status and /health-log.
 
 Design rules:
   - Never raises — all errors logged and swallowed
@@ -61,6 +67,35 @@ def _float_env(name: str, default: float) -> float:
 # cached on the file's mtime and never raises (a missing/corrupt file = all on).
 TELEGRAM_PREFS_PATH = os.environ.get("TELEGRAM_PREFS_PATH", "").strip() or "/data/telegram_prefs.json"
 _prefs_cache: "tuple[float, dict] | None" = None  # (mtime, prefs)
+
+
+# ── Minimal-alerts mode (owner directive) ─────────────────────────────────────
+# When ON (the default), FlipPulse sends ONLY the messages a customer actually
+# wants: a trade ENTRY alert, a trade SETTLEMENT (win/loss) alert, and the
+# twice-daily 9am/9pm P&L + win-rate summary. All the lifecycle/status "chatter" —
+# the boot summary, recovery/probation mode-change notices, the monthly billing
+# report, the mode-flip restart notice, and the shutdown notice — is suppressed
+# (it is still written to the logs, and still visible via /status and the daily
+# summary). SAFETY-critical alerts are never suppressed: a permanent HALT, the
+# volatility circuit breaker, and a boot failure always go through. Set
+# TELEGRAM_MINIMAL_ALERTS=false to restore the old, chattier behavior.
+def minimal_alerts() -> bool:
+    raw = os.environ.get("TELEGRAM_MINIMAL_ALERTS", "").strip().lower()
+    if not raw:
+        return True                          # default: quiet
+    return raw in ("true", "1", "yes", "on")
+
+
+def send_status_message(text: str) -> bool:
+    """A NON-essential lifecycle/status message (boot, recovery/probation notices,
+    billing, mode-flip restart, shutdown). Suppressed when minimal-alerts mode is
+    on; otherwise delivered like any other message. Safety-critical alerts must NOT
+    use this — they call send_telegram_message() directly so they are always sent."""
+    if minimal_alerts():
+        log.debug("Status message suppressed (minimal-alerts mode): %s",
+                  text.split(chr(10))[0])
+        return False
+    return send_telegram_message(text)
 
 
 def notifications_enabled(category: str) -> bool:

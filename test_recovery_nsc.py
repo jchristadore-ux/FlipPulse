@@ -117,8 +117,10 @@ def test_toggle_flips_live_without_reentry(monkeypatch):
 
 # ── enter() / maybe_exit() paths ──────────────────────────────────────────────
 def test_enter_nsc_sends_no_stake_change_message(monkeypatch):
+    # Recovery notices are lifecycle "status" messages (gated by minimal-alerts
+    # mode), so capture send_status_message directly to assert the copy.
     sent = []
-    monkeypatch.setattr(bot.tg, "send_telegram_message",
+    monkeypatch.setattr(bot.tg, "send_status_message",
                         lambda msg: sent.append(msg) or True)
     monkeypatch.setattr(bot, "RECOVERY_NO_STAKE_CHANGE", True)
     monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
