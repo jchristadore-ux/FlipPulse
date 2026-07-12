@@ -18,9 +18,10 @@ case-sensitive** (`/WinRate` and `/winrate` both work).
 | `/winrate` | Your win rate **today**, **this week**, and **all-time**. |
 | `/winrate day` | Just today's win rate. |
 | `/winrate week` | Just this week's win rate (rolling 7 days). |
-| `/pnl` | Your profit/loss **today**, **this week**, and for the session. |
+| `/pnl` | Your profit/loss **today**, **this week**, and **all-time**. |
 | `/pnl day` | Just today's P&L. |
 | `/pnl week` | Just this week's P&L. |
+| `/balance` | Your current balance and P&L at a glance. |
 | `/health-log` | The last 20 lines of the bot's activity log. Add a number for more, e.g. `/health-log 40`. |
 
 > Twice a day, at **9:00am and 9:00pm (US Eastern)**, the bot messages you a

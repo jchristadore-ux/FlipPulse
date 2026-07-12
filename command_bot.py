@@ -34,7 +34,6 @@ import json
 import logging
 import os
 import threading
-import time
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from typing import List, Optional
@@ -80,6 +79,7 @@ HELP = (
     "/status — mode, balance, P&L, win rate, positions, recovery state\n"
     "/winrate [day|week] — win rate today, this week, or all-time (default: all three)\n"
     "/pnl [day|week] — profit/loss today, this week, or all-time (default: all three)\n"
+    "/balance — current balance + P&L at a glance\n"
     "/health-log [n] — last n lines of the activity log (default 20)\n"
     "\n"
     "🎚 Tune your bot\n"
@@ -149,7 +149,7 @@ class CommandHandler:
         compact = cmd.replace("-", "")
         args = parts[1:]
 
-        if cmd in ("help", "start"):
+        if cmd in ("help", "start", "commands"):
             return HELP
         if cmd == "status":
             return self._do_status()
@@ -161,6 +161,8 @@ class CommandHandler:
             return self._do_winrate(args)
         if compact in ("pnl", "pandl", "profit", "pl"):
             return self._do_pnl(args)
+        if compact in ("balance", "bal"):
+            return self._do_pnl([])   # balance headline + P&L at a glance
         if compact in ("recoverynostakechange", "recoverymodenostakechange",
                        "rnsc", "nostakechange"):
             return self._do_recovery_nsc(args, chat_id)
@@ -217,6 +219,9 @@ class CommandHandler:
         if snap.get("recovery_no_stake_change"):
             lines.append("Recovery: No-Stake-Change ON (stake held while clawing back)")
         if active_mode == "recovery":
+            tgt = snap.get("recovery_target")
+            if isinstance(tgt, (int, float)) and tgt > 0:
+                lines.append(f"Recovery target: ${tgt:,.2f} (balance to claw back to)")
             rw = snap.get("recovery_wins", 0) or 0
             rl = snap.get("recovery_losses", 0) or 0
             if rw + rl:
@@ -593,10 +598,12 @@ class TelegramListener:
     def _send(self, chat_id, text: str) -> None:
         self._api("sendMessage", {"chat_id": chat_id, "text": text})
 
-    def poll_once(self) -> None:
+    def poll_once(self) -> bool:
+        """One getUpdates long-poll cycle. Returns False when the call itself
+        failed (network error or a non-ok response) so the caller can back off."""
         data = self._api("getUpdates", {"offset": self._offset, "timeout": 50})
         if not data or not data.get("ok"):
-            return
+            return False
         for upd in data.get("result", []):
             self._offset = upd["update_id"] + 1
             msg = upd.get("message") or upd.get("edited_message") or {}
@@ -610,15 +617,21 @@ class TelegramListener:
                 reply = f"Error: {exc}"
             if reply:
                 self._send(chat, reply)
+        return True
 
     def _run(self) -> None:
         log.info("Telegram command listener started (/status, /health-log).")
         while not self._stop.is_set():
             try:
-                self.poll_once()
+                if not self.poll_once():
+                    # getUpdates failed — a network blip, or HTTP 409 while a
+                    # second instance holds the long poll during a redeploy
+                    # overlap. Without this pause the thread busy-loops and
+                    # hammers Telegram; _stop.wait keeps stop() responsive.
+                    self._stop.wait(5)
             except Exception as exc:  # pragma: no cover
                 log.debug("listener cycle error: %s", exc)
-                time.sleep(5)
+                self._stop.wait(5)
 
     def start(self) -> "TelegramListener":
         if self._thread and self._thread.is_alive():
