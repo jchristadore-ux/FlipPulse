@@ -4,3 +4,7 @@
 requests>=2.31.0
 cryptography>=41.0.0
 cffi>=1.15.0
+# IANA timezone database — lets zoneinfo resolve REPORT_TIMEZONE (e.g.
+# America/New_York for the 9am/9pm scheduled reports) on slim base images that
+# ship no system tzdata. Without it the scheduler silently falls back to UTC.
+tzdata>=2024.1

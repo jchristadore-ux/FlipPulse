@@ -322,6 +322,10 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone, timedelta
 from enum import Enum
+try:                                         # stdlib since 3.9; needs tzdata on slim images
+    from zoneinfo import ZoneInfo
+except Exception:                            # pragma: no cover - ancient runtime
+    ZoneInfo = None                          # type: ignore
 from typing import List, Optional, Set, Tuple
 
 import requests
@@ -619,6 +623,29 @@ PROBATION_RUNG_STEP_PCT      = _env_float("PROBATION_RUNG_STEP_PCT", 0.035)
 # works even on a manual deploy that forgets the env var. On a local run with
 # no /data the per-cycle write fails silently (caught in the writer) — harmless.
 STATUS_SNAPSHOT_PATH = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip() or "/data/status_snapshot.json"
+
+# ── Scheduled Telegram report (twice-daily P&L + win rate) ─────────────────────
+# The historical owner directive was "no periodic Telegram messages." This is the
+# one deliberate exception: a concise briefing at fixed local times (default 9am
+# and 9pm US Eastern) carrying balance, today's P&L, today's win rate, and the
+# all-time (this-run) figures. Everything else stays event-driven. Fires from the
+# main loop's wall-clock check (like the session-day / month rollovers), so no
+# extra thread. The slot that last fired is persisted to REPORT_STATE_PATH so a
+# redeploy near a scheduled time can't double-send, and a slot missed while the
+# bot was down for longer than REPORT_MAX_LATE_SECS is skipped rather than sent
+# stale. Turn the whole feature off with REPORT_SCHEDULE_ENABLED=false.
+REPORT_SCHEDULE_ENABLED = _env_bool("REPORT_SCHEDULE_ENABLED", True)
+# IANA timezone the report hours are interpreted in. Needs the tzdata package
+# (in requirements.txt) on slim images; falls back to UTC if it can't be loaded.
+REPORT_TIMEZONE   = os.environ.get("REPORT_TIMEZONE", "").strip() or "America/New_York"
+# Comma-separated hours (0–23, in REPORT_TIMEZONE) to fire at. Default 9am & 9pm.
+REPORT_HOURS_RAW  = os.environ.get("REPORT_HOURS", "").strip() or "9,21"
+REPORT_STATE_PATH = os.environ.get("REPORT_STATE_PATH", "").strip() or "/data/report_state.json"
+REPORT_PERSIST    = _env_bool("REPORT_PERSIST", True)
+# A scheduled slot is only sent if the bot reaches it within this many seconds of
+# the scheduled time; a slot the bot slept/was-down through for longer is skipped
+# (marked consumed) so a stale briefing never lands hours late. Default 2h.
+REPORT_MAX_LATE_SECS = _env_int("REPORT_MAX_LATE_SECS", 7200)
 
 # ── Performance-fee billing (high-water mark) — PLACEHOLDER, DISABLED ──────────
 # TEMPORARILY REMOVED: the performance fee is not currently charged, so this
@@ -2963,6 +2990,200 @@ def telegram_halt(reason: str, balance: float) -> None:
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TRADE-WINDOW STATS + SCHEDULED REPORT  (twice-daily P&L / win rate briefing)
+#
+# One source of truth for time-windowed performance: trade_window_stats scans the
+# in-memory trade_history (a maxlen=500 deque — best-effort, this-run only) and
+# tallies wins/losses/PnL over settled trades since a cutoff. Used by both the
+# scheduled 9am/9pm report and the /winrate command's snapshot fields, so the two
+# always agree. Works identically in paper and live (both write result + pnl onto
+# the trade rec at settlement).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _report_tz():
+    """The tz the scheduled report fires in; UTC if REPORT_TIMEZONE can't load."""
+    if ZoneInfo is None:
+        return timezone.utc
+    try:
+        return ZoneInfo(REPORT_TIMEZONE)
+    except Exception:
+        log.warning("REPORT_TIMEZONE '%s' unavailable (no tzdata?) — using UTC.",
+                    REPORT_TIMEZONE)
+        return timezone.utc
+
+
+def _report_hours() -> "list[int]":
+    """Parsed, sorted, de-duplicated valid hours (0–23) from REPORT_HOURS."""
+    out = set()
+    for tok in REPORT_HOURS_RAW.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            h = int(tok)
+        except ValueError:
+            continue
+        if 0 <= h <= 23:
+            out.add(h)
+    return sorted(out)
+
+
+def _parse_trade_epoch(rec: dict) -> "float | None":
+    """Epoch seconds for a trade rec's entry timestamp, or None if unparseable."""
+    ts = rec.get("time")
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def trade_window_stats(since_epoch: "float | None" = None) -> "tuple[int, int, float]":
+    """(wins, losses, pnl) over SETTLED trades in trade_history whose entry time is
+    at/after since_epoch (None = all in memory). PnL sums the per-trade realized
+    pnl the settlement path stamps on each rec. Never raises."""
+    wins = losses = 0
+    pnl = 0.0
+    for t in trade_history:
+        if t.get("result") not in ("win", "loss"):
+            continue
+        if since_epoch is not None:
+            te = _parse_trade_epoch(t)
+            if te is None or te < since_epoch:
+                continue
+        if t["result"] == "win":
+            wins += 1
+        else:
+            losses += 1
+        try:
+            pnl += float(t.get("pnl", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            pass
+    return wins, losses, round(pnl, 2)
+
+
+def _tz_day_start_epoch(days_ago: int = 0, tz=None) -> float:
+    """Epoch seconds for local midnight `days_ago` days back, in the report tz.
+    days_ago=0 → the start of today's local calendar day."""
+    tz = tz or _report_tz()
+    d = (datetime.now(tz) - timedelta(days=days_ago)).date()
+    return datetime(d.year, d.month, d.day, tzinfo=tz).timestamp()
+
+
+def _fmt_winrate(wins: int, losses: int) -> str:
+    total = wins + losses
+    if not total:
+        return "no settled trades yet"
+    return f"{wins / total * 100:.0f}% ({wins}W/{losses}L)"
+
+
+def build_scheduled_report(balance: float) -> str:
+    """The twice-daily briefing body: balance, today's P&L + win rate, and the
+    all-time (this-run) figures. Pure — takes the balance, reads shared state."""
+    tz = _report_tz()
+    now_local = datetime.now(tz)
+    d_w, d_l, d_pnl = trade_window_stats(_tz_day_start_epoch(0, tz))
+    a_w, a_l, a_pnl = trade_window_stats(None)
+    mode   = "PAPER 🟡" if DEMO_MODE else "LIVE 🔴"
+    active = ("Recovery" if recovery.active
+              else "Probation ramp" if probation.active else "Normal")
+    label  = "Morning" if now_local.hour < 12 else "Evening"
+    return (
+        f"📊 FlipPulse {label} Report — {now_local.strftime('%b %d, %I:%M %p %Z')}\n"
+        f"Mode: {mode} · {active}\n"
+        f"🏦 Balance: ${balance:,.2f}\n"
+        f"— Today —\n"
+        f"💵 P&L: ${d_pnl:+,.2f}\n"
+        f"🎯 Win rate: {_fmt_winrate(d_w, d_l)}\n"
+        f"— All-time (this run) —\n"
+        f"💵 P&L: ${a_pnl:+,.2f}\n"
+        f"🎯 Win rate: {_fmt_winrate(a_w, a_l)}"
+    )
+
+
+class ReportScheduler:
+    """Fires build_scheduled_report() at the configured local hours, once per slot.
+    Persists the last slot sent so a redeploy can't double-send and a long-down
+    slot is skipped rather than delivered stale. Mutated in place, never raises."""
+
+    def __init__(self, path: str, persist: bool) -> None:
+        self.last_slot: str = ""
+        self._path    = path
+        self._persist = persist
+        if self._persist:
+            self._load()
+
+    def _latest_past_slot(self, now_local: datetime):
+        """The most recent scheduled datetime ≤ now_local (today's hours, or
+        yesterday's last hour before the first fire of the day). None if none."""
+        hours = _report_hours()
+        if not hours:
+            return None
+        tz = now_local.tzinfo
+        candidates = []
+        for d_off in (0, 1):
+            day = (now_local - timedelta(days=d_off)).date()
+            for h in hours:
+                candidates.append(datetime(day.year, day.month, day.day, h, tzinfo=tz))
+        past = [c for c in candidates if c <= now_local]
+        return max(past) if past else None
+
+    def maybe_send(self, balance: float) -> bool:
+        """Check the clock and send the briefing if a fresh slot has arrived.
+        Returns True only when a message was actually sent."""
+        if not REPORT_SCHEDULE_ENABLED:
+            return False
+        try:
+            now_local = datetime.now(_report_tz())
+            slot_dt   = self._latest_past_slot(now_local)
+            if slot_dt is None:
+                return False
+            slot_key = slot_dt.strftime("%Y-%m-%d %H")
+            if slot_key == self.last_slot:
+                return False
+            # Too far past the scheduled time (slept/down through it) → consume the
+            # slot silently so the next slot fires cleanly, but don't send stale.
+            if (now_local - slot_dt).total_seconds() > REPORT_MAX_LATE_SECS:
+                self.last_slot = slot_key
+                self._save()
+                return False
+            sent = tg.send_telegram_message(build_scheduled_report(balance))
+            # Mark consumed regardless of send success so a Telegram outage doesn't
+            # make us retry the same slot every cycle for hours.
+            self.last_slot = slot_key
+            self._save()
+            return bool(sent)
+        except Exception as e:  # pragma: no cover - observability must not break trading
+            log.debug("scheduled report check failed: %s", e)
+            return False
+
+    def _save(self) -> None:
+        if not self._persist:
+            return
+        try:
+            tmp = f"{self._path}.tmp"
+            with open(tmp, "w") as f:
+                json.dump({"last_slot": self.last_slot}, f)
+            os.replace(tmp, self._path)
+        except OSError as e:
+            log.warning("Report │ state save failed: %s", e)
+
+    def _load(self) -> None:
+        try:
+            with open(self._path) as f:
+                self.last_slot = str(json.load(f).get("last_slot", "") or "")
+        except (OSError, ValueError):
+            return
+
+
+report_scheduler = ReportScheduler(REPORT_STATE_PATH, REPORT_PERSIST)
+
+
 def write_status_snapshot(balance: float) -> None:
     """Write a small JSON status snapshot for the web dashboard.
 
@@ -3419,15 +3640,18 @@ def main() -> None:
                 # catch the UTC rollover that clears it (maybe_roll_session_day),
                 # then resume automatically — no redeploy needed.
                 halt_bal = paper_balance if DEMO_MODE else get_live_balance()
+                # The scheduled briefing still lands while halted (the day's
+                # summary is exactly what a paused customer wants to see).
+                report_scheduler.maybe_send(halt_bal)
                 if not maybe_roll_session_day(halt_bal):
                     log.info("Halted for the day — paused until UTC rollover.")
                     time.sleep(300)
                     continue
 
-            # Telegram policy (owner directive): messages fire ONLY on a trade
-            # entry, a trade settlement, or a triggered guardrail — no periodic
-            # heartbeat, no scheduled summaries. Liveness is pull-based: the
-            # /status and /health-log commands answer on demand.
+            # Telegram policy: messages fire on a trade entry, a trade settlement,
+            # a triggered guardrail, or the twice-daily scheduled briefing
+            # (report_scheduler, below). No other periodic heartbeat — liveness is
+            # otherwise pull-based via the /status and /health-log commands.
             ingest_btc_price()
 
             market = get_active_market()
@@ -3459,6 +3683,9 @@ def main() -> None:
             billing.maybe_month_rollover(current_balance)
             run_decision(market, current_balance)
             write_status_snapshot(current_balance)
+            # Twice-daily P&L + win-rate briefing (9am/9pm ET by default). Idempotent
+            # per slot, so calling it every cycle only fires once per scheduled time.
+            report_scheduler.maybe_send(current_balance)
 
             resolve_cycle += 1
             if resolve_cycle % 3 == 0:
