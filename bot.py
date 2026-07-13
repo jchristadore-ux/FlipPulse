@@ -2551,6 +2551,11 @@ def update_live_prior() -> None:
 
 
 def performance_guard() -> bool:
+    """Block new entries while the day's realized win rate is statistically bad
+    (Wilson lower bound < 50% over ≥ MIN_SAMPLE_TRADES settled trades). The
+    tally it reads resets at the UTC rollover (maybe_roll_session_day), so a
+    blocked day can never wedge the guard across days — blocked trading yields
+    no new samples, which would otherwise leave the bound frozen sub-50%."""
     total = live_wins + live_losses
     if total < MIN_SAMPLE_TRADES:
         return True
@@ -2883,6 +2888,9 @@ def resolve_open_orders() -> None:
                             streak_pause_until = time.time() + STREAK_PAUSE_SECS
                         log.info("UNMATCHED LOSS │ %s │ $%.2f (pre-restart)",
                                  rec_ticker[-15:], pnl_d)
+                    # It settled today, so it belongs in today's realized P&L
+                    # (the figure the alerts, /pnl, and the daily report show).
+                    live_daily_realized += pnl_d
                     ladder_record(pnl_d > 0, pnl_d)
                     lifetime.record(DEMO_MODE, pnl_d > 0, pnl_d)   # persistent all-time
                     update_live_prior()
@@ -3552,6 +3560,9 @@ def write_status_snapshot(balance: float) -> None:
             "recovery_losses": recovery.losses,
             "recovery_win_rate": round(recovery.winrate() * 100, 1),
             "recovery_winrate_restore_pct": round(RECOVERY_WINRATE_RESTORE_PCT * 100, 1),
+            # The balance recovery is clawing back to (0 when not in recovery),
+            # so /status and the dashboard can show how far there is to go.
+            "recovery_target": round(recovery.target_balance, 2),
             "active_trade_pct": round(active_trade_fraction() * 100, 2),
             "active_trade_size": round(active_trade_size(balance), 2),
             # Full-size risk knob + the hard bounds the Telegram /risk command
@@ -3782,6 +3793,7 @@ def maybe_roll_session_day(current_balance: float) -> bool:
     global _session_day, _session_halted, session_start_balance
     global session_stop_threshold, daily_pnl, paper_daily_pnl, consecutive_losses
     global session_state, streak_pause_until, live_daily_realized
+    global live_wins, live_losses, _live_prior
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if today == _session_day:
@@ -3799,6 +3811,18 @@ def maybe_roll_session_day(current_balance: float) -> bool:
     streak_pause_until     = 0.0
     session_state          = SessionState.ACTIVE
     session_traded_tickers.clear()
+
+    # The session W/L tally is DAILY state: it feeds performance_guard()'s
+    # Wilson floor and the "Today's Tally" line in the win/loss alerts. Left
+    # uncleared, a sub-50% stretch froze the guard PERMANENTLY for the life of
+    # the process — blocked trading produces no new samples, so the lower bound
+    # could never heal (the same lock-up class v9.0.8 fixed for boot-seeded
+    # history, reachable here with ≥MIN_SAMPLE_TRADES genuinely-settled trades).
+    # A fresh day starts a fresh sample, exactly like every other halt above;
+    # the persistent all-time record lives in LifetimeStats, not here.
+    live_wins   = 0
+    live_losses = 0
+    _live_prior = OB_BASE_ACCURACY
 
     # v9.7.0: a fresh trading day re-enters the slow-roll ramp from the floor
     # ($100 → $250 → $500) so the first trade of the day is small and scales up

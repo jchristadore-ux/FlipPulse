@@ -376,3 +376,30 @@ def test_status_shows_nsc_and_recovery_wr(tmp_path):
     reply = _handler(tmp_path, snap).handle("123", "/status")
     assert "No-Stake-Change ON" in reply
     assert "Recovery WR: 80% (4W/1L)" in reply
+
+
+# ── /balance + /commands aliases · /status recovery target ────────────────────
+def test_balance_alias_shows_balance_and_pnl(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/balance")
+    assert "Balance: $1,200.00" in reply
+    assert "All-time: $+825.00" in reply
+    assert h.handle("123", "/bal") == reply
+
+
+def test_commands_alias_returns_help(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    assert h.handle("123", "/commands") == h.handle("123", "/help")
+    assert "/balance" in h.handle("123", "/help")
+
+
+def test_status_shows_recovery_target(tmp_path):
+    snap = dict(
+        _SNAP, balance=900.0, session_pnl=-100.0, active_mode="recovery",
+        recovery_target=1000.0, recovery_wins=1, recovery_losses=1,
+        recovery_win_rate=50.0, recovery_winrate_restore_pct=70.0,
+        active_trade_pct=3.0, active_trade_size=27.0,
+        session_state="ACTIVE", updated_at="2026-07-12T00:00:00Z",
+    )
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "Recovery target: $1,000.00" in reply

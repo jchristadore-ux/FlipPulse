@@ -211,3 +211,43 @@ def test_stale_btc_feed_forces_unknown_regime(monkeypatch):
     finally:
         bot.btc_prices.clear()
         bot.btc_returns.clear()
+
+
+# ── performance guard can never wedge across days ─────────────────────────────
+# A sub-50% Wilson lower bound over ≥ MIN_SAMPLE_TRADES blocks all entries, and
+# blocked trading produces no new samples — so without the daily reset the
+# guard froze the bot PERMANENTLY (the v9.0.8 lock-up class, reachable with
+# genuinely-settled trades). The UTC rollover must clear the tally.
+
+def test_perf_guard_lockout_clears_at_day_rollover():
+    saved = (bot.live_wins, bot.live_losses, bot._live_prior,
+             bot._session_day, bot._session_halted, bot.session_start_balance,
+             bot.session_stop_threshold)
+    try:
+        bot.live_wins, bot.live_losses = 5, 15            # WR 25% over 20 trades
+        assert bot.performance_guard() is False           # guard is blocking
+        bot._session_day = "2000-01-01"                   # force a day boundary
+        assert bot.maybe_roll_session_day(1000.0) is True
+        assert (bot.live_wins, bot.live_losses) == (0, 0)
+        assert bot._live_prior == bot.OB_BASE_ACCURACY
+        assert bot.performance_guard() is True            # fresh day, guard open
+    finally:
+        bot.probation.cancel()                            # rollover arms the ramp
+        (bot.live_wins, bot.live_losses, bot._live_prior,
+         bot._session_day, bot._session_halted, bot.session_start_balance,
+         bot.session_stop_threshold) = saved
+
+
+def test_day_rollover_clears_session_halt():
+    saved = (bot._session_day, bot._session_halted, bot.session_start_balance,
+             bot.session_stop_threshold, bot.live_wins, bot.live_losses)
+    try:
+        bot._session_halted = True
+        bot._session_day = "2000-01-01"
+        assert bot.maybe_roll_session_day(500.0) is True
+        assert bot._session_halted is False
+        assert bot.session_stop_threshold == 500.0 * bot.SESSION_STOP_FRACTION
+    finally:
+        bot.probation.cancel()
+        (bot._session_day, bot._session_halted, bot.session_start_balance,
+         bot.session_stop_threshold, bot.live_wins, bot.live_losses) = saved
