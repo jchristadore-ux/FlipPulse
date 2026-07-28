@@ -306,7 +306,7 @@
 
 from __future__ import annotations
 
-BOT_VERSION = "10.0.0"
+BOT_VERSION = "10.1.0"
 
 import base64
 import json
@@ -749,6 +749,52 @@ STALE_ORDER_TIMEOUT   = _env_int("STALE_ORDER_TIMEOUT", 300)
 MAX_CONCURRENT_POS    = _env_int("MAX_CONCURRENT_POS", 1)
 MIN_SAMPLE_TRADES     = _env_int("MIN_SAMPLE_TRADES", 20)
 
+# ── v10.1.0 SIZING FLOOR — the silent 85% signal kill ────────────────────────
+# WHY (2026-07-23→26 log audit): place_order sized with
+# `count = int(bet_dollars * 100 / limit_cents)` and, when that floored to zero,
+# logged one INFO line and returned None. Over the audited window that path
+# swallowed 55 of 65 signals (84.6%) — 25 of 26 on 07-24, 22 of 25 on 07-25, and
+# ALL 8 on 07-26 — while the "📋 EDGE JUSTIFICATION" line (and its Telegram
+# twin) had already fired. The logs read like a bot that was hunting; it had in
+# fact been unable to buy a single contract for three straight days.
+#
+# The stake had collapsed to $0.37 through a chain of independent de-riskers
+# multiplying together: NORMAL_TRADE_PCT 20% → probation rung 1 (5%, re-armed
+# from the floor at EVERY UTC midnight) → ladder tier T1 (×0.50 on a 43% rolling
+# win rate) = 2.5% of a $14.83 balance. At $0.37 the floor divide can only ever
+# afford a contract priced ≤ 37c, so the size floor silently became a STRATEGY
+# FILTER that bought nothing but long shots — and it was self-locking: escaping
+# it needs wins, wins need trades, trades need stake, stake needs wins.
+#
+# Two fixes, both here:
+#  1. MIN_ORDER_ROUNDUP — when the stake cannot afford one contract but ONE
+#     contract still fits inside the hard MAX_TRADE_PCT ceiling and the cash on
+#     hand, take the single contract. Rounding UP to the tradeable minimum is
+#     what breaks the deadlock; the hard ceiling is never breached, so this can
+#     never size past what the risk config already permits.
+#  2. When even that does not fit, the signal is rejected BEFORE the edge
+#     justification is logged, with an explicit "under-capitalised" reason (see
+#     size_contracts / run_decision) — so the log never again claims a trade the
+#     bot could not place.
+MIN_ORDER_ROUNDUP     = _env_bool("MIN_ORDER_ROUNDUP", True)
+
+# ── v10.1.0 PERFORMANCE GUARD window ─────────────────────────────────────────
+# WHY (same audit): performance_guard read live_wins/live_losses, which
+# maybe_roll_session_day zeroes at every UTC midnight, and demanded
+# MIN_SAMPLE_TRADES (20) settled trades before it would evaluate. The bot
+# averages ~2 trades/day, so the counter never reached 3 — the Wilson floor was
+# never once evaluated in the audited window ("LB=0.0%" on every settle line),
+# and the bot's only statistical circuit breaker was dead code.
+#
+# The daily reset existed to stop the guard latching forever (blocked trading
+# yields no new samples, so a sub-50% bound could never heal). A rolling window
+# alone has that same deadlock, so the guard is now a TIME-BOUNDED breaker: it
+# scores the last PERF_GUARD_WINDOW settled trades regardless of day boundaries,
+# and when it trips it blocks for PERF_GUARD_PAUSE_SECS and then clears its own
+# window so the bot re-samples. Blocks, cools off, re-tests — never latches.
+PERF_GUARD_WINDOW     = _env_int("PERF_GUARD_WINDOW", 20)
+PERF_GUARD_PAUSE_SECS = _env_int("PERF_GUARD_PAUSE_SECS", 21600)   # 6h
+
 # ── Regime detection ──────────────────────────────────────────────────────────
 # v9.3.0: restored 0.62 → 0.65 (doctrine §8). 0.62 was a v9.0.6 throughput
 # relaxation; at 0.65 about 65% of price variance must be explained by the
@@ -784,6 +830,63 @@ MOMENTUM_R2_MIN       = _env_float("MOMENTUM_R2_MIN", 0.55)
 MIN_EDGE_PCT          = _env_float("MIN_EDGE_PCT", 0.06)
 MIN_CONFIDENCE        = _env_int("MIN_CONFIDENCE", 65)
 MIN_WIN_PROB          = _env_float("MIN_WIN_PROB", 0.60)
+
+# ── v10.1.0 MARKET ANCHOR — the contract price IS a probability ───────────────
+# WHY (2026-07-23→26 log audit): bayesian_win_prob produced a near-constant
+# ~0.70 (n=65 signals: mean 70.4%, sd 4.3pp) that barely moved with the contract
+# price (corr = +0.37). calc_edge then compared that flat number to the price, so
+# "edge" collapsed into "cheapness": corr(price, edge) = -0.88 over the same 65
+# signals. The model was not finding mispriced contracts, it was ranking
+# contracts by how far below 70c they traded — and the 10 trades that survived
+# sizing were the CHEAPEST of the batch (mean 44.8c vs 57.1c for the rest).
+# The realized damage: over the 8 settlements the model claimed a mean 72.5%
+# win probability and delivered 37.5% (p = 0.04 against its own claim), with a
+# Brier score of 0.342 against 0.217 for simply believing the quoted price. The
+# market beat the model on its own trades.
+#
+# THE FIX: stop treating the model output as a standalone probability. A liquid
+# quoted price is already the market's probability estimate, and it is a better
+# one. So express the model as an ADJUSTMENT to that estimate:
+#
+#     anchored_p = market_p + clamp(model_p - model_base, ±MAX_MODEL_EDGE_PP)
+#
+# where market_p = contract_price/100 and model_base is the same bucket prior
+# bayesian_win_prob started from — so the clamped term is exactly the incremental
+# information the order book / trend / depth signals added on top of the base
+# rate, and nothing else.
+#
+# This makes `edge` mean something real and PRICE-NEUTRAL. Algebraically,
+# calc_edge(price/100 + lift, price) == lift exactly, so with the anchor on,
+# MIN_EDGE_PCT reads directly as "percentage points of claimed advantage over the
+# market" at every price — the same bar for a 30c contract and a 65c one. Before
+# the anchor a 30c contract cleared a 5% edge gate at p ≥ 0.36 while a 65c one
+# needed p ≥ 0.71; that asymmetry WAS the cheapness tilt.
+#
+# MAX_MODEL_EDGE_PP is the honest ceiling on how much a 15-minute order-book +
+# trend read can be worth against a market maker. 8pp is already ambitious; the
+# unanchored model was routinely claiming 30-43pp. Set MARKET_ANCHOR_ENABLED
+# false to restore pre-10.1.0 behaviour (documented, not recommended).
+MARKET_ANCHOR_ENABLED = _env_bool("MARKET_ANCHOR_ENABLED", True)
+MAX_MODEL_EDGE_PP     = _env_float("MAX_MODEL_EDGE_PP", 0.08)
+
+# ── Return-on-risk edge gate (secondary, opt-in) ──────────────────────────────
+# MIN_EDGE_PCT is expected value per CONTRACT (per $1 of payout). This is the
+# same expected value per DOLLAR STAKED — edge / (price/100) — which is what
+# actually compounds a bankroll. Off by default (0.0) because the market anchor
+# above already removes the price distortion MIN_EDGE_PCT had; turn it on to
+# additionally require a minimum return on the cash at risk.
+MIN_EDGE_ROR          = _env_float("MIN_EDGE_ROR", 0.0)
+
+# ── Order-book imbalance UPPER bound ─────────────────────────────────────────
+# WHY (same audit): analyze_order_book only rejected a LITERALLY empty opposite
+# side ("ghost book", yes_lc == 0 or no_lc == 0). A book quoting 99.8% on one
+# side still passed — and because compute_confidence scores imbalance linearly
+# (corr(OB%, confidence) = +0.92 over the 65 signals), that book scored the
+# session's highest confidence (95), drew the session's largest stake ($2.14, 5
+# contracts) and lost all of it. A 99% one-sided book on a thin 15-minute market
+# is a LIQUIDITY artifact — one stale level left on the other side — not a
+# conviction signal. Reject above this ceiling instead of rewarding it.
+OB_IMBALANCE_MAX      = _env_float("OB_IMBALANCE_MAX", 0.95)
 MIN_MINUTES_TO_EXPIRY = _env_float("MIN_MINUTES_TO_EXPIRY", 6.0)
 # The whole doctrine (momentum windows, expiry floor, session math) is built for
 # 15-MINUTE markets. BTC_SERIES falls back to daily-horizon series when the 15M
@@ -1007,6 +1110,13 @@ _prev_ob: dict = {}
 
 _vol_circuit_open:  bool  = False
 _vol_circuit_until: float = 0.0
+
+# v10.1.0 performance guard: a rolling window of settled outcomes that does NOT
+# reset at the UTC rollover (live_wins/live_losses do, which is why the guard
+# reading them never once filled its sample — see performance_guard). Mutated
+# in-place only, like every other module-level container here.
+_perf_window: deque = deque(maxlen=max(1, PERF_GUARD_WINDOW))
+_perf_guard_until: float = 0.0
 
 _live_prior: float = OB_BASE_ACCURACY
 
@@ -2278,6 +2388,19 @@ def analyze_order_book(ob_data: dict, yes_mid: int) -> Optional[dict]:
     else:
         eff_thresh = OB_IMBALANCE_THRESH
 
+    # v10.1.0: an UPPER bound as well as a lower one. The pre-10.1.0 code only
+    # rejected a literally empty opposite side (the ghost-book check above), so a
+    # 99.8%/0.2% book passed — and compute_confidence scores imbalance linearly
+    # (corr(OB%, conf) = +0.92 across the 65 audited signals), so that book drew
+    # the audited window's highest confidence (95) and largest stake, and lost
+    # all of it. Near-total one-sidedness on a thin 15-minute market means the
+    # other side is one stale level, which is a liquidity condition, not
+    # conviction. Reject it rather than rewarding it as maximum edge.
+    if max(yr, nr) > OB_IMBALANCE_MAX:
+        log.info("OB │ one-sided book %.1f%% > max %.1f%% — illiquid, not signal",
+                 max(yr, nr) * 100, OB_IMBALANCE_MAX * 100)
+        return None
+
     if yr >= eff_thresh:
         direction = "YES"
         imbalance = yr
@@ -2370,7 +2493,7 @@ def bayesian_win_prob(
     regime: Regime,
     r_squared: float,
     realized_vol: float,
-) -> float:
+) -> Tuple[float, float]:
     # Time-of-day learned prior: a bucket with a poor realized win rate (the
     # mean-reverting afternoon) supplies a lower prior, which flows straight
     # through to a lower edge and gates the trade out. Empty bucket ==
@@ -2406,7 +2529,13 @@ def bayesian_win_prob(
     log.info("WinProb │ prior=%.3f mom=%.3f regime=%.3f imb=%.3f depth=%.3f vol=-%.3f → %.3f │ bucket=%s n=%d",
              prior, momentum_adj, regime_adj, imbalance_adj, depth_adj, vol_penalty,
              win_prob, bucket, bucket_n)
-    return win_prob
+    # v10.1.0: the bucket prior is returned alongside so market_anchored_win_prob
+    # can isolate what the SIGNALS contributed (win_prob - prior) from the base
+    # rate they were layered onto. Note that `regime_adj` carries an
+    # unconditional +0.02 and `depth_adj` a flat +0.02 for any book over $500, so
+    # ~4pp of every "edge" this model reports is a constant, not a measurement —
+    # which is most of why a 6% MIN_EDGE_PCT gate almost never bound.
+    return win_prob, prior
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2466,11 +2595,98 @@ def compute_confidence(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def calc_edge(win_prob: float, contract_price_cents: int) -> float:
+    """Expected value per contract, i.e. per $1 of payout.
+
+    With MARKET_ANCHOR_ENABLED this is exactly the model's claimed advantage in
+    percentage points over the quoted price: for win_prob = price/100 + lift the
+    algebra collapses to `lift` at every price, which is what makes MIN_EDGE_PCT
+    a price-neutral bar. See market_anchored_win_prob.
+    """
     if contract_price_cents <= 0 or contract_price_cents >= 100:
         return 0.0
     net   = (100 - contract_price_cents) / 100.0
     stake = contract_price_cents / 100.0
     return (win_prob * net) - ((1.0 - win_prob) * stake)
+
+
+def edge_return_on_risk(edge: float, contract_price_cents: int) -> float:
+    """`edge` re-expressed per DOLLAR STAKED rather than per contract.
+
+    calc_edge divides expected value by the payout ($1); this divides it by the
+    cash actually at risk (the price). It is the figure that compounds a
+    bankroll, and it is what MIN_EDGE_ROR gates on.
+    """
+    if contract_price_cents <= 0:
+        return 0.0
+    return edge / (contract_price_cents / 100.0)
+
+
+def market_anchored_win_prob(model_prob: float, model_base: float,
+                             contract_price_cents: int) -> float:
+    """Re-express the model's output as an adjustment to the MARKET's own estimate.
+
+    The quoted price of a liquid contract is a probability, and the 2026-07-23→26
+    audit showed it was a better one than the model's: over the 8 settled trades
+    the model's mean claim was 72.5% against a realized 37.5%, for a Brier score
+    of 0.342 versus 0.217 for simply believing the price. So the price becomes
+    the base rate and the model may only move it by the incremental information
+    its signals actually added — `model_prob - model_base`, the sum of the
+    momentum / regime / imbalance / depth terms bayesian_win_prob layered on top
+    of the bucket prior — clamped to ±MAX_MODEL_EDGE_PP.
+
+    Returns model_prob unchanged when the anchor is disabled. See the config
+    block for the full rationale.
+    """
+    if not MARKET_ANCHOR_ENABLED:
+        return model_prob
+    if contract_price_cents <= 0 or contract_price_cents >= 100:
+        return model_prob
+    market_p = contract_price_cents / 100.0
+    lift     = max(-MAX_MODEL_EDGE_PP, min(MAX_MODEL_EDGE_PP, model_prob - model_base))
+    anchored = max(0.01, min(0.99, market_p + lift))
+    log.info("Anchor │ model=%.3f base=%.3f lift=%+.3f │ market=%.2f → p=%.3f",
+             model_prob, model_base, lift, market_p, anchored)
+    return anchored
+
+
+def size_contracts(bet_dollars: float, limit_cents: int,
+                   balance: float) -> Tuple[int, str]:
+    """Resolve a dollar stake into a whole number of contracts.
+
+    Returns (count, reason). count == 0 means the signal is unsizeable and the
+    caller must reject it BEFORE announcing a trade — the pre-10.1.0 code did
+    this check inside place_order, after the edge justification had already been
+    logged and pushed to Telegram, which is how 55 of 65 audited signals became
+    phantom entries in the log.
+
+    Contracts are integral, so a stake below one contract's price floors to zero.
+    MIN_ORDER_ROUNDUP rounds that case UP to a single contract whenever one
+    contract still fits inside BOTH the hard MAX_TRADE_PCT ceiling and the cash
+    on hand — the ceiling is a real risk limit and is never breached, while the
+    floor was never a risk decision at all, just integer division.
+    """
+    if limit_cents <= 0:
+        return 0, "no limit price"
+
+    unit_cost = limit_cents / 100.0
+    count     = int((bet_dollars * 100) / limit_cents)
+    if count >= 1:
+        return count, "sized"
+
+    if not MIN_ORDER_ROUNDUP:
+        return 0, (f"stake ${bet_dollars:.2f} < 1 contract @ {limit_cents}c "
+                   f"(roundup off)")
+
+    ceiling = round(MAX_TRADE_PCT * tradeable_balance(balance), 2)
+    if unit_cost > ceiling:
+        return 0, (f"1 contract @ {limit_cents}c = ${unit_cost:.2f} > "
+                   f"max {MAX_TRADE_PCT*100:.0f}% ceiling ${ceiling:.2f}")
+    if unit_cost > tradeable_balance(balance):
+        return 0, (f"1 contract @ {limit_cents}c = ${unit_cost:.2f} > "
+                   f"tradeable ${tradeable_balance(balance):.2f}")
+
+    return 1, (f"rounded up to 1 contract (${unit_cost:.2f}); "
+               f"stake ${bet_dollars:.2f} under one contract @ {limit_cents}c")
 
 
 def ladder_record(won: bool, pnl: float) -> None:
@@ -2550,18 +2766,65 @@ def update_live_prior() -> None:
     log.debug("Prior → %.3f (n=%d)", _live_prior, total)
 
 
+def perf_guard_record(won: bool) -> None:
+    """Feed one settled outcome to the performance guard's rolling window.
+
+    Separate from live_wins/live_losses on purpose: those are DAILY state that
+    maybe_roll_session_day zeroes at every UTC midnight, which is why the guard
+    that read them never once reached its 20-trade sample in the audited window.
+    """
+    _perf_window.append(bool(won))
+
+
 def performance_guard() -> bool:
-    """Block new entries while the day's realized win rate is statistically bad
-    (Wilson lower bound < 50% over ≥ MIN_SAMPLE_TRADES settled trades). The
-    tally it reads resets at the UTC rollover (maybe_roll_session_day), so a
-    blocked day can never wedge the guard across days — blocked trading yields
-    no new samples, which would otherwise leave the bound frozen sub-50%."""
-    total = live_wins + live_losses
-    if total < MIN_SAMPLE_TRADES:
+    """Block new entries while the realized win rate is statistically bad — a
+    Wilson lower bound below 50% over the last PERF_GUARD_WINDOW settled trades.
+
+    Pre-10.1.0 this scored live_wins/live_losses, which reset at every UTC
+    rollover. At the bot's ~2 trades/day that counter never approached
+    MIN_SAMPLE_TRADES (20), so across 2026-07-23→26 the bound was never
+    evaluated once — every settle line logged "LB=0.0%" and the only statistical
+    circuit breaker in the engine was, in practice, dead code.
+
+    The window here is rolling and survives day boundaries, so it actually fills.
+    The daily reset it replaces was there to stop the guard latching forever
+    (a blocked bot takes no trades, so a sub-50% bound could never heal), and a
+    rolling window on its own has exactly that deadlock. So the guard is a
+    TIME-BOUNDED breaker instead: tripping it blocks for PERF_GUARD_PAUSE_SECS,
+    after which the window is cleared and the bot re-samples from scratch.
+    Blocks, cools off, re-tests — it can slow the bot down but never wedge it.
+    """
+    global _perf_guard_until
+
+    now = time.time()
+    if _perf_guard_until:
+        if now < _perf_guard_until:
+            log.info("PERF GUARD │ paused %.0f min remaining",
+                     (_perf_guard_until - now) / 60.0)
+            return False
+        _perf_guard_until = 0.0
+        _perf_window.clear()          # fresh sample, or the block would latch
+        log.warning("PERF GUARD │ cool-off over — resampling.")
         return True
-    wlb = wilson_lower_bound(live_wins, total)
+
+    total = len(_perf_window)
+    if total < min(MIN_SAMPLE_TRADES, PERF_GUARD_WINDOW):
+        return True
+    wins = sum(1 for w in _perf_window if w)
+    wlb  = wilson_lower_bound(wins, total)
     if wlb < 0.50:
-        log.warning("PERF GUARD │ Wilson LB %.1f%% < 50%%", wlb * 100)
+        _perf_guard_until = now + PERF_GUARD_PAUSE_SECS
+        log.warning("PERF GUARD │ Wilson LB %.1f%% < 50%% over last %d "
+                    "(%dW/%dL) — pausing %.1fh.",
+                    wlb * 100, total, wins, total - wins,
+                    PERF_GUARD_PAUSE_SECS / 3600.0)
+        tg.send_telegram_message(
+            f"🛑 PERFORMANCE GUARD\n"
+            f"Win rate {wins}/{total} over the last {total} settled trades — the "
+            f"95% lower bound is {wlb*100:.0f}%, below the 50% break-even floor.\n"
+            f"Pausing new entries for {PERF_GUARD_PAUSE_SECS/3600:.0f}h, then "
+            f"re-sampling from scratch."
+        )
         return False
     return True
 
@@ -2810,6 +3073,7 @@ def resolve_open_orders() -> None:
                 )
 
             ladder_record(won, trade_pnl)
+            perf_guard_record(won)
             bucket_stats.record(trade.get("entry_bucket"), won)
             lifetime.record(DEMO_MODE, won, trade_pnl)   # persistent all-time tally
             # Recovery ENTRY hook: a full-size loss arms recovery (uses this
@@ -2892,6 +3156,7 @@ def resolve_open_orders() -> None:
                     # (the figure the alerts, /pnl, and the daily report show).
                     live_daily_realized += pnl_d
                     ladder_record(pnl_d > 0, pnl_d)
+                    perf_guard_record(pnl_d > 0)
                     lifetime.record(DEMO_MODE, pnl_d > 0, pnl_d)   # persistent all-time
                     update_live_prior()
                 continue
@@ -2947,6 +3212,7 @@ def resolve_open_orders() -> None:
                     streak_pause_until = time.time() + STREAK_PAUSE_SECS
 
             ladder_record(won, pnl)
+            perf_guard_record(won)
             bucket_stats.record(trade.get("entry_bucket"), won)
             lifetime.record(DEMO_MODE, won, pnl)   # persistent all-time tally
             # Recovery ENTRY hook: `balance` was fetched (realized) above for
@@ -3014,9 +3280,14 @@ def cancel_stale_orders() -> None:
             continue
         ticker = trade.get("ticker", "")
         cost   = trade.get("cost", 0.0)
+        # v10.1.0: a 404 already told us this order is not resting. Never ask
+        # again — see the handler below.
+        if trade.get("cancel_unresolved"):
+            continue
         if DEMO_MODE:
             open_orders.pop(oid)
             active_tickers.discard(ticker)
+            session_traded_tickers.discard(ticker)
             paper_balance += cost  # refund only — no daily_pnl touch
             for t in trade_history:
                 if t.get("order_id") == oid:
@@ -3029,9 +3300,36 @@ def cancel_stale_orders() -> None:
                 _delete(f"/portfolio/events/orders/{oid}")
                 open_orders.pop(oid)
                 active_tickers.discard(ticker)
-                log.info("Stale cancel (live) │ %s │ %s", ticker[-15:], oid[:12])
+                # v10.1.0: a cancel that SUCCEEDS means the order never filled,
+                # so there is no position and no P&L — it must not burn the
+                # session's one-entry-per-market slot. Two of the ten orders in
+                # the audited window (07-23 20:16 YES@48c, 07-25 13:00 YES@38c)
+                # were cancelled unfilled and then locked out of their own market
+                # by the session guard, so a live signal was abandoned with no
+                # re-quote and no record either way.
+                session_traded_tickers.discard(ticker)
+                log.info("Stale cancel (live) │ %s │ %s — unfilled, market "
+                         "re-armed", ticker[-15:], oid[:12])
             except Exception as e:
-                log.warning("Stale cancel failed %s: %s", oid[:12], e)
+                # v10.1.0: a 404 is TERMINAL, not transient — the order is not
+                # resting, which on this venue almost always means it already
+                # filled. The pre-10.1.0 handler left it in open_orders and
+                # retried every cycle until the 1200s purge in
+                # resolve_open_orders, producing 22 identical warnings in the
+                # audited window AND holding a phantom slot against
+                # MAX_CONCURRENT_POS (and against the paper↔live flip, which only
+                # restarts when open_orders is empty).
+                #
+                # Keep the record in open_orders so resolve_open_orders can still
+                # match its settlement — just stop asking the venue to cancel it.
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    trade["cancel_unresolved"] = True
+                    log.info("Stale cancel │ %s %s — 404, not resting (likely "
+                             "filled); awaiting settlement.",
+                             ticker[-15:], oid[:12])
+                else:
+                    log.warning("Stale cancel failed %s: %s", oid[:12], e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3168,15 +3466,21 @@ def streak_check() -> bool:
 
 def place_order(ticker: str, direction: str, bet_dollars: float,
                 limit_cents: int, win_prob: float, edge: float,
-                balance_before: float = 0.0) -> Optional[str]:
+                balance_before: float = 0.0,
+                count: Optional[int] = None) -> Optional[str]:
+    """Place one order. `count` is normally resolved by the caller via
+    size_contracts() so an unsizeable signal is rejected BEFORE it is announced;
+    it is left optional so any other call site still sizes correctly here."""
     global last_trade_ts, paper_balance
 
     if limit_cents <= 0:
         return None
-    count = int((bet_dollars * 100) / limit_cents)
-    if count < 1:
-        log.info("Order │ 0 contracts at $%.2f @ %dc", bet_dollars, limit_cents)
-        return None
+    if count is None:
+        count, size_reason = size_contracts(bet_dollars, limit_cents,
+                                            balance_before or bet_dollars)
+        if count < 1:
+            log.warning("Order │ unsizeable — %s", size_reason)
+            return None
     cost      = (limit_cents * count) / 100.0
     client_id = f"mm-{uuid.uuid4().hex[:10]}"
     btc_entry = list(btc_prices)[-1] if btc_prices else 0
@@ -3252,8 +3556,13 @@ def place_order(ticker: str, direction: str, bet_dollars: float,
         open_orders[order_id] = rec
         active_tickers.add(ticker)
         session_traded_tickers.add(ticker)
+        # v10.1.0: report `cost` (what was actually committed), not `bet_dollars`
+        # (the stake the sizer started from). They differ by the integer rounding
+        # — the 2026-07-23 22:16 entry logged "5 @ 40c │ $2.14" against a real
+        # $2.00 — so the log overstated capital at risk on every multi-contract
+        # fill and never reconciled against the settlement PnL.
         log.info("✅ ORDER │ %s %s │ %d @ %dc │ $%.2f │ %s",
-                 direction, ticker[-15:], count, limit_cents, bet_dollars, order_id[:12])
+                 direction, ticker[-15:], count, limit_cents, cost, order_id[:12])
         live_bal = get_live_balance()
         tg.send_trade_entry_notification(
             ticker=ticker, direction=direction, cost=cost,
@@ -3695,21 +4004,13 @@ def run_decision(market: dict, balance: float) -> None:
         last_signal_desc = f"momentum {momentum_verdict} (need AGREE)"
         return
 
-    win_prob = bayesian_win_prob(ob, momentum_verdict, momentum_adj,
-                                  regime, r_squared, realized_vol)
-    if win_prob < MIN_WIN_PROB:
-        log.info("WinProb │ %.3f < %.3f", win_prob, MIN_WIN_PROB)
-        last_signal_desc = f"win_prob {win_prob:.2f} < {MIN_WIN_PROB:.2f}"
-        return
-
-    session_score = get_session_score()
-    conf = compute_confidence(ob, regime, r_squared, momentum_verdict,
-                               win_prob, mins, session_score)
-    if conf < MIN_CONFIDENCE:
-        log.info("Confidence │ %.0f < %d", conf, MIN_CONFIDENCE)
-        last_signal_desc = f"conf {conf:.0f} < {MIN_CONFIDENCE}"
-        return
-
+    # ── v10.1.0 ORDERING CHANGE ───────────────────────────────────────────────
+    # The contract price is resolved BEFORE the probability is finalised, because
+    # the market anchor needs it: the quoted price is the market's own
+    # probability estimate and is the base rate the model adjusts. Pre-10.1.0 the
+    # probability was computed first and never saw the price at all, which is how
+    # "edge" degenerated into "cheapness" (corr(price, edge) = -0.88 across the
+    # 65 audited signals). See market_anchored_win_prob.
     if ob_dir == "YES":
         if yes_mid > YES_BREAKEVEN_PRICE:
             log.info("Price guard │ YES %dc > breakeven", yes_mid)
@@ -3728,10 +4029,43 @@ def run_decision(market: dict, balance: float) -> None:
         log.info("Bias filter │ %dc outside 25-75", contract_price)
         return
 
+    model_prob, model_base = bayesian_win_prob(ob, momentum_verdict, momentum_adj,
+                                               regime, r_squared, realized_vol)
+    win_prob = market_anchored_win_prob(model_prob, model_base, contract_price)
+
+    # With the anchor on, this floor means what it says: the trade must be more
+    # likely than not to WIN, which puts a hard price floor at roughly
+    # (MIN_WIN_PROB - MAX_MODEL_EDGE_PP). That is the intended consequence of the
+    # audit — over the 8 settled trades in the audited window, entries below 50c
+    # went 1W-4L while entries above 50c went 2W-1L, and the unanchored model was
+    # steering almost exclusively into the cheap half.
+    if win_prob < MIN_WIN_PROB:
+        log.info("WinProb │ %.3f < %.3f (model %.3f @ %dc)",
+                 win_prob, MIN_WIN_PROB, model_prob, contract_price)
+        last_signal_desc = f"win_prob {win_prob:.2f} < {MIN_WIN_PROB:.2f}"
+        return
+
+    session_score = get_session_score()
+    conf = compute_confidence(ob, regime, r_squared, momentum_verdict,
+                               win_prob, mins, session_score)
+    if conf < MIN_CONFIDENCE:
+        log.info("Confidence │ %.0f < %d", conf, MIN_CONFIDENCE)
+        last_signal_desc = f"conf {conf:.0f} < {MIN_CONFIDENCE}"
+        return
+
     edge = calc_edge(win_prob, contract_price)
     if edge < MIN_EDGE_PCT:
         log.info("Edge │ %.3f < min %.3f", edge, MIN_EDGE_PCT)
         last_signal_desc = f"edge {edge:.3f} < {MIN_EDGE_PCT:.3f}"
+        return
+
+    # Secondary, opt-in: expected value per DOLLAR STAKED rather than per
+    # contract. MIN_EDGE_PCT is payout-denominated, so the same threshold demands
+    # a very different return on the cash at risk at 30c than at 65c.
+    ror = edge_return_on_risk(edge, contract_price)
+    if MIN_EDGE_ROR > 0 and ror < MIN_EDGE_ROR:
+        log.info("Edge RoR │ %.1f%% < min %.1f%%", ror * 100, MIN_EDGE_ROR * 100)
+        last_signal_desc = f"edge RoR {ror:.2f} < {MIN_EDGE_ROR:.2f}"
         return
 
     bet = kelly_bet(win_prob, contract_price, balance)
@@ -3753,26 +4087,41 @@ def run_decision(market: dict, balance: float) -> None:
         log.info("Limit drift │ %dc too far", limit_price)
         return
 
-    total   = live_wins + live_losses
-    wlb_str = (f" WLB={wilson_lower_bound(live_wins, total)*100:.1f}%"
-               if total >= 10 else " WLB=n/a")
+    # ── v10.1.0: size BEFORE announcing ──────────────────────────────────────
+    # This check used to live inside place_order, AFTER the edge justification
+    # had been logged and pushed to Telegram. Across 2026-07-23→26 it silently
+    # discarded 55 of 65 announced signals (84.6%) — every one of which reads in
+    # the log like a trade the bot chose to take. Reject here, with the real
+    # reason, so a logged signal is always a placed order.
+    count, size_reason = size_contracts(bet, limit_price, balance)
+    if count < 1:
+        log.warning("Sizing │ under-capitalised — %s", size_reason)
+        last_signal_desc = f"unsizeable: {size_reason}"
+        return
+    cost = round(limit_price * count / 100.0, 2)
+
+    _pw     = len(_perf_window)
+    wlb_str = (f" WLB={wilson_lower_bound(sum(1 for w in _perf_window), _pw)*100:.1f}%"
+               if _pw >= 10 else " WLB=n/a")
 
     log.info(
         "📋 EDGE JUSTIFICATION │ %s %s @ %dc │ regime=%s(R²=%.2f) │ "
-        "OB=%.1f%% $%.0f │ BTC=%s │ WinP=%.1f%% Edge=%.1f%% Conf=%.0f │ "
-        "Bet=$%.2f │ %.1fmin%s",
+        "OB=%.1f%% $%.0f │ BTC=%s │ WinP=%.1f%% (model %.1f%%) Edge=%.1fpp "
+        "RoR=%.1f%% Conf=%.0f │ %d @ %dc = $%.2f │ %.1fmin%s",
         direction, ticker[-15:], contract_price,
         regime.value, r_squared,
         ob["imbalance"] * 100, ob["total_depth"],
-        momentum_verdict, win_prob * 100, edge * 100, conf,
-        bet, mins, wlb_str
+        momentum_verdict, win_prob * 100, model_prob * 100, edge * 100,
+        ror * 100, conf, count, limit_price, cost, mins, wlb_str
     )
+    if count == 1 and "rounded up" in size_reason:
+        log.info("Sizing │ %s", size_reason)
 
     last_signal_desc = f"SIGNAL {direction} conf={conf:.0f} p={win_prob:.2f}"
     # balance_before = the realized balance for this cycle (fetched before any
     # order cost is debited) → the exact recovery target if this trade loses.
     place_order(ticker, direction, bet, limit_price, win_prob, edge,
-                balance_before=balance)
+                balance_before=balance, count=count)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
