@@ -137,6 +137,128 @@ def test_calc_edge():
     assert bot.calc_edge(0.70, 100) == 0.0
 
 
+def test_edge_return_on_risk_is_per_dollar_staked():
+    # 8pp of edge is a 26.7% return on a 30c stake but only 12.3% on a 65c one —
+    # the distinction MIN_EDGE_PCT (payout-denominated) cannot express.
+    assert round(bot.edge_return_on_risk(0.08, 30), 4) == round(0.08 / 0.30, 4)
+    assert round(bot.edge_return_on_risk(0.08, 65), 4) == round(0.08 / 0.65, 4)
+    assert bot.edge_return_on_risk(0.08, 0) == 0.0
+
+
+# ── v10.1.0 market anchor ─────────────────────────────────────────────────────
+# The audited failure: win_prob was a near-constant ~0.70 that ignored the
+# quoted price, so calc_edge turned "cheap" into "edgy" — corr(price, edge) was
+# -0.88 over 65 signals and the model's 72.5% mean claim realized 37.5%.
+
+def test_anchor_reduces_the_model_to_its_incremental_signal(monkeypatch):
+    monkeypatch.setattr(bot, "MARKET_ANCHOR_ENABLED", True)
+    monkeypatch.setattr(bot, "MAX_MODEL_EDGE_PP", 0.08)
+    # Model claimed 0.729 from a 0.638 base: a 9.1pp lift, clamped to 8pp and
+    # applied to the market's 30c → 38%, not the 72.9% the old model reported.
+    assert round(bot.market_anchored_win_prob(0.729, 0.638, 30), 4) == 0.38
+    # Same signal on a 65c contract lands at 73% — the lift is what carries over,
+    # not the level.
+    assert round(bot.market_anchored_win_prob(0.729, 0.638, 65), 4) == 0.73
+
+
+def test_anchor_makes_edge_price_neutral(monkeypatch):
+    """calc_edge(price/100 + lift, price) == lift at EVERY price.
+
+    This identity is the whole point: it turns MIN_EDGE_PCT into a bar on
+    percentage points of claimed advantage that reads the same at 30c and 65c.
+    Pre-anchor, a 5% edge gate passed a 30c contract at p >= 0.36 but demanded
+    p >= 0.71 at 65c — that asymmetry WAS the cheapness tilt.
+    """
+    monkeypatch.setattr(bot, "MARKET_ANCHOR_ENABLED", True)
+    monkeypatch.setattr(bot, "MAX_MODEL_EDGE_PP", 0.08)
+    for price in (30, 40, 50, 65, 70):
+        p = bot.market_anchored_win_prob(0.90, 0.60, price)   # lift clamps to +8pp
+        assert round(bot.calc_edge(p, price), 6) == 0.08
+
+
+def test_anchor_clamps_both_directions_and_can_be_disabled(monkeypatch):
+    monkeypatch.setattr(bot, "MAX_MODEL_EDGE_PP", 0.08)
+    monkeypatch.setattr(bot, "MARKET_ANCHOR_ENABLED", True)
+    assert round(bot.market_anchored_win_prob(0.20, 0.60, 50), 4) == 0.42   # -8pp floor
+    assert round(bot.market_anchored_win_prob(0.62, 0.60, 50), 4) == 0.52   # small lift passes through
+    monkeypatch.setattr(bot, "MARKET_ANCHOR_ENABLED", False)
+    assert bot.market_anchored_win_prob(0.90, 0.60, 50) == 0.90
+
+
+# ── v10.1.0 sizing floor ──────────────────────────────────────────────────────
+# `int(bet * 100 / price)` floored 55 of 65 audited signals to zero contracts —
+# 84.6% — after the edge justification had already been logged and sent.
+
+def test_size_contracts_normal_case():
+    assert bot.size_contracts(2.14, 40, 100.0)[0] == 5      # 5.35 -> 5
+    assert bot.size_contracts(1.00, 25, 100.0)[0] == 4
+
+
+def test_size_contracts_rounds_up_to_one_inside_the_hard_ceiling(monkeypatch):
+    monkeypatch.setattr(bot, "MIN_ORDER_ROUNDUP", True)
+    monkeypatch.setattr(bot, "MAX_TRADE_PCT", 0.30)
+    # The exact 2026-07-26 dead case: a $0.37 stake against a 45c contract.
+    count, reason = bot.size_contracts(0.37, 45, 14.83)
+    assert count == 1                                       # was 0 for three days
+    assert "rounded up" in reason
+
+
+def test_size_contracts_never_breaches_the_max_trade_ceiling(monkeypatch):
+    monkeypatch.setattr(bot, "MIN_ORDER_ROUNDUP", True)
+    monkeypatch.setattr(bot, "MAX_TRADE_PCT", 0.02)         # 2% of $10 = $0.20
+    count, reason = bot.size_contracts(0.15, 45, 10.0)      # one contract = $0.45
+    assert count == 0
+    assert "ceiling" in reason
+
+
+def test_size_contracts_respects_the_customer_reserve(monkeypatch):
+    monkeypatch.setattr(bot, "MIN_ORDER_ROUNDUP", True)
+    monkeypatch.setattr(bot, "MAX_TRADE_PCT", 1.0)
+    # The round-up is sized against tradeable_balance, not the raw balance, so a
+    # ring-fenced reserve can never be spent to reach the one-contract minimum.
+    monkeypatch.setattr(bot, "effective_reserve", lambda: 9.80)
+    assert bot.size_contracts(0.37, 45, 10.0)[0] == 0       # $0.20 tradeable
+    monkeypatch.setattr(bot, "effective_reserve", lambda: 0.0)
+    assert bot.size_contracts(0.37, 45, 10.0)[0] == 1       # same balance, no reserve
+
+
+def test_size_contracts_roundup_can_be_turned_off(monkeypatch):
+    monkeypatch.setattr(bot, "MIN_ORDER_ROUNDUP", False)
+    count, reason = bot.size_contracts(0.37, 45, 14.83)
+    assert count == 0
+    assert "roundup off" in reason
+
+
+# ── v10.1.0 order-book imbalance ceiling ──────────────────────────────────────
+
+def _book(yes_dollars, no_dollars, yes_mid=50):
+    """A synthetic two-level book with the requested dollar depth per side."""
+    return {"orderbook_fp": {
+        "yes_dollars": [[(yes_mid - 1) / 100.0, yes_dollars / 2.0],
+                        [(yes_mid + 1) / 100.0, yes_dollars / 2.0]],
+        "no_dollars":  [[(100 - yes_mid - 1) / 100.0, no_dollars / 2.0],
+                        [(100 - yes_mid + 1) / 100.0, no_dollars / 2.0]],
+    }}
+
+
+def test_ob_rejects_a_one_sided_book(monkeypatch):
+    # 2026-07-23 22:16: OB=99.8% scored Conf=95, drew the window's biggest stake
+    # and lost all of it. One stale level on the far side is a liquidity
+    # condition, not conviction.
+    monkeypatch.setattr(bot, "OB_IMBALANCE_MAX", 0.95)
+    monkeypatch.setattr(bot, "MIN_OB_DEPTH", 50.0)
+    assert bot.analyze_order_book(_book(9990.0, 10.0), 50) is None
+
+
+def test_ob_still_accepts_a_strong_but_two_sided_book(monkeypatch):
+    monkeypatch.setattr(bot, "OB_IMBALANCE_MAX", 0.95)
+    monkeypatch.setattr(bot, "MIN_OB_DEPTH", 50.0)
+    monkeypatch.setattr(bot, "OB_IMBALANCE_THRESH", 0.65)
+    ob = bot.analyze_order_book(_book(800.0, 200.0), 50)
+    assert ob is not None and ob["direction"] == "YES"
+    assert round(ob["imbalance"], 2) == 0.80
+
+
 def test_wilson_lower_bound_needs_sample_and_is_conservative():
     assert bot.wilson_lower_bound(5, 5) == 0.0            # < 10 trades → no verdict
     wlb = bot.wilson_lower_bound(50, 100)
@@ -215,27 +337,77 @@ def test_stale_btc_feed_forces_unknown_regime(monkeypatch):
 
 # ── performance guard can never wedge across days ─────────────────────────────
 # A sub-50% Wilson lower bound over ≥ MIN_SAMPLE_TRADES blocks all entries, and
-# blocked trading produces no new samples — so without the daily reset the
-# guard froze the bot PERMANENTLY (the v9.0.8 lock-up class, reachable with
-# genuinely-settled trades). The UTC rollover must clear the tally.
+# blocked trading produces no new samples — so a guard that latches freezes the
+# bot PERMANENTLY (the v9.0.8 lock-up class). v10.0.0 avoided that by resetting
+# the tally at the UTC rollover, but at ~2 trades/day the sample never reached
+# MIN_SAMPLE_TRADES and the guard was never evaluated once across 2026-07-23→26.
+# v10.1.0 scores a rolling window that survives day boundaries and breaks the
+# latch with a timed cool-off instead.
 
-def test_perf_guard_lockout_clears_at_day_rollover():
-    saved = (bot.live_wins, bot.live_losses, bot._live_prior,
-             bot._session_day, bot._session_halted, bot.session_start_balance,
-             bot.session_stop_threshold)
+def _reset_perf_guard():
+    bot._perf_window.clear()
+    bot._perf_guard_until = 0.0
+
+
+def test_perf_guard_ignores_the_daily_tally_and_uses_its_own_window():
+    saved = (bot.live_wins, bot.live_losses)
     try:
-        bot.live_wins, bot.live_losses = 5, 15            # WR 25% over 20 trades
-        assert bot.performance_guard() is False           # guard is blocking
-        bot._session_day = "2000-01-01"                   # force a day boundary
-        assert bot.maybe_roll_session_day(1000.0) is True
-        assert (bot.live_wins, bot.live_losses) == (0, 0)
-        assert bot._live_prior == bot.OB_BASE_ACCURACY
-        assert bot.performance_guard() is True            # fresh day, guard open
+        _reset_perf_guard()
+        # A losing DAY must not trip the guard on its own — the daily counters
+        # are display/alert state and reset at midnight.
+        bot.live_wins, bot.live_losses = 5, 15
+        assert bot.performance_guard() is True
     finally:
-        bot.probation.cancel()                            # rollover arms the ramp
-        (bot.live_wins, bot.live_losses, bot._live_prior,
-         bot._session_day, bot._session_halted, bot.session_start_balance,
-         bot.session_stop_threshold) = saved
+        (bot.live_wins, bot.live_losses) = saved
+        _reset_perf_guard()
+
+
+def test_perf_guard_window_survives_the_day_rollover():
+    saved = (bot._session_day, bot._session_halted, bot.session_start_balance,
+             bot.session_stop_threshold, bot.live_wins, bot.live_losses,
+             bot._live_prior)
+    try:
+        _reset_perf_guard()
+        for _ in range(12):
+            bot.perf_guard_record(True)
+        bot._session_day = "2000-01-01"
+        assert bot.maybe_roll_session_day(1000.0) is True
+        assert (bot.live_wins, bot.live_losses) == (0, 0)   # daily tally cleared
+        assert len(bot._perf_window) == 12                  # guard sample kept
+    finally:
+        bot.probation.cancel()                              # rollover arms the ramp
+        (bot._session_day, bot._session_halted, bot.session_start_balance,
+         bot.session_stop_threshold, bot.live_wins, bot.live_losses,
+         bot._live_prior) = saved
+        _reset_perf_guard()
+
+
+def test_perf_guard_trips_on_a_bad_window_then_cools_off_instead_of_latching():
+    try:
+        _reset_perf_guard()
+        for i in range(20):                       # 5W/15L — Wilson LB well under 50%
+            bot.perf_guard_record(i < 5)
+        assert bot.performance_guard() is False   # trips
+        assert bot._perf_guard_until > 0.0
+        assert bot.performance_guard() is False   # still inside the cool-off
+
+        bot._perf_guard_until = time.time() - 1   # cool-off elapsed
+        assert bot.performance_guard() is True    # re-opens...
+        assert len(bot._perf_window) == 0         # ...on a cleared sample, so the
+        assert bot.performance_guard() is True    # bad window can never re-latch
+    finally:
+        _reset_perf_guard()
+
+
+def test_perf_guard_stays_open_on_a_healthy_window():
+    try:
+        _reset_perf_guard()
+        for i in range(20):                       # 15W/5L
+            bot.perf_guard_record(i < 15)
+        assert bot.performance_guard() is True
+        assert bot._perf_guard_until == 0.0
+    finally:
+        _reset_perf_guard()
 
 
 def test_day_rollover_clears_session_halt():
@@ -251,3 +423,80 @@ def test_day_rollover_clears_session_halt():
         bot.probation.cancel()
         (bot._session_day, bot._session_halted, bot.session_start_balance,
          bot.session_stop_threshold, bot.live_wins, bot.live_losses) = saved
+
+
+# ── v10.1.0 stale-order cancellation ──────────────────────────────────────────
+# Two distinct defects lived in one except-block. A 404 (order not resting —
+# almost always already filled) was retried every cycle until the 1200s purge,
+# producing 22 identical warnings in the audited window and holding a phantom
+# slot against MAX_CONCURRENT_POS. And a cancel that SUCCEEDED left the market in
+# session_traded_tickers, so an unfilled order locked the bot out of its own
+# live signal with no position to show for it (07-23 20:16, 07-25 13:00).
+
+class _FakeHTTPError(Exception):
+    def __init__(self, status):
+        super().__init__(f"{status} Client Error")
+        self.response = type("R", (), {"status_code": status})()
+
+
+def _stage_stale_order(monkeypatch, ticker="KXBTC15M-T", oid="oid-1"):
+    rec = {"ticker": ticker, "cost": 0.40, "count": 1,
+           "placed_at": time.time() - (bot.STALE_ORDER_TIMEOUT + 60)}
+    monkeypatch.setitem(bot.open_orders, oid, rec)
+    bot.active_tickers.add(ticker)
+    bot.session_traded_tickers.add(ticker)
+    monkeypatch.setattr(bot, "DEMO_MODE", False)
+    return rec
+
+
+def test_stale_cancel_404_is_terminal_and_keeps_the_record_for_settlement(monkeypatch):
+    try:
+        rec = _stage_stale_order(monkeypatch)
+        calls = []
+
+        def _boom(path):
+            calls.append(path)
+            raise _FakeHTTPError(404)
+
+        monkeypatch.setattr(bot, "_delete", _boom)
+        bot.cancel_stale_orders()
+        assert rec.get("cancel_unresolved") is True
+        assert "oid-1" in bot.open_orders          # settlement must still match it
+        bot.cancel_stale_orders()                  # ...but never asks again
+        assert len(calls) == 1
+    finally:
+        bot.open_orders.pop("oid-1", None)
+        bot.active_tickers.discard("KXBTC15M-T")
+        bot.session_traded_tickers.discard("KXBTC15M-T")
+
+
+def test_stale_cancel_success_releases_the_market_for_a_requote(monkeypatch):
+    try:
+        _stage_stale_order(monkeypatch)
+        monkeypatch.setattr(bot, "_delete", lambda path: {})
+        bot.cancel_stale_orders()
+        assert "oid-1" not in bot.open_orders
+        assert "KXBTC15M-T" not in bot.active_tickers
+        # The order never filled, so the session guard must not keep the bot out.
+        assert "KXBTC15M-T" not in bot.session_traded_tickers
+    finally:
+        bot.open_orders.pop("oid-1", None)
+        bot.active_tickers.discard("KXBTC15M-T")
+        bot.session_traded_tickers.discard("KXBTC15M-T")
+
+
+def test_stale_cancel_retries_a_transient_error(monkeypatch):
+    try:
+        rec = _stage_stale_order(monkeypatch)
+
+        def _boom(path):
+            raise _FakeHTTPError(503)
+
+        monkeypatch.setattr(bot, "_delete", _boom)
+        bot.cancel_stale_orders()
+        assert rec.get("cancel_unresolved") is None   # 503 is not terminal
+        assert "oid-1" in bot.open_orders
+    finally:
+        bot.open_orders.pop("oid-1", None)
+        bot.active_tickers.discard("KXBTC15M-T")
+        bot.session_traded_tickers.discard("KXBTC15M-T")
