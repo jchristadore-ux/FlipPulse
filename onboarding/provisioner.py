@@ -312,7 +312,6 @@ def deploy_variables(sub: dict, secrets: dict,
         # State on the /data volume so it survives redeploys (runbook §3–§4).
         "RECOVERY_STATE_PATH": "/data/recovery_state.json",
         "PROBATION_STATE_PATH": "/data/probation_state.json",
-        "LADDER_STATE_PATH": "/data/ladder_state.json",
         "BUCKET_STATS_PATH": "/data/bucket_stats.json",
         "BILLING_STATE_PATH": "/data/billing_state.json",
         "STATUS_SNAPSHOT_PATH": "/data/status_snapshot.json",

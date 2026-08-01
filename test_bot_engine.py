@@ -102,6 +102,11 @@ def test_active_trade_size_clamped_by_max_pct(monkeypatch):
 
 
 def test_recovery_mode_uses_recovery_fraction(monkeypatch):
+    # The reduced recovery tier only applies with "No Stake Change" OFF; it is ON
+    # by default from v10.2.0 (flat risk — see test_flat_risk_no_ladder below).
+    monkeypatch.setattr(bot, "RECOVERY_NO_STAKE_CHANGE", False)
+    monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
+    monkeypatch.setattr(bot, "RECOVERY_NSC_OVERRIDE_PATH", "/nonexistent/nsc.json")
     monkeypatch.setattr(bot.recovery, "active", True)
     monkeypatch.setattr(bot, "RECOVERY_TRADE_PCT", 0.03)
     assert bot.active_trade_fraction() == 0.03
@@ -118,7 +123,6 @@ def test_probation_rungs_step_between_recovery_and_normal(monkeypatch):
 
 
 def test_kelly_bet_gates_out_negative_expectancy(monkeypatch):
-    monkeypatch.setattr(bot, "stake_ladder", None)
     # p=0.5 at 50c is exactly break-even → full_kelly 0 → no bet.
     assert bot.kelly_bet(0.50, 50, 1000.0) == 0.0
     # Positive expectancy → the active-mode fraction of balance.

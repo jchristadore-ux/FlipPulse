@@ -59,28 +59,32 @@ DEFAULT_FORMAT = "balanced"
 # Per-trade sizing (fractions of the CURRENT balance):
 #   NORMAL_TRADE_PCT    full stake in normal operation
 #   RECOVERY_TRADE_PCT  reduced stake while clawing back a full-size loss
-#   MAX_TRADE_PCT       hard ceiling on any single trade (the ladder can't pass it)
+#   MAX_TRADE_PCT       hard ceiling on any single trade
+#
+# v10.2.0: no format ladders the stake. The ladder overlay is retired and the
+# probation ramp is off in every preset, so a format's NORMAL_TRADE_PCT is simply
+# the percentage of balance staked on every trade. The daily +3% profit target
+# (DAILY_PROFIT_TARGET_PCT) is global, not per-format — every posture stops for
+# the day once the goal is banked; only the route there differs.
 
 FORMATS: Dict[str, dict] = {
     "conservative": {
         "display_name": "Conservative — Capital Preservation",
-        "blurb": "Fewer, higher-conviction trades at a small % of balance. Strict "
-                 "gates, recovery + probation on, ladder off. Built to protect the "
-                 "bankroll.",
+        "blurb": "Fewer, higher-conviction trades at a small, flat % of balance. "
+                 "Strict gates. Built to protect the bankroll.",
         "description": (
             "Tightens every entry gate (order-book imbalance, regime R², "
-            "confidence, edge, win-prob), requires BTC momentum AGREE, runs one "
-            "position at a time, and keeps the graduated Recovery/Probation "
-            "sizing on with the Ladder overlay off. Smallest per-trade percentage "
-            "and an earlier session-stop. Lowest trade frequency, lowest variance."
+            "confidence, edge, win-prob), requires BTC momentum AGREE, and runs "
+            "one position at a time. Stakes a flat 5% of balance on every trade — "
+            "nothing ladders the size up — with an 8% hard ceiling and an earlier "
+            "session-stop. Lowest trade frequency, lowest variance."
         ),
         "settings": {
             "DEMO_MODE": "true",
             "NORMAL_TRADE_PCT": 0.05,
             "RECOVERY_TRADE_PCT": 0.02,
             "MAX_TRADE_PCT": 0.08,
-            "LADDER_ENABLED": "false",
-            "PROBATION_RAMP_ENABLED": "true",
+            "PROBATION_RAMP_ENABLED": "false",
             "REQUIRE_AGREE_MOMENTUM": "true",
             "OB_IMBALANCE_THRESH": 0.75,
             "MIN_OB_DEPTH_DOLLARS": 100.0,
@@ -96,23 +100,21 @@ FORMATS: Dict[str, dict] = {
     },
     "balanced": {
         "display_name": "Balanced — Standard (default)",
-        "blurb": "The default posture. Moderate per-trade %, two-tier Recovery + "
-                 "Probation sizing, ladder off, doctrine-default gates.",
+        "blurb": "The default posture. A flat 10% of balance per trade, "
+                 "doctrine-default gates.",
         "description": (
-            "The shipped default. Stakes 10% of balance normally, drops to 3% "
-            "while clawing back a loss, and never exceeds 15% on any single trade. "
-            "The Probation ramp is on, the Ladder overlay is off, momentum-AGREE "
-            "is required, and the doctrine entry thresholds apply (OB imbalance "
-            "0.70, R² 0.65, confidence 65, edge 6%, win-prob 60%). A sensible "
-            "middle ground of frequency and variance for most customers."
+            "The shipped default. Stakes a flat 10% of balance on every trade and "
+            "never exceeds 15% on any single one. Momentum-AGREE is required and "
+            "the doctrine entry thresholds apply (OB imbalance 0.70, R² 0.65, "
+            "confidence 65, edge 6%, win-prob 60%). A sensible middle ground of "
+            "frequency and variance for most customers."
         ),
         "settings": {
             "DEMO_MODE": "true",
             "NORMAL_TRADE_PCT": 0.10,
             "RECOVERY_TRADE_PCT": 0.03,
             "MAX_TRADE_PCT": 0.15,
-            "LADDER_ENABLED": "false",
-            "PROBATION_RAMP_ENABLED": "true",
+            "PROBATION_RAMP_ENABLED": "false",
             "REQUIRE_AGREE_MOMENTUM": "true",
             "OB_IMBALANCE_THRESH": 0.70,
             "MIN_OB_DEPTH_DOLLARS": 75.0,
@@ -128,24 +130,22 @@ FORMATS: Dict[str, dict] = {
     },
     "aggressive": {
         "display_name": "Aggressive — Edge Hunter",
-        "blurb": "More trades, larger % of balance, Ladder overlay on (up to 2×). "
-                 "Higher throughput and higher variance.",
+        "blurb": "More trades at a larger, flat % of balance. Higher throughput "
+                 "and higher variance.",
         "description": (
             "Relaxes the entry gates (lower OB imbalance, R², confidence, edge and "
-            "win-prob floors), allows two concurrent positions, raises the "
-            "loss-streak pause threshold, and turns the performance-driven Ladder "
-            "overlay ON so a hot win rate scales the stake up toward the max. "
-            "Stakes 20% of balance normally with a 30% hard ceiling. Highest trade "
-            "frequency and variance — only the always-on guardrails (streak pause, "
-            "session stop, ladder drawdown caps, MAX_TRADE_PCT) remain."
+            "win-prob floors), allows two concurrent positions and raises the "
+            "loss-streak pause threshold. Stakes a flat 20% of balance per trade "
+            "with a 30% hard ceiling. Highest trade frequency and variance — the "
+            "always-on guardrails (streak pause, session stop, MAX_TRADE_PCT) "
+            "remain."
         ),
         "settings": {
             "DEMO_MODE": "true",
             "NORMAL_TRADE_PCT": 0.20,
             "RECOVERY_TRADE_PCT": 0.05,
             "MAX_TRADE_PCT": 0.30,
-            "LADDER_ENABLED": "true",
-            "PROBATION_RAMP_ENABLED": "true",
+            "PROBATION_RAMP_ENABLED": "false",
             "REQUIRE_AGREE_MOMENTUM": "true",
             "OB_IMBALANCE_THRESH": 0.65,
             "MIN_OB_DEPTH_DOLLARS": 50.0,
@@ -215,7 +215,6 @@ def print_formats() -> None:
         print(f"      normal={s['NORMAL_TRADE_PCT']*100:.0f}% "
               f"recovery={s['RECOVERY_TRADE_PCT']*100:.0f}% "
               f"max={s['MAX_TRADE_PCT']*100:.0f}% "
-              f"ladder={s['LADDER_ENABLED']} "
               f"OB≥{s['OB_IMBALANCE_THRESH']} R²≥{s['R2_TREND_THRESHOLD']}\n")
     print("Select with:  TRADING_FORMAT=<name> python bot.py")
     print("Explicit env vars always override a format's defaults.")

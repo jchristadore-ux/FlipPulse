@@ -147,6 +147,37 @@ def test_risk_reset_when_none_set(tmp_path):
     assert "already" in reply.lower()
 
 
+# ── /status daily goal (v10.2.0) ──────────────────────────────────────────────
+_GOAL_SNAP = dict(_SNAP, balance=1000.0, session_pnl=12.5,
+                  daily_target_enabled=True, daily_target_pct=3.0,
+                  daily_target_dollars=30.0, daily_target_progress=12.5)
+
+
+def test_status_shows_progress_toward_the_daily_goal(tmp_path):
+    reply = _handler(tmp_path, _GOAL_SNAP).handle("123", "/status")
+    assert "Daily goal: $+12.50 / $30.00" in reply
+    assert "reached" not in reply
+
+
+def test_status_reports_a_banked_goal_as_good_news(tmp_path):
+    snap = dict(_GOAL_SNAP, daily_target_progress=31.0, halted=True,
+                halt_reason="profit_target")
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "DAILY GOAL HIT" in reply
+    assert "HALTED ⛔" not in reply           # not an emergency
+
+
+def test_status_still_flags_a_real_halt(tmp_path):
+    snap = dict(_GOAL_SNAP, halted=True, halt_reason="session_stop")
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "HALTED ⛔" in reply
+
+
+def test_status_omits_the_goal_line_when_target_is_off(tmp_path):
+    reply = _handler(tmp_path, _SNAP).handle("123", "/status")
+    assert "Daily goal" not in reply
+
+
 # ── /mode · /live · /paper ─────────────────────────────────────────────────────
 def _mode_file(h):
     return json.loads(open(h.mode_override_path).read())

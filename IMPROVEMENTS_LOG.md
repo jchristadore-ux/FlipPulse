@@ -27,6 +27,7 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 | IMP-002 | 2026-07-08 | dashboard / sizing / telegram | Self-service web dashboard (login) to change risk %, trading format, Telegram alerts, and set-aside reserve | High | Done |
 | IMP-004 | 2026-07-08 | provisioning / dashboard | Autoprovision the dashboard: generate the Railway public domain + stable password and surface URL/password to the operator; docs (`DASHBOARD.md`) | High | Done |
 | IMP-005 | 2026-07-08 | dashboard / command bot / engine | Paper↔live flip from the dashboard and Telegram (`/live confirm` · `/paper`), confirmation-gated, applied by a clean auto-restart when flat | High | In Progress |
+| IMP-006 | 2026-08-01 | engine / sizing | Daily +3% profit target halts trading for the day; laddering disabled so risk stays a flat % of balance | High | Done |
 
 ---
 
@@ -121,6 +122,41 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
   paper is always one tap/`/paper`; dashboard/command_bot stay decoupled (file-only IPC).
   Covered by `test_dashboard.py` + `test_command_bot.py` (confirm gating, pending state,
   boot-mode override, flat-only restart trigger).
+
+### IMP-006 — Daily 3% profit target + flat risk (laddering disabled)
+- **Added:** 2026-08-01
+- **Area:** engine / position sizing
+- **Priority:** High
+- **Status:** Done (v10.2.0)
+- **Problem / motivation (owner directive):** the day should have a defined goal — make
+  3%, then stop — and the amount at risk should not jump around. The laddering overlay
+  could scale a stake to 2× on a hot rolling win rate, and the probation ramp stepped the
+  base fraction up rung by rung (re-armed from the floor every UTC midnight), so the
+  dollars at risk moved for reasons unrelated to the balance.
+- **Change:**
+  - **Daily profit target.** `DAILY_PROFIT_TARGET_PCT` (default `0.03`) × the balance the
+    day OPENED with (`session_start_balance`) is the day's goal. `daily_profit_target_check()`
+    latches the existing `_session_halted` the moment today's **realized** P&L reaches it —
+    checked at settlement (so the trade that crosses the line stops the day immediately) and
+    again as a pre-entry guard. Realized dollars only, never a balance delta, so an open
+    position's outlay can't fake progress. The UTC rollover clears the halt and re-bases the
+    goal, so yesterday's profit compounds into today's target. A distinct 🎯 Telegram notice
+    (not the emergency `telegram_halt` copy), a `halt_reason` in the status snapshot, and
+    goal progress in `/status` and the dashboard.
+  - **Flat risk.** `ladder.py` is unwired from `bot.py` (no import, no `stake_ladder`, no
+    `ladder_record`); `LADDER_ENABLED` / `RECOVERY_LADDER_PAUSE_TRADES` / `LADDER_STATE_PATH`
+    are no longer read and the provisioner no longer seeds them. `PROBATION_RAMP_ENABLED`
+    now defaults **false** and `RECOVERY_NO_STAKE_CHANGE` defaults **true**, so the stake is
+    always `NORMAL_TRADE_PCT` (or the `/risk` override) of the current balance, bounded by
+    `MAX_TRADE_PCT`. No format re-enables laddering.
+  - While halted, the main loop keeps resolving settlements and cancelling stale orders, so a
+    position open when the target lands still settles the same day.
+- **Impact / risk:** trading stops earlier on good days by design — fewer trades, and profit
+  above 3% is deliberately left on the table. Recovery and probation code remain in place and
+  switchable (`RECOVERY_NO_STAKE_CHANGE=false`, `PROBATION_RAMP_ENABLED=true`) for anyone who
+  wants the older behaviour. Every downside guardrail (streak pause, session stop, perf guard,
+  vol circuit, `MAX_TRADE_PCT`) is unchanged. Covered by `test_daily_target.py` plus new
+  `/status` and dashboard cases; `ladder.py` and `test_ladder.py` stay green in isolation.
 
 <!--
 Template for a detailed entry — copy below when an item needs more than one line.

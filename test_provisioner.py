@@ -173,10 +173,12 @@ def test_full_variable_set_injected(submission):
     assert v["KALSHI_API_KEY_ID"] == "key-id"
     import base64
     assert base64.b64decode(v["KALSHI_PRIVATE_KEY_PEM_B64"]).decode() == PEM
-    for key in ("RECOVERY_STATE_PATH", "PROBATION_STATE_PATH", "LADDER_STATE_PATH",
+    for key in ("RECOVERY_STATE_PATH", "PROBATION_STATE_PATH",
                 "BUCKET_STATS_PATH", "BILLING_STATE_PATH", "STATUS_SNAPSHOT_PATH",
                 "HEALTH_LOG_PATH", "BILLING_LOG_PATH"):
         assert v[key].startswith("/data/"), key
+    # The ladder overlay is retired (v10.2.0) — nothing to provision for it.
+    assert "LADDER_STATE_PATH" not in v
     assert v["PERF_FEE_PCT"] == "0.0"                  # fee stays disabled
 
 

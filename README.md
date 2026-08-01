@@ -6,6 +6,14 @@ All position sizing is **percentage-based** (a fraction of the current balance),
 so one template fits every customer regardless of their starting balance and the
 stake compounds as the account grows.
 
+**The day's goal is +3%.** Once today's realized profit reaches
+`DAILY_PROFIT_TARGET_PCT` (default `0.03`) of the balance the day opened with,
+the bot stops opening trades until the next UTC day — open positions still settle
+normally, and the goal re-bases on tomorrow's opening balance. Risk is **flat**:
+the stake is always the configured percentage of the balance, with no laddering
+or performance multiplier stepping it up (see
+[`docs/LADDER_STRATEGY.md`](docs/LADDER_STRATEGY.md), retired in v10.2.0).
+
 This repo is a clean, one-bot-per-customer template for deploying the Kalshi
 trading bot. You clone it once per customer; each customer gets their own repo
 (or Railway project from a shared template), their own Kalshi key, their own
@@ -29,7 +37,7 @@ deliberate later step.
 ```
 FlipPulse/
 ├── bot.py                       # entrypoint — Railway runs `python bot.py` (percentage sizing)
-├── ladder.py                    # ladder stake overlay engine
+├── ladder.py                    # RETIRED stake-overlay engine (unwired from bot.py)
 ├── formats.py                   # trading format definitions (conservative/balanced/aggressive)
 ├── telegram_utils.py            # Telegram alerts (+ operator fan-out)
 ├── command_bot.py               # /status + /health-log command listener
@@ -68,6 +76,9 @@ The bot reads everything from environment variables. See
   modes; run `python formats.py` for the full breakdown)
 - `NORMAL_TRADE_PCT`, `RECOVERY_TRADE_PCT`, `MAX_TRADE_PCT` — **percentage** sizing
   (fractions of the current balance); optional per-customer overrides of the format
+- `DAILY_PROFIT_TARGET_PCT` (default `0.03`), `DAILY_PROFIT_TARGET_ENABLED` — the
+  day's goal: once today's realized P&L reaches +3% of the balance the day opened
+  with, trading stops until the next UTC day
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — the customer's own Telegram bot
 - `TELEGRAM_OPERATOR_CHAT_ID` — optional; also fans alerts out to you (operator)
 - `*_STATE_PATH`, `STATUS_SNAPSHOT_PATH`, `HEALTH_LOG_PATH` — pre-pointed at the
@@ -85,8 +96,8 @@ quiet chat means no trades fired. Liveness checks are pull-based via three
 read-only commands (`command_bot.py`, started by `bot.py` on boot):
 
 - **`/status`** — mode (paper/live), format, balance, session PnL, W/L record,
-  ladder/recovery/probation mode + size, open positions, session state, last
-  signal, and last-tick time.
+  progress toward today's profit goal, sizing mode + size, open positions,
+  session state, last signal, and last-tick time.
 - **`/health-log [n]`** — tails the recent health/activity log.
 - **`/help`** — lists the commands.
 
@@ -97,7 +108,7 @@ runbook. No central dashboard required.
 
 ## Code status
 
-> **The trading strategy (`bot.py`, `ladder.py`, `telegram_utils.py`) derives from
+> **The trading strategy (`bot.py`, `telegram_utils.py`) derives from
 > the `markeymachine` repo, converted here to PERCENTAGE-BASED sizing** (v10.0.0):
 > every stake is a fraction of the current balance resolved at one chokepoint
 > (`active_trade_size`), so the template scales to any starting balance and
