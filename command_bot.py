@@ -4,8 +4,8 @@ The customer's own bot already *sends* alerts (telegram_utils.py). This module
 lets that same bot *answer* commands so the customer (and the operator) can check
 on it — and retune their own risk — from Telegram without any dashboard:
 
-  /status      — current mode (paper/live), balance, PnL, open positions /
-                 ladder state, session state, and the last tick time.
+  /status      — current mode (paper/live), balance, PnL, progress toward the
+                 daily profit goal, open positions, session state, last tick.
   /health-log  — tail of the recent health/activity log.
   /risk        — show the current full-size risk %, or `/risk <percent>` to set it
                  (e.g. `/risk 8`); `/risk reset` restores the configured default.
@@ -214,7 +214,17 @@ class CommandHandler:
                 size_str += f" (~${size:,.2f})"
         elif isinstance(size, (int, float)):
             size_str = f" · size ${size:,.2f}"
-        lines.append(f"Ladder/mode: {active_mode}{size_str}")
+        lines.append(f"Sizing mode: {active_mode}{size_str}")
+        # Daily profit target: the day's goal and how far along it is. The stake
+        # no longer ladders, so this is the number that actually paces the day.
+        if snap.get("daily_target_enabled"):
+            goal = snap.get("daily_target_dollars")
+            prog = snap.get("daily_target_progress")
+            tpct = snap.get("daily_target_pct", 3.0)
+            if isinstance(goal, (int, float)) and isinstance(prog, (int, float)):
+                done = "✅ reached — stopped for today" if prog >= goal > 0 else ""
+                lines.append(f"Daily goal: ${prog:+,.2f} / ${goal:,.2f} "
+                             f"(+{tpct:.1f}% of the day's open) {done}".rstrip())
         # Recovery Mode "No Stake Change" toggle + recovery-scoped win rate.
         if snap.get("recovery_no_stake_change"):
             lines.append("Recovery: No-Stake-Change ON (stake held while clawing back)")
@@ -238,7 +248,10 @@ class CommandHandler:
         lines.append(f"Open positions: {open_str}")
         sess = snap.get("session_state", "?")
         if snap.get("halted"):
-            sess += " · HALTED ⛔"
+            # A banked profit target is not an emergency — say which halt it is.
+            sess += (" · DAILY GOAL HIT 🎯 (resumes next trading day)"
+                     if snap.get("halt_reason") == "profit_target"
+                     else " · HALTED ⛔")
         lines.append(f"Session: {sess}")
         lines.append(f"Last signal: {snap.get('last_signal', '—')}")
         lines.append(f"Last tick: {self._fmt_age(snap.get('updated_at'))}")
@@ -352,8 +365,8 @@ class CommandHandler:
             return (
                 f"🛟 Recovery Mode — No Stake Change: {state}\n"
                 "When ON, recovery still triggers and tracks the claw-back, but keeps "
-                "your stake at the full size and keeps laddering — no stake reduction, "
-                "no jump-back on exit.\n"
+                "your stake at the full size — no stake reduction, no jump-back "
+                "on exit.\n"
                 "Turn it on with `/recoverynostakechange on`, off with "
                 "`/recoverynostakechange off`."
             )
@@ -368,8 +381,8 @@ class CommandHandler:
                     "made — please try again.")
         if enabled:
             return ("✅ Recovery Mode → No Stake Change is now ON.\n"
-                    "During recovery the bot keeps your full stake and keeps "
-                    "laddering — takes effect immediately, even mid-recovery.")
+                    "During recovery the bot keeps your full stake — takes effect "
+                    "immediately, even mid-recovery.")
         return ("✅ Recovery Mode → No Stake Change is now OFF.\n"
                 "Recovery will use the standard reduced stake while clawing back. "
                 "Takes effect immediately.")

@@ -1,14 +1,15 @@
 """Tests for Recovery Mode "No Stake Change" (task 2).
 
 The toggle makes recovery still TRIGGER and TRACK, but keep the stake at the full
-normal fraction and leave laddering active — no de-risk, no post-recovery ramp.
+normal fraction — no de-risk, no post-recovery ramp. It is ON by default from
+v10.2.0 (flat risk); these tests force it OFF in the fixture so both paths are
+covered explicitly.
 
 Covers:
   * recovery_no_stake_change_enabled() — env default + runtime override file.
   * active_trade_fraction() / in_clawback() honoring the toggle while recovery is
-    active (the two sizing chokepoints the ladder reads).
-  * enter()/maybe_exit() taking the no-stake-change path (messaging + no ladder
-    pause on exit).
+    active (the two sizing chokepoints).
+  * enter()/maybe_exit() taking the no-stake-change path (messaging, no ramp).
 
 Same import shim as test_command_bot.py.
 
@@ -98,12 +99,12 @@ def test_standard_recovery_drops_stake_and_clawback(monkeypatch):
     assert bot.in_clawback() is True
 
 
-def test_nsc_recovery_keeps_full_stake_and_ladders(monkeypatch):
+def test_nsc_recovery_keeps_full_stake(monkeypatch):
     monkeypatch.setattr(bot, "RECOVERY_NO_STAKE_CHANGE", True)
     monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
     _activate_recovery()
     assert bot.active_trade_fraction() == bot.effective_normal_trade_pct()
-    assert bot.in_clawback() is False          # ladder keeps sizing up
+    assert bot.in_clawback() is False          # sizing is not reduced
 
 
 def test_toggle_flips_live_without_reentry(monkeypatch):
@@ -129,37 +130,27 @@ def test_enter_nsc_sends_no_stake_change_message(monkeypatch):
     assert any("No Stake Change" in m for m in sent)
 
 
-def test_exit_nsc_does_not_pause_ladder_or_ramp(monkeypatch):
-    """On exit in NSC mode the ladder pause is never called (nothing to ramp)."""
+def test_exit_nsc_reports_nothing_to_ramp_back(monkeypatch):
+    """On exit in NSC mode the stake never dropped, so the copy says so."""
     monkeypatch.setattr(bot, "RECOVERY_NO_STAKE_CHANGE", True)
     monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
-
-    calls = {"pause": 0}
-
-    class _FakeLadder:
-        def pause_size_up(self, n):
-            calls["pause"] += 1
-
-    monkeypatch.setattr(bot, "stake_ladder", _FakeLadder())
+    sent = []
+    monkeypatch.setattr(bot.tg, "send_status_message",
+                        lambda msg: sent.append(msg) or True)
     _activate_recovery()
     assert bot.recovery.maybe_exit(1000.0) is True   # target met → exits
     assert bot.recovery.active is False
-    assert calls["pause"] == 0                        # NSC: no ladder pause
+    assert any("nothing to ramp back" in m for m in sent)
 
 
-def test_exit_standard_pauses_ladder(monkeypatch):
-    """Control: standard recovery exit DOES pause the ladder size-up."""
-    calls = {"pause": 0}
-
-    class _FakeLadder:
-        def pause_size_up(self, n):
-            calls["pause"] += 1
-
-    monkeypatch.setattr(bot, "stake_ladder", _FakeLadder())
-    monkeypatch.setattr(bot, "RECOVERY_LADDER_PAUSE_TRADES", 5)
+def test_exit_standard_reports_size_restored(monkeypatch):
+    """Control: a standard recovery exit announces the return to full size."""
+    sent = []
+    monkeypatch.setattr(bot.tg, "send_status_message",
+                        lambda msg: sent.append(msg) or True)
     _activate_recovery()
     assert bot.recovery.maybe_exit(1000.0) is True
-    assert calls["pause"] == 1
+    assert any("Trade size →" in m for m in sent)
 
 
 # ── win-rate restore (owner directive) ────────────────────────────────────────
@@ -185,10 +176,9 @@ def test_stake_below_base_true_in_standard_recovery():
     assert bot.stake_below_base(1000.0) is True
 
 
-def test_stake_not_below_base_in_nsc_without_ladder(monkeypatch):
+def test_stake_not_below_base_in_nsc(monkeypatch):
     monkeypatch.setattr(bot, "RECOVERY_NO_STAKE_CHANGE", True)
     monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
-    monkeypatch.setattr(bot, "stake_ladder", None)
     _prime_recovery(0, 0)
     assert bot.stake_below_base(1000.0) is False
 
@@ -225,22 +215,15 @@ def test_restore_skips_probation_ramp(monkeypatch):
     assert started["n"] == 0
 
 
-def test_restore_resumes_ladder(monkeypatch):
+def test_restore_returns_stake_to_full_fraction(monkeypatch):
     monkeypatch.setattr(bot, "RECOVERY_WINRATE_RESTORE_PCT", 0.70)
     monkeypatch.setattr(bot, "RECOVERY_WINRATE_MIN_TRADES", 3)
-    calls = {"resume": 0}
-
-    class _FakeLadder:
-        def resume_size_up(self):
-            calls["resume"] += 1
-
-        def peek_multiplier(self, balance=None):
-            return 1.0
-
-    monkeypatch.setattr(bot, "stake_ladder", _FakeLadder())
     _prime_recovery(3, 0)
-    assert bot.maybe_winrate_restore(900.0) is True   # standard recovery → below base
-    assert calls["resume"] == 1
+    assert bot.stake_below_base(900.0) is True        # standard recovery → reduced
+    assert bot.maybe_winrate_restore(900.0) is True
+    # Back to the flat normal fraction, with no ramp in between.
+    assert bot.active_trade_fraction() == bot.effective_normal_trade_pct()
+    assert bot.probation.active is False
 
 
 def test_restore_disabled_never_fires(monkeypatch):

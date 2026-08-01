@@ -1,7 +1,36 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  FLIPPULSE (MarkeyMachine core)  v10.0.0  —  Production Build                ║
+║  FLIPPULSE (MarkeyMachine core)  v10.2.0  —  Production Build                ║
 ║  "No disassemble."                                                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  v10.2.0 — DAILY 3% PROFIT TARGET + FLAT RISK (owner directive).             ║
+║                                                                              ║
+║  TWO CHANGES, both about keeping risk boring and banking the day:            ║
+║                                                                              ║
+║  1. DAILY PROFIT TARGET — the goal every day is +3% on the balance the day   ║
+║     opened with. The moment today's REALIZED P&L reaches                     ║
+║     DAILY_PROFIT_TARGET_PCT × session_start_balance (default 0.03), trading  ║
+║     HALTS for the rest of the UTC day: no new entries, open positions are    ║
+║     still resolved and reported, and the existing UTC rollover clears the    ║
+║     halt automatically (same machinery as the session stop — no redeploy).   ║
+║     Checked at settlement (so the winning trade that crosses the line halts  ║
+║     immediately) and again as a pre-entry guard. Realized dollars only —     ║
+║     an open position's cash outlay never counts toward the target.           ║
+║     RAILWAY: DAILY_PROFIT_TARGET_PCT (0.03), DAILY_PROFIT_TARGET_ENABLED.    ║
+║                                                                              ║
+║  2. LADDERING DISABLED — the stake no longer steps UP for any reason. It is  ║
+║     always the configured risk FRACTION of the current balance, so the       ║
+║     dollar risk moves only when the balance does:                            ║
+║       • The ladder overlay (ladder.py, 0.5×–2×) is unwired from sizing.      ║
+║         LADDER_ENABLED / RECOVERY_LADDER_PAUSE_TRADES are no longer read;    ║
+║         ladder.py stays in-tree as a retired, unreferenced module.           ║
+║       • The probation ramp / daily slow-roll (the sub-full rung ladder) now  ║
+║         defaults OFF — PROBATION_RAMP_ENABLED=true restores it.              ║
+║       • Recovery defaults to "No Stake Change" (RECOVERY_NO_STAKE_CHANGE     ║
+║         now true): it still tracks and reports the claw-back, but never      ║
+║         drops the stake — so there is no snap-back increase on exit either.  ║
+║     Net effect: one flat percentage of balance per trade, bounded by the     ║
+║     hard MAX_TRADE_PCT ceiling, with every downside guard unchanged.         ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  v10.0.0 — PERCENTAGE SIZING: every stake is now a FRACTION OF THE CURRENT   ║
 ║  BALANCE, so one config scales to any starting balance and compounds.        ║
@@ -306,7 +335,7 @@
 
 from __future__ import annotations
 
-BOT_VERSION = "10.1.0"
+BOT_VERSION = "10.2.0"
 
 import base64
 import json
@@ -333,7 +362,6 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 import telegram_utils as tg
-from ladder import StakeLadder
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING
@@ -514,9 +542,12 @@ POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
 #   • NORMAL_TRADE_PCT   — the full stake fraction in normal operation.
 #   • RECOVERY_TRADE_PCT — the reduced fraction while clawing back a full loss.
 #   • MAX_TRADE_PCT      — a HARD ceiling on any single trade (the "max trade"
-#                          knob); the ladder overlay can never push past it.
+#                          knob); nothing may size past it.
 # Values are fractions (0.10 = 10% of balance). A Trading Format seeds these
 # (see formats.py); an explicit env var always wins.
+# v10.2.0: nothing scales the resolved stake up any more — the laddering overlay
+# is retired and the probation ramp is off by default, so the dollars at risk are
+# simply the active fraction of the current balance on every single trade.
 NORMAL_TRADE_PCT   = _env_float("NORMAL_TRADE_PCT", 0.10)
 RECOVERY_TRADE_PCT = _env_float("RECOVERY_TRADE_PCT", 0.03)
 MAX_TRADE_PCT      = _env_float("MAX_TRADE_PCT", 0.15)
@@ -575,64 +606,92 @@ RECOVERY_PERSIST    = _env_bool("RECOVERY_PERSIST", True)
 # as before (it arms on a full-size loss, records the target balance, shows in
 # /status and the reports, and clears when the balance heals) — but it does NOT
 # touch sizing: the stake stays at the full NORMAL_TRADE_PCT (or the /risk
-# override) and the laddering overlay keeps working throughout. Because nothing
-# ever dropped, exiting recovery is a no-op on sizing — no probation ramp, no
-# jump-back, so there is no grind to wipe out.
+# override). Because nothing ever dropped, exiting recovery is a no-op on sizing
+# — no probation ramp, no jump-back, so there is no grind to wipe out.
+#
+# v10.2.0: this is now the DEFAULT. The owner directive is that the dollar risk
+# should track the configured percentage of balance and nothing else, so the
+# stake must not step DOWN into a recovery tier and then step back UP on exit.
+# Recovery still arms, tracks and reports the claw-back exactly as before — it
+# just never moves the stake. Set RECOVERY_NO_STAKE_CHANGE=false to restore the
+# two-tier behaviour (reduced stake while clawing back).
 #
 # Toggleable at runtime (Telegram /recoverynostakechange, dashboard) without a
 # redeploy: the command writes {"enabled": bool} to RECOVERY_NSC_OVERRIDE_PATH and
 # the engine reads it back here, exactly like the /risk override. The env var is
 # the boot default; a present override file always wins. Deleting the file (or
 # toggling back) falls to the env default.
-RECOVERY_NO_STAKE_CHANGE     = _env_bool("RECOVERY_NO_STAKE_CHANGE", False)
+RECOVERY_NO_STAKE_CHANGE     = _env_bool("RECOVERY_NO_STAKE_CHANGE", True)
 RECOVERY_NSC_OVERRIDE_PATH   = os.environ.get("RECOVERY_NSC_OVERRIDE_PATH", "").strip() \
     or "/data/recovery_nsc_override.json"
 
 # ── Recovery Mode: win-rate restore (owner directive) ─────────────────────────
-# WHY (owner): if the stake is being held BELOW the full base — the standard
-# recovery tier reduced it, OR the laddering overlay demoted it under 1× — but the
-# claw-back is actually going well (a strong rolling win rate), don't keep grinding
-# at the small stake. The moment the recovery-scoped win rate reaches
-# RECOVERY_WINRATE_RESTORE_PCT (default 70%, over at least RECOVERY_WINRATE_MIN_TRADES
-# settled recovery trades), snap straight back to the full/original stake and
-# resume laddering — bypassing the slow probation ramp entirely. This is checked
-# every cycle, right beside the balance-target exit. Set the % to 1.0 (100%) or
-# disable to turn the fast path off.
+# WHY (owner): if the stake is being held BELOW the full base (the standard
+# recovery tier reduced it) but the claw-back is actually going well (a strong
+# rolling win rate), don't keep grinding at the small stake. The moment the
+# recovery-scoped win rate reaches RECOVERY_WINRATE_RESTORE_PCT (default 70%, over
+# at least RECOVERY_WINRATE_MIN_TRADES settled recovery trades), snap straight back
+# to the full/original stake — bypassing the slow probation ramp entirely. This is
+# checked every cycle, right beside the balance-target exit. Set the % to 1.0
+# (100%) or disable to turn the fast path off.
+#
+# v10.2.0 note: with RECOVERY_NO_STAKE_CHANGE on (the default) the stake is never
+# held below base in the first place, so this path simply never fires. It stays
+# wired for deployments that turn the two-tier recovery sizing back on.
 RECOVERY_WINRATE_RESTORE_ENABLED = _env_bool("RECOVERY_WINRATE_RESTORE_ENABLED", True)
 RECOVERY_WINRATE_RESTORE_PCT     = _env_float("RECOVERY_WINRATE_RESTORE_PCT", 0.70)
 RECOVERY_WINRATE_MIN_TRADES      = _env_int("RECOVERY_WINRATE_MIN_TRADES", 5)
 
 
-# ── Laddering stake overlay (opt-in) ──────────────────────────────────────────
-# Scales the Kelly stake by a performance-driven multiplier (0.5x–2x). Disabled
-# by default so live sizing is unchanged until explicitly switched on with
-# LADDER_ENABLED=true. See ladder.py and LADDER_STRATEGY.md.
-LADDER_ENABLED = _env_bool("LADDER_ENABLED", False)
+# ── Laddering stake overlay — RETIRED in v10.2.0 ──────────────────────────────
+# The ladder scaled the stake by a rolling-win-rate multiplier (0.5×–2×). Owner
+# directive: the dollar risk must stay in line with the configured PERCENTAGE of
+# balance, so nothing may multiply the stake up. The overlay is unwired from
+# sizing entirely — LADDER_ENABLED and RECOVERY_LADDER_PAUSE_TRADES are no longer
+# read anywhere in the engine, and setting them has no effect. ladder.py is left
+# in-tree (with its own unit tests) as a retired module, imported by nothing.
 
-# After a recovery-mode exit (sizing returns to NORMAL_TRADE_PCT), suppress the
-# ladder's win-rate size-up for this many settled trades — win or loss — so the
-# ladder re-proves the edge on fresh data before it can scale the stake above
-# NORMAL_TRADE_PCT again. Downside guardrails (loss-streak demote, drawdown)
-# stay active throughout. Set 0 to disable the pause. No effect unless the ladder
-# is enabled.
-RECOVERY_LADDER_PAUSE_TRADES = _env_int("RECOVERY_LADDER_PAUSE_TRADES", 5)
+# ── DAILY PROFIT TARGET — the day's goal, then stop (owner directive) ─────────
+# The goal every day is +3% on the balance the day OPENED with. The moment
+# today's REALIZED P&L reaches DAILY_PROFIT_TARGET_PCT × session_start_balance,
+# trading HALTS for the rest of the UTC day.
+#
+# Design notes:
+#   • REALIZED dollars only (paper_daily_pnl / live_daily_realized — the same
+#     accumulators the alerts and /pnl report). An open position's cash outlay
+#     dips the raw balance and must never be read as progress toward the target;
+#     this is the same trap v9.3.1 fixed for the daily-loss breaker.
+#   • The baseline is session_start_balance, set at boot and re-based at every
+#     UTC rollover — so the target is 3% of what the day started with, not a
+#     moving 3% of a balance that is itself growing.
+#   • The halt reuses the existing `_session_halted` machinery, so the UTC
+#     rollover clears it automatically (no redeploy) and the main loop keeps
+#     resolving open positions and sending the scheduled briefing while paused.
+#   • Checked at SETTLEMENT (so the winning trade that crosses the line stops the
+#     day immediately) and again as a pre-entry guard in run_decision.
+# Set DAILY_PROFIT_TARGET_ENABLED=false (or the pct to 0) to trade the full day.
+DAILY_PROFIT_TARGET_ENABLED = _env_bool("DAILY_PROFIT_TARGET_ENABLED", True)
+DAILY_PROFIT_TARGET_PCT     = _env_float("DAILY_PROFIT_TARGET_PCT", 0.03)
 
-# ── Post-recovery graduated re-entry ("probation ramp") ───────────────────────
+# ── Post-recovery graduated re-entry ("probation ramp") — OFF by default ──────
 # WHY (2026-06-29 log review): the book grinds back up a small step at a time but
 # loses a full stake at a time. After recovery cleared, the OLD behavior snapped
 # the base straight from RECOVERY_TRADE_PCT back to the full NORMAL_TRADE_PCT on
 # the very next trade; a single full-size loss then wiped several small wins and
-# re-armed recovery. RECOVERY_LADDER_PAUSE_TRADES only held the ladder
-# *multiplier* at 1×, not the base, so it never kept the stake small.
+# re-armed recovery.
 #
-# Instead, when recovery clears we do NOT jump back to full size. We re-enter at
-# the recovery fraction and climb a ladder of sub-full base FRACTIONS, advancing
-# exactly one rung when the edge re-proves itself (a short win streak OR a rolling
-# win-rate threshold — whichever fires first) and stepping one rung DOWN on any
-# loss. Reaching the full fraction graduates back to normal mode. Throughout the
-# ramp the laddering overlay is capped at the current base (it may size DOWN but
-# never UP), so a win rate earned small can never re-arm full stake in one jump.
-PROBATION_RAMP_ENABLED       = _env_bool("PROBATION_RAMP_ENABLED", True)
+# The ramp re-enters at the recovery fraction and climbs a ladder of sub-full base
+# FRACTIONS, advancing exactly one rung when the edge re-proves itself (a short win
+# streak OR a rolling win-rate threshold — whichever fires first) and stepping one
+# rung DOWN on any loss. Reaching the full fraction graduates back to normal mode.
+#
+# v10.2.0 — DISABLED BY DEFAULT. This is itself a laddering approach: it steps the
+# risk fraction up rung by rung (and the v9.7.0 "daily slow-roll" re-armed it from
+# the floor at every UTC midnight, which is what silently collapsed the stake to
+# $0.37 in the 2026-07 audit). The owner directive is one flat percentage of
+# balance per trade, so the ramp no longer runs. PROBATION_RAMP_ENABLED=true
+# restores the graduated re-entry (and, with it, the daily slow-roll).
+PROBATION_RAMP_ENABLED       = _env_bool("PROBATION_RAMP_ENABLED", False)
 # Advance one rung after this many consecutive wins at the current base size.
 PROBATION_WIN_STREAK         = _env_int("PROBATION_WIN_STREAK", 2)
 # ...OR advance when the rolling win rate over the probation clears this, once at
@@ -741,7 +800,8 @@ def _probation_rungs() -> "list[float]":
 # (MIN_BALANCE_FLOOR / MAX_DAILY_LOSS_DOLLARS / MAX_DAILY_LOSS_PCT were dead
 # config since then and are deleted). The active auto-holds are the
 # consecutive-loss streak pause and the SESSION_STOP_FRACTION catastrophic
-# backstop below; the ladder overlay has its own percentage drawdown guard.
+# backstop below. On the UPSIDE, the daily profit target halts the day once
+# +DAILY_PROFIT_TARGET_PCT is banked (see daily_profit_target_check).
 SESSION_STOP_FRACTION = _env_float("SESSION_STOP_FRACTION", 0.40)
 MAX_CONSEC_LOSSES     = _env_int("MAX_CONSEC_LOSSES", 2)
 STREAK_PAUSE_SECS     = _env_int("STREAK_PAUSE_SECS", 1800)
@@ -1103,6 +1163,11 @@ session_state:         SessionState = SessionState.ACTIVE
 _session_start_ts:     str          = ""
 _session_day:          str          = ""
 _session_halted:       bool         = False
+# Why the day is halted: "" while trading, "session_stop" for the catastrophic
+# backstop, "profit_target" once the daily +3% goal is banked. Only affects the
+# copy the customer sees (a hit target is good news, a session stop is not) —
+# both clear at the UTC rollover.
+_halt_reason:          str          = ""
 _shutdown_requested:   bool         = False
 _last_known_balance:   float        = 0.0
 
@@ -1119,10 +1184,6 @@ _perf_window: deque = deque(maxlen=max(1, PERF_GUARD_WINDOW))
 _perf_guard_until: float = 0.0
 
 _live_prior: float = OB_BASE_ACCURACY
-
-# Laddering stake overlay — only instantiated when LADDER_ENABLED. Sized as a
-# multiplier on top of the Kelly stake; respects every existing cap.
-stake_ladder: Optional[StakeLadder] = StakeLadder() if LADDER_ENABLED else None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1204,14 +1265,12 @@ class RecoveryState:
         if nsc:
             # "No Stake Change" mode: track the claw-back, but do NOT drop the stake.
             log.warning("No-Stake-Change mode ON — keeping trade size at %.1f%% "
-                        "of balance; laddering stays active.",
-                        effective_normal_trade_pct() * 100)
+                        "of balance.", effective_normal_trade_pct() * 100)
             tg.send_status_message(
                 f"🛟 RECOVERY MODE ACTIVATED — No Stake Change\n"
                 f"Recovery target: ${self.target_balance:.2f}\n"
                 f"Trade size stays at {effective_normal_trade_pct()*100:.1f}% of "
-                f"balance and laddering keeps working — no stake reduction, no "
-                f"jump-back on exit."
+                f"balance — no stake reduction, no jump-back on exit."
             )
         else:
             log.warning("Switching trade size to: %.1f%% of balance", RECOVERY_TRADE_PCT * 100)
@@ -1239,32 +1298,26 @@ class RecoveryState:
         log.warning("Recovery target reached.")
         log.warning("Recovery mode DEACTIVATED.")
         if nsc:
-            # Stake never dropped, so there is nothing to ramp back to and no
-            # reason to pause the ladder — exit is a clean no-op on sizing.
-            log.info("No-Stake-Change mode — sizing already at full; no ramp/pause.")
+            # Stake never dropped, so there is nothing to ramp back to — exit is
+            # a clean no-op on sizing.
+            log.info("No-Stake-Change mode — sizing already at full; no ramp.")
             tg.send_status_message(
                 f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
                 f"${reached:.2f}\nStake never changed (No Stake Change mode) — "
-                f"nothing to ramp back, laddering carries on."
+                f"nothing to ramp back."
             )
             return True
         log.warning("Switching trade size back to: %.1f%% of balance", effective_normal_trade_pct() * 100)
-        msg = (f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
-               f"${reached:.2f}\nTrade size → {effective_normal_trade_pct()*100:.1f}% of balance")
-        # Make the ladder re-prove the edge on fresh data: hold its win-rate
-        # size-up at baseline for the next RECOVERY_LADDER_PAUSE_TRADES trades
-        # before it can scale the stake above NORMAL_TRADE_PCT again.
-        if stake_ladder is not None and RECOVERY_LADDER_PAUSE_TRADES > 0:
-            stake_ladder.pause_size_up(RECOVERY_LADDER_PAUSE_TRADES)
-            msg += (f"\nLadder size-up paused for "
-                    f"{RECOVERY_LADDER_PAUSE_TRADES} trades.")
-        tg.send_status_message(msg)
+        tg.send_status_message(
+            f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
+            f"${reached:.2f}\nTrade size → {effective_normal_trade_pct()*100:.1f}% of balance"
+        )
         return True
 
     def clear_for_restore(self) -> None:
         """Exit recovery WITHOUT the balance-target / probation-ramp path — used by
-        the win-rate restore, which returns straight to the full base stake and
-        lets the ladder resume. Silent: the caller owns the log/Telegram copy."""
+        the win-rate restore, which returns straight to the full base stake.
+        Silent: the caller owns the log/Telegram copy."""
         self.active         = False
         self.target_balance = 0.0
         self.wins = self.losses = 0
@@ -1298,7 +1351,7 @@ class RecoveryState:
             stake = pct * current_balance
             return (f"Recovery mode active (No Stake Change). Current balance: "
                     f"${current_balance:.2f}. Target: ${self.target_balance:.2f}. "
-                    f"Trade size held at {pct*100:.1f}% (~${stake:.2f}); laddering active.{wr}")
+                    f"Trade size held at {pct*100:.1f}% (~${stake:.2f}).{wr}")
         stake = RECOVERY_TRADE_PCT * current_balance
         return (f"Recovery mode active. Current balance: ${current_balance:.2f}. "
                 f"Target: ${self.target_balance:.2f}. "
@@ -1466,10 +1519,6 @@ class ProbationState:
         self.rungs  = []
         self._save()
         log.warning("Probation ramp COMPLETE → full size %.1f%% restored.", frac * 100)
-        # Fresh ladder cooldown at full size so the overlay cannot 2× immediately
-        # on a win rate banked at smaller stakes.
-        if stake_ladder is not None and RECOVERY_LADDER_PAUSE_TRADES > 0:
-            stake_ladder.pause_size_up(RECOVERY_LADDER_PAUSE_TRADES)
         tg.send_status_message(
             f"✅ PROBATION COMPLETE — full size {frac*100:.1f}% restored."
         )
@@ -1985,7 +2034,12 @@ def active_trade_fraction() -> float:
 
     Recovery Mode "No Stake Change" exception: when that toggle is on, recovery
     still tracks/labels but must NOT drop the stake — sizing stays at the full
-    normal fraction so the claw-back happens at the same stake, laddering intact."""
+    normal fraction so the claw-back happens at the same stake.
+
+    v10.2.0: with the ladder retired, RECOVERY_NO_STAKE_CHANGE on and the
+    probation ramp off (all defaults), this is simply effective_normal_trade_pct()
+    on every call — one flat percentage of balance, exactly as the owner
+    directive asks. The branches stay so the older tiers remain switchable."""
     if recovery.active and not recovery_no_stake_change_enabled():
         return RECOVERY_TRADE_PCT
     if probation.active:
@@ -2009,13 +2063,13 @@ def active_trade_size(balance: float) -> float:
 
 def in_clawback() -> bool:
     """True while clawing back a loss at a REDUCED base (standard recovery OR
-    probation ramp). In this state the laddering overlay is capped at the active
-    base — it may size DOWN but never UP — so a win rate earned at small stakes
-    cannot re-arm full size in one jump.
+    probation ramp) — i.e. the stake is deliberately smaller than the configured
+    full fraction. Both of those tiers are off by default in v10.2.0, so this is
+    normally False; it stays as the single predicate for "sizing is currently
+    reduced" for deployments that switch either tier back on.
 
     Recovery Mode "No Stake Change" is deliberately NOT a clawback state here: the
-    stake never dropped, so the ladder must keep working normally (size up and
-    down) throughout — that's the whole point of the toggle."""
+    stake never dropped, so nothing about sizing is reduced."""
     if recovery.active and not recovery_no_stake_change_enabled():
         return True
     return probation.active
@@ -2054,26 +2108,21 @@ def recovery_winrate_record(won: bool, trade_rec: dict) -> None:
 
 def stake_below_base(balance: float) -> bool:
     """True when the current per-trade stake is being held BELOW the full/base
-    normal stake — either because the active-mode fraction is reduced (standard
-    recovery drops it to RECOVERY_TRADE_PCT) or because the laddering overlay is
-    currently demoted/paused under 1× base. Used as the precondition for the
-    recovery win-rate restore."""
-    if active_trade_fraction() < effective_normal_trade_pct() - 1e-9:
-        return True
-    if stake_ladder is not None:
-        try:
-            return stake_ladder.peek_multiplier(balance) < 1.0 - 1e-9
-        except Exception:      # pragma: no cover - never let a peek break the loop
-            return False
-    return False
+    normal stake, because the active-mode fraction is reduced (standard recovery
+    drops it to RECOVERY_TRADE_PCT, the probation ramp to a sub-full rung). Used
+    as the precondition for the recovery win-rate restore.
+
+    `balance` is accepted for call-site symmetry with the other sizing helpers;
+    the answer depends only on the fractions, not on the dollar amount."""
+    return active_trade_fraction() < effective_normal_trade_pct() - 1e-9
 
 
 def maybe_winrate_restore(current_balance: float) -> bool:
     """Recovery win-rate restore (owner directive). While recovery is active and
     the stake is being held below the base, a strong recovery-scoped win rate
     (≥ RECOVERY_WINRATE_RESTORE_PCT over ≥ RECOVERY_WINRATE_MIN_TRADES settled
-    recovery trades) returns straight to the full/original stake and resumes
-    laddering — bypassing the slow probation ramp. Returns True when it fires."""
+    recovery trades) returns straight to the full/original stake — bypassing the
+    slow probation ramp. Returns True when it fires."""
     if not RECOVERY_WINRATE_RESTORE_ENABLED or not recovery.active:
         return False
     n = recovery.wins + recovery.losses
@@ -2087,19 +2136,16 @@ def maybe_winrate_restore(current_balance: float) -> bool:
     wins, losses = recovery.wins, recovery.losses
     recovery.clear_for_restore()          # exit recovery, no probation ramp
     probation.cancel()                    # belt-and-suspenders: ensure no ramp
-    # Return to the base stake and let the ladder ladder up from here again.
-    if stake_ladder is not None:
-        stake_ladder.resume_size_up()
     pct = effective_normal_trade_pct() * 100
     log.warning("Recovery WIN-RATE RESTORE │ WR %.0f%% (%dW/%dL) ≥ %.0f%% — back to "
-                "full stake %.1f%%, laddering resumed (no ramp).",
+                "full stake %.1f%% (no ramp).",
                 wr * 100, wins, losses, RECOVERY_WINRATE_RESTORE_PCT * 100, pct)
     tg.send_status_message(
         f"🚀 RECOVERY WIN-RATE RESTORE\n"
         f"Win rate {wr*100:.0f}% ({wins}W/{losses}L) over your recovery trades "
         f"hit the {RECOVERY_WINRATE_RESTORE_PCT*100:.0f}% mark.\n"
-        f"Returning to the full stake ({pct:.1f}% of balance) and resuming "
-        f"laddering — no slow grind, no ramp-back."
+        f"Returning to the full stake ({pct:.1f}% of balance) — no slow grind, "
+        f"no ramp-back."
     )
     return True
 
@@ -2689,15 +2735,6 @@ def size_contracts(bet_dollars: float, limit_cents: int,
                f"stake ${bet_dollars:.2f} under one contract @ {limit_cents}c")
 
 
-def ladder_record(won: bool, pnl: float) -> None:
-    """Feed a settled trade outcome to the laddering overlay (no-op if off)."""
-    if stake_ladder is not None:
-        try:
-            stake_ladder.on_trade_result(won, pnl)
-        except Exception as e:
-            log.warning("Ladder record error: %s", e)
-
-
 def kelly_bet(win_prob: float, contract_price_cents: int, balance: float) -> float:
     if contract_price_cents <= 0 or contract_price_cents >= 100:
         return 0.0
@@ -2710,23 +2747,13 @@ def kelly_bet(win_prob: float, contract_price_cents: int, balance: float) -> flo
     # the hard MAX_TRADE_PCT ceiling and the cash on hand.
     if full_kelly <= 0.0:
         return 0.0
+    #
+    # v10.2.0: this IS the stake. The laddering overlay that used to scale it by a
+    # rolling-win-rate multiplier (up to 2×) is retired — nothing multiplies the
+    # stake up any more, so the dollars at risk move only when the balance does.
     size       = active_trade_size(balance)   # fraction × balance, ≤ MAX_TRADE_PCT
     max_dollars = round(MAX_TRADE_PCT * balance, 2)
-    base_bet   = round(min(size, max_dollars, balance), 2)
-
-    # Laddering overlay (opt-in). Scales the stake by a performance multiplier, but
-    # never past MAX_TRADE_PCT of balance or the cash on hand. While clawing back a
-    # loss (recovery OR the post-recovery probation ramp) the ceiling is the active
-    # base itself: the ladder may size DOWN on a cold streak but can NEVER size UP,
-    # so a win rate banked at small stakes can't re-arm full size in one jump.
-    if stake_ladder is not None:
-        cap_mult = 1.0 if in_clawback() else stake_ladder.cfg.max_multiplier
-        ceiling  = min(cap_mult * size, max_dollars, balance)
-        # balance resolves the ladder's percentage drawdown trigger to dollars.
-        decision = stake_ladder.get_stake(base_bet, max_stake=ceiling, balance=balance)
-        return decision.stake
-
-    return base_bet
+    return round(min(size, max_dollars, balance), 2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3072,7 +3099,6 @@ def resolve_open_orders() -> None:
                     wins=live_wins, losses=live_losses,
                 )
 
-            ladder_record(won, trade_pnl)
             perf_guard_record(won)
             bucket_stats.record(trade.get("entry_bucket"), won)
             lifetime.record(DEMO_MODE, won, trade_pnl)   # persistent all-time tally
@@ -3087,6 +3113,11 @@ def resolve_open_orders() -> None:
 
             log.info("📋 PAPER SETTLED │ %s │ %s │ %s │ sim=%s │ bal=$%.2f",
                      ticker[-15:], side, result.upper(), sim, paper_balance)
+
+            # The day's goal is checked HERE, on the settlement that banks the
+            # profit, so the target halt lands the moment it is hit rather than
+            # one poll interval later.
+            daily_profit_target_check(paper_balance)
 
         update_live_prior()
         return
@@ -3155,7 +3186,6 @@ def resolve_open_orders() -> None:
                     # It settled today, so it belongs in today's realized P&L
                     # (the figure the alerts, /pnl, and the daily report show).
                     live_daily_realized += pnl_d
-                    ladder_record(pnl_d > 0, pnl_d)
                     perf_guard_record(pnl_d > 0)
                     lifetime.record(DEMO_MODE, pnl_d > 0, pnl_d)   # persistent all-time
                     update_live_prior()
@@ -3211,7 +3241,6 @@ def resolve_open_orders() -> None:
                 if consecutive_losses >= MAX_CONSEC_LOSSES:
                     streak_pause_until = time.time() + STREAK_PAUSE_SECS
 
-            ladder_record(won, pnl)
             perf_guard_record(won)
             bucket_stats.record(trade.get("entry_bucket"), won)
             lifetime.record(DEMO_MODE, won, pnl)   # persistent all-time tally
@@ -3241,6 +3270,11 @@ def resolve_open_orders() -> None:
                     streak=consecutive_losses,
                     wins=live_wins, losses=live_losses,
                 )
+
+            # The day's goal is checked HERE, on the settlement that banks the
+            # profit, so the target halt lands the moment it is hit rather than
+            # one poll interval later.
+            daily_profit_target_check(balance)
 
         update_live_prior()
 
@@ -3408,15 +3442,67 @@ def session_stop_check(balance: float) -> bool:
     other auto-hold is the consecutive-loss streak pause in streak_check).
     Halts the day when balance falls below SESSION_STOP_FRACTION of the
     session-start balance; the UTC rollover clears the halt."""
-    global _session_halted
+    global _session_halted, _halt_reason
     if _session_halted:
         return False
     if session_stop_threshold > 0 and balance < session_stop_threshold:
         _session_halted = True
+        _halt_reason    = "session_stop"
         log.warning("SESSION STOP │ $%.2f < $%.2f — halted.", balance, session_stop_threshold)
         telegram_halt(f"Session stop at ${balance:.2f}", balance)
         return False
     return True
+
+
+# ── Daily profit target: make the day's 3%, then stop ─────────────────────────
+
+def today_realized_pnl() -> float:
+    """Today's REALIZED (settled) P&L in dollars, for the active mode. Realized
+    only, never a balance delta: an open position's cash outlay leaves the
+    balance before the trade settles, so balance − session_start would read a
+    live position as a loss (the v9.3.1 phantom-daily-loss bug) and, on the way
+    back, as profit that has not actually been banked."""
+    return paper_daily_pnl if DEMO_MODE else live_daily_realized
+
+
+def daily_profit_target_dollars() -> float:
+    """The dollar profit that ends the day: DAILY_PROFIT_TARGET_PCT of the balance
+    the day OPENED with (session_start_balance, re-based at every UTC rollover).
+    0.0 when the target is disabled, unset, or there is no session baseline yet —
+    callers treat that as "no target, keep trading"."""
+    if not DAILY_PROFIT_TARGET_ENABLED or DAILY_PROFIT_TARGET_PCT <= 0:
+        return 0.0
+    if session_start_balance <= 0:
+        return 0.0
+    return round(DAILY_PROFIT_TARGET_PCT * session_start_balance, 2)
+
+
+def daily_profit_target_check(balance: float) -> bool:
+    """The day's goal. Returns True while the bot may still open trades.
+
+    Once today's realized P&L reaches the target, the day is halted: no new
+    entries until the UTC rollover re-bases the baseline and clears the halt
+    (maybe_roll_session_day). Open positions are unaffected — they still resolve
+    and report normally — and the profit that settles them is already counted.
+
+    Idempotent: the Telegram notice fires once, on the transition."""
+    global _session_halted, _halt_reason
+    if _session_halted:
+        return False
+    target = daily_profit_target_dollars()
+    if target <= 0:
+        return True
+    realized = today_realized_pnl()
+    if realized < target:
+        return True
+    _session_halted = True
+    _halt_reason    = "profit_target"
+    log.warning("DAILY TARGET │ realized $%+.2f ≥ target $%.2f (%.1f%% of "
+                "$%.2f) — trading halted until UTC rollover.",
+                realized, target, DAILY_PROFIT_TARGET_PCT * 100,
+                session_start_balance)
+    telegram_profit_target(realized, target, balance)
+    return False
 
 
 def spread_check(bid: int, ask: int) -> bool:
@@ -3586,10 +3672,15 @@ def place_order(ticker: str, direction: str, bet_dollars: float,
 
 def telegram_boot(balance: float) -> None:
     mode = "📋 PAPER" if DEMO_MODE else "🔴 LIVE"
+    target = daily_profit_target_dollars()
+    goal   = (f"Today's goal: +{DAILY_PROFIT_TARGET_PCT*100:.1f}% "
+              f"(${target:.2f}) — trading stops when it's hit\n"
+              if target > 0 else "Daily profit target: OFF\n")
     tg.send_status_message(
         f"🤖 FlipPulse {BOT_VERSION} STARTED\n"
         f"{mode} │ State: {session_state.value}\n"
         f"Balance: ${balance:.2f}\n"
+        f"{goal}"
         f"Size={active_trade_fraction()*100:.1f}% (~${active_trade_size(balance):.0f}) "
         f"(normal={NORMAL_TRADE_PCT*100:.1f}%/recovery={RECOVERY_TRADE_PCT*100:.1f}%/max={MAX_TRADE_PCT*100:.1f}%"
         f"{' • RECOVERING→$%.0f' % recovery.target_balance if recovery.active else ''}) | "
@@ -3605,6 +3696,21 @@ def telegram_boot(balance: float) -> None:
 def telegram_halt(reason: str, balance: float) -> None:
     tg.send_telegram_message(
         f"⛔ HALTED (PERMANENT)\nReason: {reason}\nBalance: ${balance:.2f}"
+    )
+
+
+def telegram_profit_target(realized: float, target: float, balance: float) -> None:
+    """The good halt: the day's profit goal is banked. Deliberately distinct from
+    telegram_halt (which reads as an emergency) — this is the plan working."""
+    pct = (realized / session_start_balance * 100) if session_start_balance > 0 else 0.0
+    tg.send_telegram_message(
+        f"🎯 DAILY TARGET HIT — trading stopped for today\n"
+        f"Today's profit: ${realized:+.2f} ({pct:.2f}%)\n"
+        f"Goal was: ${target:.2f} "
+        f"({DAILY_PROFIT_TARGET_PCT*100:.1f}% of ${session_start_balance:.2f})\n"
+        f"Balance: ${balance:.2f}\n"
+        f"No new trades until the next trading day (UTC midnight). Open "
+        f"positions, if any, still settle normally."
     )
 
 
@@ -3888,6 +3994,18 @@ def write_status_snapshot(balance: float) -> None:
             "open_tickers": [o.get("ticker", "") for o in open_orders.values()],
             "session_state": session_state.value,
             "halted": _session_halted,
+            # Why the day is halted ("" while trading, "profit_target",
+            # "session_stop") so /status and the dashboard can say "goal reached"
+            # instead of showing a scary generic stop.
+            "halt_reason": _halt_reason,
+            # Daily profit target: the goal in dollars, today's realized progress,
+            # and the percentage knob behind them.
+            "daily_target_enabled": DAILY_PROFIT_TARGET_ENABLED
+                                    and DAILY_PROFIT_TARGET_PCT > 0,
+            "daily_target_pct": round(DAILY_PROFIT_TARGET_PCT * 100, 2),
+            "daily_target_dollars": daily_profit_target_dollars(),
+            "daily_target_progress": round(today_realized_pnl(), 2),
+            "session_start_balance": round(session_start_balance, 2),
             "last_signal": last_signal_desc,
             "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
@@ -3927,6 +4045,12 @@ def run_decision(market: dict, balance: float) -> None:
     if not cooldown_check():
         return
     if not session_stop_check(balance):
+        return
+    # The day's goal: once +DAILY_PROFIT_TARGET_PCT is banked, stop trading.
+    # Normally already latched at settlement; this is the belt-and-braces gate so
+    # no entry can slip through on a cycle where the target was just reached.
+    if not daily_profit_target_check(balance):
+        last_signal_desc = "daily profit target hit — stopped for today"
         return
     if not streak_check():
         last_signal_desc = f"streak pause ({consecutive_losses}L)"
@@ -4138,8 +4262,14 @@ def maybe_roll_session_day(current_balance: float) -> bool:
     references to the live balance, and wipes the per-session ticker/streak
     state — so a fresh day always starts with a fresh budget and no manual
     intervention. Returns True when a rollover happened.
+
+    v10.2.0: this is also what re-arms the DAILY PROFIT TARGET. session_start_balance
+    is re-based to the live balance here, so today's +3% goal is 3% of what today
+    opened with (yesterday's profit compounds into the new target), and clearing
+    `_session_halted` is what lets a bot that banked its target yesterday trade
+    again this morning — no redeploy, no manual reset.
     """
-    global _session_day, _session_halted, session_start_balance
+    global _session_day, _session_halted, _halt_reason, session_start_balance
     global session_stop_threshold, daily_pnl, paper_daily_pnl, consecutive_losses
     global session_state, streak_pause_until, live_daily_realized
     global live_wins, live_losses, _live_prior
@@ -4149,8 +4279,10 @@ def maybe_roll_session_day(current_balance: float) -> bool:
         return False
 
     was_halted   = _session_halted
+    was_target   = _halt_reason == "profit_target"
     _session_day = today
     _session_halted        = False
+    _halt_reason           = ""
     session_start_balance  = current_balance
     session_stop_threshold = current_balance * SESSION_STOP_FRACTION
     daily_pnl              = 0.0
@@ -4173,18 +4305,23 @@ def maybe_roll_session_day(current_balance: float) -> bool:
     live_losses = 0
     _live_prior = OB_BASE_ACCURACY
 
-    # v9.7.0: a fresh trading day re-enters the slow-roll ramp from the floor
-    # ($100 → $250 → $500) so the first trade of the day is small and scales up
-    # only as the edge re-proves itself, rather than firing full size cold.
-    # Recovery is the deeper claw-back tier and takes priority — never override
-    # it. start() is a safe no-op when the ramp is disabled or there is no
-    # sub-full room (sizing then stays normal), and it resets any half-climbed
-    # ramp left over from yesterday back to the floor.
+    # v9.7.0: a fresh trading day re-enters the slow-roll ramp from the floor so
+    # the first trade of the day is small and scales up only as the edge re-proves
+    # itself, rather than firing full size cold. Recovery is the deeper claw-back
+    # tier and takes priority — never override it. start() is a safe no-op when
+    # the ramp is disabled (the v10.2.0 DEFAULT — the slow-roll is itself a
+    # laddering approach) or there is no sub-full room, in which case sizing stays
+    # at the flat normal fraction.
     if not recovery.active:
         probation.start(_probation_rungs(), effective_normal_trade_pct(), reason="Daily slow-roll")
 
-    log.info("🔄 New trading day %s │ balance $%.2f │ daily budget reset%s",
-             today, current_balance, " (halt cleared)" if was_halted else "")
+    target = daily_profit_target_dollars()
+    goal   = (f" │ today's goal ${target:.2f} (+{DAILY_PROFIT_TARGET_PCT*100:.1f}%)"
+              if target > 0 else "")
+    log.info("🔄 New trading day %s │ balance $%.2f │ daily budget reset%s%s",
+             today, current_balance,
+             " (target hit yesterday — trading resumed)" if was_target
+             else " (halt cleared)" if was_halted else "", goal)
     return True
 
 
@@ -4231,7 +4368,7 @@ def main() -> None:
     global consecutive_losses, last_signal_desc, running_pnl
     global live_wins, live_losses, streak_pause_until, live_daily_realized
     global _last_known_balance, _shutdown_requested, _session_start_ts
-    global _session_halted, session_state, _session_day
+    global _session_halted, _halt_reason, session_state, _session_day
 
     init_base_url()
 
@@ -4241,6 +4378,7 @@ def main() -> None:
     _session_start_ts     = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _session_day          = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     _session_halted       = False
+    _halt_reason          = ""
     session_state         = SessionState.ACTIVE
 
     # In-place resets — no global declaration needed
@@ -4269,6 +4407,11 @@ def main() -> None:
              " (PROBATION ramp, rung %.1f%%→full %.1f%%)"
              % (probation.current_size() * 100, NORMAL_TRADE_PCT * 100)
              if probation.active else "")
+    log.info("  Daily profit target: %s",
+             ("+%.1f%% of the day's opening balance — trading stops when hit"
+              % (DAILY_PROFIT_TARGET_PCT * 100))
+             if DAILY_PROFIT_TARGET_ENABLED and DAILY_PROFIT_TARGET_PCT > 0
+             else "OFF (trades the full day)")
     log.info("  SessionScore≥%d", MIN_SESSION_SCORE)
     log.info("  TimePrior: %dh buckets fullN=%d | now=%s prior=%.3f n=%d",
              BUCKET_GROUP_HOURS, BUCKET_PRIOR_FULL_N, bucket_stats.key_now(),
@@ -4342,12 +4485,20 @@ def main() -> None:
                 # Halt is paused-for-the-day, not forever: poll often enough to
                 # catch the UTC rollover that clears it (maybe_roll_session_day),
                 # then resume automatically — no redeploy needed.
+                # A halt stops NEW entries, never the bookkeeping on trades
+                # already on the book: keep resolving settlements and cancelling
+                # stale orders, or a position open when the daily target landed
+                # would sit unsettled (and its ticker locked) until tomorrow.
+                resolve_open_orders()
+                cancel_stale_orders()
                 halt_bal = paper_balance if DEMO_MODE else get_live_balance()
                 # The scheduled briefing still lands while halted (the day's
                 # summary is exactly what a paused customer wants to see).
                 report_scheduler.maybe_send(halt_bal)
+                write_status_snapshot(halt_bal)
                 if not maybe_roll_session_day(halt_bal):
-                    log.info("Halted for the day — paused until UTC rollover.")
+                    log.info("Halted for the day (%s) — paused until UTC rollover.",
+                             _halt_reason or "halted")
                     time.sleep(300)
                     continue
 
@@ -4376,8 +4527,8 @@ def main() -> None:
             maybe_roll_session_day(current_balance)
             # Recovery win-rate restore runs first: a strong recovery win rate
             # while the stake is held below base fast-tracks straight back to the
-            # full stake + laddering (no balance target, no probation ramp).
-            # Otherwise fall through to the normal balance-target exit.
+            # full stake (no balance target, no probation ramp). Otherwise fall
+            # through to the normal balance-target exit.
             if not maybe_winrate_restore(current_balance):
                 # Recovery EXIT check runs every cycle, independent of trading, so
                 # the bot can never wedge in recovery once balance reaches target.

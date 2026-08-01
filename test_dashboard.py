@@ -229,6 +229,44 @@ def test_http_login_required_then_flow(tmp_path):
         srv.shutdown()
 
 
+# ── daily profit goal (v10.2.0) ───────────────────────────────────────────────
+_GOAL_SNAP = dict(_SNAP, daily_target_enabled=True, daily_target_pct=3.0,
+                  daily_target_dollars=30.0, daily_target_progress=12.5)
+
+
+def test_state_surfaces_the_daily_goal(tmp_path):
+    st = _settings(tmp_path, _GOAL_SNAP).state()
+    assert st["daily_target_enabled"] is True
+    assert st["daily_target_dollars"] == 30.0
+    assert st["daily_target_progress"] == 12.5
+    assert st["target_hit"] is False
+
+
+def test_state_flags_a_banked_goal(tmp_path):
+    snap = dict(_GOAL_SNAP, daily_target_progress=31.0, halted=True,
+                halt_reason="profit_target")
+    assert _settings(tmp_path, snap).state()["target_hit"] is True
+
+
+def test_page_renders_the_goal_card(tmp_path):
+    html = dashboard._dashboard_page(_settings(tmp_path, _GOAL_SNAP).state())
+    assert "Today's goal" in html
+    assert "$30.00" in html
+    assert "stopped trading for today" not in html
+
+
+def test_page_says_stopped_when_the_goal_is_banked(tmp_path):
+    snap = dict(_GOAL_SNAP, daily_target_progress=31.0, halted=True,
+                halt_reason="profit_target")
+    html = dashboard._dashboard_page(_settings(tmp_path, snap).state())
+    assert "Daily goal reached" in html
+
+
+def test_page_omits_the_goal_card_when_target_is_off(tmp_path):
+    html = dashboard._dashboard_page(_settings(tmp_path).state())
+    assert "Today's goal" not in html
+
+
 # ── engine side: reserve ───────────────────────────────────────────────────────
 def test_engine_reserve_reduces_sizing(tmp_path, monkeypatch):
     path = str(tmp_path / "reserve.json")

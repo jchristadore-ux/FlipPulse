@@ -138,6 +138,13 @@ class Settings:
             "balance": (snap or {}).get("balance"),
             "tradeable_balance": (snap or {}).get("tradeable_balance"),
             "session_pnl": (snap or {}).get("session_pnl"),
+            # Daily profit target: the day's goal, today's realized progress, and
+            # whether the goal has already banked the day (trading stopped).
+            "daily_target_enabled": (snap or {}).get("daily_target_enabled"),
+            "daily_target_pct": (snap or {}).get("daily_target_pct"),
+            "daily_target_dollars": (snap or {}).get("daily_target_dollars"),
+            "daily_target_progress": (snap or {}).get("daily_target_progress"),
+            "target_hit": (snap or {}).get("halt_reason") == "profit_target",
             "risk_pct": risk,
             "risk_min_pct": lo,
             "risk_max_pct": hi,
@@ -529,6 +536,28 @@ def _dashboard_page(st: dict) -> str:
             '<div class="msg err" style="display:block">Bot is still booting — '
             'values will populate shortly. You can still save changes.</div>')
 
+    # Daily profit goal: the day's target, today's realized progress, and a clear
+    # "done for today" state so a stopped bot never reads as a broken one.
+    goal    = st.get("daily_target_dollars")
+    prog    = st.get("daily_target_progress")
+    goal_pct = st.get("daily_target_pct")
+    if st.get("daily_target_enabled") and isinstance(goal, (int, float)) and goal > 0:
+        pct_txt = f"{goal_pct:.1f}%" if isinstance(goal_pct, (int, float)) else "3%"
+        prog_txt = _fmt_money(prog) if isinstance(prog, (int, float)) else "—"
+        status = ('<div class="warn">🎯 Daily goal reached — the bot has stopped '
+                  'trading for today and starts again tomorrow.</div>'
+                  if st.get("target_hit") else "")
+        goal_card = (
+            '<div class="card">'
+            '<h2>Today\'s goal</h2>'
+            f'<p class="hint">The bot aims for <b>+{pct_txt}</b> on the balance the '
+            'day opened with, then stops trading until tomorrow.</p>'
+            f'<div class="stat"><span>Target</span><b>{_fmt_money(goal)}</b></div>'
+            f'<div class="stat"><span>Booked today</span><b>{prog_txt}</b></div>'
+            f'{status}</div>')
+    else:
+        goal_card = ""
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FlipPulse — Dashboard</title><style>{_STYLE}</style></head><body>
@@ -543,6 +572,8 @@ def _dashboard_page(st: dict) -> str:
     <div class="stat"><span>In play (after set-aside)</span><b>{_fmt_money(st.get("tradeable_balance"))}</b></div>
     <div class="stat"><span>Session PnL</span><b>{_fmt_money(st.get("session_pnl"))}</b></div>
   </div>
+
+  {goal_card}
 
   <div class="card">
     {mode_card}

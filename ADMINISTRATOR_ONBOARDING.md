@@ -74,11 +74,19 @@ you as the deployer:
   manual resizing when a customer adds funds.
 - The three formats seed these percentage knobs (run `python formats.py` to print them):
 
-  | Format | Normal | Recovery | Max/trade | Ladder | Gates |
-  |---|---|---|---|---|---|
-  | `conservative` | 5% | 2% | 8% | off | strictest |
-  | `balanced` *(default)* | 10% | 3% | 15% | off | doctrine default |
-  | `aggressive` | 20% | 5% | 30% | on (≤2×) | relaxed |
+  | Format | Stake per trade | Max/trade | Gates |
+  |---|---|---|---|
+  | `conservative` | 5% of balance | 8% | strictest |
+  | `balanced` *(default)* | 10% of balance | 15% | doctrine default |
+  | `aggressive` | 20% of balance | 30% | relaxed |
+
+- The stake is **flat**: the same percentage of balance on every trade, in every
+  format. Nothing ladders it up on a win streak (the overlay was retired in
+  v10.2.0) and no format re-enables it.
+- Every format shares the **daily profit target**: once today's realized P&L
+  reaches `DAILY_PROFIT_TARGET_PCT` (default **3%**) of the balance the day opened
+  with, the bot stops trading until the next UTC day. Set
+  `DAILY_PROFIT_TARGET_ENABLED=false` to let a customer trade the full day.
 
 - To override a format for one customer, set `NORMAL_TRADE_PCT`, `RECOVERY_TRADE_PCT`,
   or `MAX_TRADE_PCT` (fractions, e.g. `0.12`) explicitly — an explicit env var always
@@ -116,7 +124,7 @@ code and a `main` branch.)*
 
 ## 3. Attach a volume for state
 
-The bot writes its recovery/probation/ladder/bucket/status files to `/data` so they
+The bot writes its recovery/probation/bucket/status files to `/data` so they
 survive redeploys.
 
 1. In the Railway service → **Volumes → New Volume**.
@@ -190,8 +198,9 @@ Each customer gets a dedicated bot so their alerts and commands are isolated.
 3. In the customer's Telegram chat, exercise the read-only commands (from
    `command_bot.py`, started by `bot.py` on boot):
    - **`/status`** — mode (paper/live), trading format, balance and session PnL, W/L
-     record, ladder/recovery/probation mode and **the active stake % (and ~$)**, open
-     positions, session state, last signal, last-tick time.
+     record, **progress toward today's profit goal**, the sizing mode and **the
+     active stake % (and ~$)**, open positions, session state, last signal,
+     last-tick time.
    - **`/health-log [n]`** — tails the recent health/activity log.
    - **`/help`** — lists the commands.
 

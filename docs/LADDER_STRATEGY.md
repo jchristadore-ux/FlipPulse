@@ -1,9 +1,36 @@
-# Laddering Stake Management
+# Laddering Stake Management — RETIRED
+
+> ## ⛔ Not in use. This document is historical.
+>
+> **v10.2.0 (owner directive) disabled the laddering approach.** The dollar risk
+> must stay in line with the configured **percentage of balance**, so nothing may
+> multiply the stake up on a hot streak. Concretely:
+>
+> - `ladder.py` is **unwired from `bot.py`** — no import, no `stake_ladder`, no
+>   `ladder_record()`. It remains in the repo (with `test_ladder.py`) as a
+>   retired module so the work isn't lost, but the engine never calls it.
+> - `LADDER_ENABLED`, `RECOVERY_LADDER_PAUSE_TRADES` and `LADDER_STATE_PATH` are
+>   **no longer read**. Setting them has no effect, and the provisioner no longer
+>   seeds them.
+> - The **probation ramp / daily slow-roll** (the sub-full rung ladder) is off by
+>   default (`PROBATION_RAMP_ENABLED=false`), and recovery defaults to
+>   `RECOVERY_NO_STAKE_CHANGE=true`, so the stake does not step down into a
+>   recovery tier and back up either.
+>
+> **What sizing does now:** every trade stakes `NORMAL_TRADE_PCT` (or the
+> customer's `/risk` override) of the current balance, bounded by the hard
+> `MAX_TRADE_PCT` ceiling and the cash on hand. It compounds as the balance grows
+> and de-risks as it shrinks — and does nothing else. On the upside,
+> `DAILY_PROFIT_TARGET_PCT` (default 3%) stops trading for the day once the goal
+> is banked.
+>
+> Everything below describes the retired design. Read it as history, not as a
+> description of the running bot.
 
 > Dynamic, performance-driven stake sizing for the Kalshi 15-minute BTC Up/Down
 > bot. Adapts **stake size only** — it never touches signal generation or
-> strategy. Implemented in [`ladder.py`](ladder.py), wired into `bot.py` as an
-> opt-in overlay on the existing Kelly stake.
+> strategy. Implemented in [`ladder.py`](ladder.py), formerly wired into `bot.py`
+> as an opt-in overlay on the existing Kelly stake.
 
 > **v10.0.0 — sizing is now PERCENTAGE-BASED.** Every base stake is a fraction of
 > the current balance, not a fixed dollar figure. Wherever this doc says

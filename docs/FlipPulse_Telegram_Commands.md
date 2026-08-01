@@ -14,7 +14,7 @@ case-sensitive** (`/WinRate` and `/winrate` both work).
 
 | Command | What it does |
 |---|---|
-| `/status` | The full picture — paper/live mode, balance, P&L, win rate, open positions, and recovery state. |
+| `/status` | The full picture — paper/live mode, balance, P&L, win rate, **progress toward today's goal**, open positions, and recovery state. |
 | `/winrate` | Your win rate **today**, **this week**, and **all-time**. |
 | `/winrate day` | Just today's win rate. |
 | `/winrate week` | Just this week's win rate (rolling 7 days). |
@@ -27,6 +27,18 @@ case-sensitive** (`/WinRate` and `/winrate` both work).
 > Twice a day, at **9:00am and 9:00pm (US Eastern)**, the bot messages you a
 > short briefing: balance, today's P&L, today's win rate, and your all-time
 > figures — so you get a rhythm without having to ask.
+
+### 🎯 Today's goal: +3%
+
+Your bot trades toward a **daily profit target of 3%** of the balance the day
+started with. The moment it books that, it **stops trading for the day** and
+messages you — a quiet chat after a 🎯 message means the goal is banked, not that
+something broke. `/status` shows how far along you are (e.g.
+`Daily goal: $+12.50 / $30.00`).
+
+Trading restarts automatically at the next trading day (UTC midnight), and the
+goal is recalculated from your new balance — so profit compounds into tomorrow's
+target. Any position still open when the goal is hit settles normally.
 
 ---
 
@@ -48,14 +60,17 @@ Normally, after a full-size losing trade the bot enters **recovery mode** and
 once you're back to even.
 
 With **No Stake Change ON**, recovery still triggers and tracks the claw-back,
-but it **keeps your stake exactly where it was and keeps laddering** — no stake
-reduction, and no jump back up when recovery ends. Flip it anytime; it takes
-effect immediately, even in the middle of a recovery.
+but it **keeps your stake exactly where it was** — no stake reduction, and no jump
+back up when recovery ends. Flip it anytime; it takes effect immediately, even in
+the middle of a recovery.
 
-> **Automatic win-rate restore:** whenever your stake is being held below its
-> normal size during recovery, if your recovery win rate reaches **70%**, the bot
-> automatically returns to your full stake and resumes laddering — so a hot streak
-> doesn't get stuck grinding at a small size.
+> **This is ON by default.** Your stake stays the same percentage of your balance
+> at all times, so the amount at risk moves only when your balance does.
+
+> **Automatic win-rate restore:** if you turn No Stake Change *off* and your stake
+> is being held below its normal size during recovery, a recovery win rate of
+> **70%** returns you straight to the full stake — so a hot streak doesn't get
+> stuck grinding at a small size.
 
 ---
 
