@@ -1,7 +1,45 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  FLIPPULSE (MarkeyMachine core)  v10.2.0  —  Production Build                ║
+║  FLIPPULSE (MarkeyMachine core)  v10.3.0  —  Production Build                ║
 ║  "No disassemble."                                                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  v10.3.0 — BALANCE INDEPENDENCE: the same rules at $20 and $20,000.          ║
+║                                                                              ║
+║  AUDIT (owner directive "validate that balance is irrelevant"): every entry  ║
+║  gate already reads no balance, and the percentage rules (3% daily goal, 40% ║
+║  session stop, the stake fraction) are exact at every size. Three dollar-    ║
+║  denominated mechanics were not, so the risk actually taken differed by      ║
+║  account size. Measured at a configured 10% stake: a $5 balance took 6.00%   ║
+║  to 13.40% depending on contract price; $20 took 6.70%–9.75%; $20,000 took   ║
+║  10.00% at every price. Fixes:                                               ║
+║                                                                              ║
+║  1. SUB-CONTRACT ROUND-UP OFF (MIN_ORDER_ROUNDUP now false). Rounding a      ║
+║     stake UP to one contract was bounded by MAX_TRADE_PCT, not by the        ║
+║     CONFIGURED fraction, and is only reachable on a small balance — the one  ║
+║     path that could risk more than asked ($5 @ 67c took 13.40% on a 10%      ║
+║     config). Sizing now always rounds DOWN, so the configured percentage is  ║
+║     a true ceiling everywhere. Small accounts skip trades they cannot afford ║
+║     at full size rather than over-risking them; the v10.1.0 deadlock this    ║
+║     guarded against is gone at the source (the ladder + probation de-riskers ║
+║     that collapsed the stake to $0.37 were both retired in v10.2.0).         ║
+║                                                                              ║
+║  2. THE $0.25 KELLY FLOOR IS GONE. `if bet < 0.25: return` was the last raw- ║
+║     dollar rule in the entry path and blocked every account under ~$2.50     ║
+║     outright. Redundant: size_contracts already rejects an unaffordable      ║
+║     stake, against MAX_TRADE_PCT — a percentage.                             ║
+║                                                                              ║
+║  3. LIQUIDITY GATE IS NOW RELATIVE TO THE ORDER (MIN_DEPTH_STAKE_MULT, 3.0). ║
+║     MIN_OB_DEPTH demanded the same $75 of book depth whether the order was   ║
+║     $2 or $10,000 — cover of 133x for a $20 account and 0.0075x for a        ║
+║     $100,000 one, so only large accounts carried partial-fill and slippage   ║
+║     risk. The book must now absorb MIN_DEPTH_STAKE_MULT × the order about to ║
+║     be placed. MIN_OB_DEPTH stays as the absolute "is this market worth      ║
+║     trading at all" floor. Set the multiplier to 0 to disable.               ║
+║                                                                              ║
+║  What CANNOT be fixed: contracts are integral and priced in cents, so a $20  ║
+║  account wanting $2.00 of a 67c contract gets $1.34 (6.7%, not 10%). The     ║
+║  granularity error converges to zero by roughly $5,000 of balance. Rounding  ║
+║  down means it is always an UNDER-risk, never an over-risk.                  ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  v10.2.0 — DAILY 3% PROFIT TARGET + FLAT RISK (owner directive).             ║
 ║                                                                              ║
@@ -335,7 +373,7 @@
 
 from __future__ import annotations
 
-BOT_VERSION = "10.2.0"
+BOT_VERSION = "10.3.0"
 
 import base64
 import json
@@ -836,7 +874,45 @@ MIN_SAMPLE_TRADES     = _env_int("MIN_SAMPLE_TRADES", 20)
 #     justification is logged, with an explicit "under-capitalised" reason (see
 #     size_contracts / run_decision) — so the log never again claims a trade the
 #     bot could not place.
-MIN_ORDER_ROUNDUP     = _env_bool("MIN_ORDER_ROUNDUP", True)
+#
+# v10.3.0 — ROUND-UP IS NOW OFF BY DEFAULT (balance-independence audit).
+# The round-up is bounded by MAX_TRADE_PCT, not by the CONFIGURED stake, so it
+# was the one path that could risk MORE than the customer asked for — and it is
+# only ever reachable on a small balance. Measured: a $5 balance at a configured
+# 10% took 13.40% on a 67c contract, while a $20,000 balance took exactly 10.00%
+# at every price. Owner directive: the configured percentage is a ceiling at
+# EVERY account size, so a stake that cannot buy a whole contract now skips the
+# trade instead of rounding up.
+#
+# The v10.1.0 deadlock it was introduced for is addressed at the source instead:
+# the de-riskers that multiplied the stake down to $0.37 (the probation ramp and
+# the ladder overlay) are both gone as of v10.2.0, so the stake is a flat
+# percentage of balance and no longer collapses. Fix #2 above still stands — an
+# unaffordable signal is rejected BEFORE it is announced, with a real reason, so
+# the log never claims a trade the bot could not place.
+#
+# Set MIN_ORDER_ROUNDUP=true to restore the old behaviour (small accounts trade
+# more often, at up to MAX_TRADE_PCT rather than the configured fraction).
+MIN_ORDER_ROUNDUP     = _env_bool("MIN_ORDER_ROUNDUP", False)
+
+# ── Liquidity gate: the book must cover the ORDER, not a fixed dollar floor ───
+# WHY (balance-independence audit): MIN_OB_DEPTH demands the same $75 of book
+# depth whether the bot is about to buy $2 or $10,000. Measured against the
+# default 10% stake, the order placed was 1.3x that required depth at a $1,000
+# balance, 26.7x at $20,000 and 133x at $100,000 — so a large account routinely
+# fired orders far bigger than the liquidity the gate had proved existed, taking
+# partial-fill and slippage risk a small account never sees. Percentage sizing
+# self-de-risks the BANKROLL, but says nothing about MARKET IMPACT (this is what
+# v9.8.0's fixed-dollar HIGH_STAKE_GATE_SIZE was reaching for before v10.0.0
+# removed it as redundant — it was redundant for bankroll risk, not for this).
+#
+# The fix expresses the gate RELATIVE TO THE ORDER: the visible book depth must
+# be at least MIN_DEPTH_STAKE_MULT x the dollar cost of the order about to be
+# placed. Identical rule at every balance — a $20 account and a $20,000 account
+# must both find a book that can absorb their trade several times over.
+# MIN_OB_DEPTH stays as the absolute floor for a market being worth trading at
+# all. Set to 0 to disable the relative gate.
+MIN_DEPTH_STAKE_MULT  = _env_float("MIN_DEPTH_STAKE_MULT", 3.0)
 
 # ── v10.1.0 PERFORMANCE GUARD window ─────────────────────────────────────────
 # WHY (same audit): performance_guard read live_wins/live_losses, which
@@ -2706,10 +2782,18 @@ def size_contracts(bet_dollars: float, limit_cents: int,
     phantom entries in the log.
 
     Contracts are integral, so a stake below one contract's price floors to zero.
-    MIN_ORDER_ROUNDUP rounds that case UP to a single contract whenever one
-    contract still fits inside BOTH the hard MAX_TRADE_PCT ceiling and the cash
-    on hand — the ceiling is a real risk limit and is never breached, while the
-    floor was never a risk decision at all, just integer division.
+    Rounding DOWN is what keeps the configured stake percentage a true ceiling at
+    every account size: the order is always ≤ the intended stake, so a small
+    balance can never be pushed into risking more than was asked for. The cost is
+    granularity — a $20 balance wanting $2.00 of a 67c contract gets 2 contracts
+    ($1.34, 6.7% not 10%), while a $20,000 balance lands on 10.00% exactly. That
+    is the market (you cannot buy 2.98 contracts), not a policy choice.
+
+    MIN_ORDER_ROUNDUP (default OFF since v10.3.0) restores the old behaviour of
+    rounding a sub-contract stake UP to a single contract whenever it still fits
+    inside the hard MAX_TRADE_PCT ceiling and the cash on hand. That trades more
+    often on small balances, but it is the one path that can risk MORE than the
+    configured fraction — see the config note above.
     """
     if limit_cents <= 0:
         return 0, "no limit price"
@@ -2720,8 +2804,9 @@ def size_contracts(bet_dollars: float, limit_cents: int,
         return count, "sized"
 
     if not MIN_ORDER_ROUNDUP:
-        return 0, (f"stake ${bet_dollars:.2f} < 1 contract @ {limit_cents}c "
-                   f"(roundup off)")
+        return 0, (f"stake ${bet_dollars:.2f} < 1 contract @ {limit_cents}c — "
+                   f"rounding up would risk {unit_cost/max(bet_dollars, 1e-9)*100:.0f}% "
+                   f"of the configured stake")
 
     ceiling = round(MAX_TRADE_PCT * tradeable_balance(balance), 2)
     if unit_cost > ceiling:
@@ -2733,6 +2818,22 @@ def size_contracts(bet_dollars: float, limit_cents: int,
 
     return 1, (f"rounded up to 1 contract (${unit_cost:.2f}); "
                f"stake ${bet_dollars:.2f} under one contract @ {limit_cents}c")
+
+
+def depth_covers_order(total_depth: float, order_cost: float) -> bool:
+    """Can the visible book absorb this order MIN_DEPTH_STAKE_MULT times over?
+
+    The balance-independence half of the liquidity gate. MIN_OB_DEPTH is an
+    absolute floor answering "is this market worth trading at all"; this answers
+    "is it worth trading at OUR size", and because it is stated as a multiple of
+    the order it is the identical rule for a $2 trade and a $10,000 one. Without
+    it, the flat $75 floor gave a $20 account 37x cover and a $100,000 account
+    0.01x — only the large account ever carried fill risk.
+
+    MIN_DEPTH_STAKE_MULT <= 0 disables the check (always True)."""
+    if MIN_DEPTH_STAKE_MULT <= 0:
+        return True
+    return total_depth >= order_cost * MIN_DEPTH_STAKE_MULT
 
 
 def kelly_bet(win_prob: float, contract_price_cents: int, balance: float) -> float:
@@ -3670,6 +3771,43 @@ def place_order(ticker: str, direction: str, bet_dollars: float,
 # TELEGRAM WRAPPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def log_size_feasibility(balance: float) -> None:
+    """Say plainly, at boot, whether this balance can actually honour the
+    configured stake percentage — the balance-independence audit's operator-
+    facing half.
+
+    Sizing rounds DOWN to whole contracts, so the configured fraction is always a
+    ceiling; what varies with account size is how much of it a small balance can
+    reach. Below one contract at a given price the signal is skipped entirely, so
+    an under-funded account silently trades only the cheap end of the book. This
+    logs the crossover instead of leaving it to be discovered in a log audit.
+    Never raises — observability must not stop the bot booting."""
+    try:
+        stake = active_trade_size(balance)
+        # expiry_guard only lets mids 15c–85c through, so 85c is the priciest
+        # contract the strategy can ever try to buy.
+        top_c = 85
+        if stake <= 0:
+            log.warning("  Sizing feasibility: stake is $0 — nothing tradeable "
+                        "(check balance and any set-aside reserve).")
+            return
+        if stake >= top_c / 100.0:
+            log.info("  Sizing feasibility: stake $%.2f covers the whole 15c–85c "
+                     "band — the configured %% is reachable at every price.",
+                     stake)
+            return
+        affordable = int(stake * 100)
+        need = round(top_c / 100.0 / max(active_trade_fraction(), 1e-9), 2)
+        log.warning(
+            "  Sizing feasibility: stake $%.2f only affords contracts ≤ %dc. "
+            "Signals above that are SKIPPED (never up-sized), so this account "
+            "trades the cheap end of the book only. ~$%.2f of balance would "
+            "cover the full band at %.1f%%.",
+            stake, affordable, need, active_trade_fraction() * 100)
+    except Exception as e:  # pragma: no cover - never block boot
+        log.debug("size feasibility check skipped: %s", e)
+
+
 def telegram_boot(balance: float) -> None:
     mode = "📋 PAPER" if DEMO_MODE else "🔴 LIVE"
     target = daily_profit_target_dollars()
@@ -4193,8 +4331,14 @@ def run_decision(market: dict, balance: float) -> None:
         return
 
     bet = kelly_bet(win_prob, contract_price, balance)
-    if bet < 0.25:
-        log.info("Kelly │ $%.2f too small", bet)
+    # v10.3.0: the old `bet < 0.25` cutoff was the last raw-dollar rule in the
+    # entry path — it blocked every account under ~$2.50 regardless of config,
+    # which is exactly the "the rules differ at $20 vs $20,000" problem. It was
+    # also redundant: size_contracts already rejects an unaffordable stake, and
+    # does it against MAX_TRADE_PCT (a percentage), so a dust stake still cannot
+    # buy a contract that would breach the ceiling.
+    if bet <= 0:
+        log.info("Kelly │ no stake (edge gate or zero tradeable balance)")
         return
     if balance < bet:
         log.warning("Insufficient balance")
@@ -4223,6 +4367,20 @@ def run_decision(market: dict, balance: float) -> None:
         last_signal_desc = f"unsizeable: {size_reason}"
         return
     cost = round(limit_price * count / 100.0, 2)
+
+    # Liquidity gate, expressed relative to THIS order rather than in fixed
+    # dollars: the book must be able to absorb the trade several times over. The
+    # flat MIN_OB_DEPTH floor above says the market is worth trading at all; this
+    # says it is worth trading at OUR size. Same rule at every balance — which is
+    # the point, since a $75 floor is 133x cover for a $20 account and 0.0075x
+    # cover for a $100,000 one. Checked before the announce, like the sizing.
+    if not depth_covers_order(ob["total_depth"], cost):
+        need = cost * MIN_DEPTH_STAKE_MULT
+        log.info("Liquidity │ book $%.0f < %.1f× order $%.2f (need $%.0f) — "
+                 "no trade", ob["total_depth"], MIN_DEPTH_STAKE_MULT, cost, need)
+        last_signal_desc = (f"thin book: ${ob['total_depth']:.0f} < "
+                            f"{MIN_DEPTH_STAKE_MULT:.1f}× order ${cost:.2f}")
+        return
 
     _pw     = len(_perf_window)
     wlb_str = (f" WLB={wilson_lower_bound(sum(1 for w in _perf_window), _pw)*100:.1f}%"
@@ -4407,6 +4565,8 @@ def main() -> None:
              " (PROBATION ramp, rung %.1f%%→full %.1f%%)"
              % (probation.current_size() * 100, NORMAL_TRADE_PCT * 100)
              if probation.active else "")
+    log.info("  Liquidity: book ≥ %.1f× the order (floor $%.0f depth)",
+             MIN_DEPTH_STAKE_MULT, MIN_OB_DEPTH)
     log.info("  Daily profit target: %s",
              ("+%.1f%% of the day's opening balance — trading stops when hit"
               % (DAILY_PROFIT_TARGET_PCT * 100))
@@ -4431,6 +4591,7 @@ def main() -> None:
         recovery.reconcile_on_boot(paper_balance)
         probation.reconcile_on_boot()
         billing.reconcile_on_boot(paper_balance)
+        log_size_feasibility(paper_balance)
         telegram_boot(paper_balance)
     else:
         # Boot-time balance fetch: retry a transient Kalshi/API blip in-process
@@ -4472,6 +4633,7 @@ def main() -> None:
         recovery.reconcile_on_boot(bal)
         probation.reconcile_on_boot()
         billing.reconcile_on_boot(bal)
+        log_size_feasibility(bal)
         telegram_boot(bal)
 
     resolve_cycle = 0
