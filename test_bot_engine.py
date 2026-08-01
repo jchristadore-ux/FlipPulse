@@ -226,11 +226,14 @@ def test_size_contracts_respects_the_customer_reserve(monkeypatch):
     assert bot.size_contracts(0.37, 45, 10.0)[0] == 1       # same balance, no reserve
 
 
-def test_size_contracts_roundup_can_be_turned_off(monkeypatch):
+def test_size_contracts_roundup_off_is_the_default(monkeypatch):
+    """v10.3.0: rounding a sub-contract stake UP is the one path that can risk
+    more than the configured fraction, so it is off by default and the rejection
+    reason says how far over the round-up would have gone."""
     monkeypatch.setattr(bot, "MIN_ORDER_ROUNDUP", False)
     count, reason = bot.size_contracts(0.37, 45, 14.83)
     assert count == 0
-    assert "roundup off" in reason
+    assert "122% of the configured stake" in reason
 
 
 # ── v10.1.0 order-book imbalance ceiling ──────────────────────────────────────

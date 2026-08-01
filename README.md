@@ -6,6 +6,15 @@ All position sizing is **percentage-based** (a fraction of the current balance),
 so one template fits every customer regardless of their starting balance and the
 stake compounds as the account grows.
 
+**Balance is irrelevant to the rules.** The same gates, the same stake
+percentage, the same daily goal at $20 and at $20,000 — audited and pinned by
+`test_balance_independence.py`. Sizing rounds *down* to whole contracts, so the
+configured percentage is a true ceiling at every account size, and the liquidity
+requirement is stated as a multiple of the order rather than a flat dollar floor.
+The one irreducible difference is integer contracts: a $20 account can't land
+exactly on 10% (it gets 6.7–9.8%), while a $20,000 account gets 10.00% — always
+an under-risk, and it converges to exact by roughly $5,000.
+
 **The day's goal is +3%.** Once today's realized profit reaches
 `DAILY_PROFIT_TARGET_PCT` (default `0.03`) of the balance the day opened with,
 the bot stops opening trades until the next UTC day — open positions still settle
@@ -79,6 +88,8 @@ The bot reads everything from environment variables. See
 - `DAILY_PROFIT_TARGET_PCT` (default `0.03`), `DAILY_PROFIT_TARGET_ENABLED` — the
   day's goal: once today's realized P&L reaches +3% of the balance the day opened
   with, trading stops until the next UTC day
+- `MIN_DEPTH_STAKE_MULT` (default `3.0`), `MIN_ORDER_ROUNDUP` (default `false`) —
+  the balance-independence knobs; defaults are correct, see `.env.example`
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — the customer's own Telegram bot
 - `TELEGRAM_OPERATOR_CHAT_ID` — optional; also fans alerts out to you (operator)
 - `*_STATE_PATH`, `STATUS_SNAPSHOT_PATH`, `HEALTH_LOG_PATH` — pre-pointed at the
