@@ -16,6 +16,14 @@ supervisor — one repo/template → one Railway project → one bot per custome
 Every customer starts in **paper mode** (`DEMO_MODE=true`). Going live is a separate,
 deliberate step (last section). Budget ~15 minutes per customer.
 
+> **Encryption key warning:** `ONBOARDING_FERNET_KEY` is a single point of failure
+> for every onboarding submission. Back it up in a password manager or secure
+> vault (preferably a second authorized backup), never in git, logs, or chat. If
+> it is lost, stored customer secrets cannot be recovered. There is no automatic
+> rotation: an approved maintenance procedure must decrypt all submissions with
+> the old key, re-encrypt them with a newly generated key, verify the files, then
+> swap the environment variable and redeploy. Retain the old key until verified.
+
 > ## ⚡ This runbook is now automated
 > Everything below from §2 through §6 (project, service, volume, variables, deploy,
 > verify) is executed automatically by the onboarding service the moment Stripe
