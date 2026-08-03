@@ -116,13 +116,21 @@ Both print the ready-to-paste Railway variables (the customer's `TRADING_FORMAT`
 - Secrets are **encrypted at rest** (Fernet) and are **never logged** or sent to
   Telegram. Only `ONBOARDING_FERNET_KEY` can decrypt them.
 - Serve **only over HTTPS**. The form transmits a Kalshi private key.
-- Submission files are `chmod 600` and git-ignored. Rotate `ONBOARDING_FERNET_KEY`
-  by re-encrypting existing submissions if it is ever exposed.
-- **Back up `ONBOARDING_FERNET_KEY` the day you generate it** (password manager, at
-  minimum two places). It is a single point of failure: lose it and every stored
-  submission — including paying customers not yet provisioned — is permanently
-  unreadable. Rotation procedure: generate a new key, decrypt each submission's
-  `secrets_encrypted` values with the old key and re-encrypt with the new one,
-  swap the env var, redeploy, then destroy the old key.
+- Submission files are `chmod 600` and git-ignored.
+
+### ⚠️ Fernet key backup and recovery
+
+`ONBOARDING_FERNET_KEY` is a **single point of failure**. Losing it makes every
+stored submission secret permanently unreadable, including paid customers who
+have not yet been provisioned. Store a copy in a password manager or secure
+secrets vault (ideally with a second authorized backup); never commit it to git,
+place it in a submission file, or paste it into logs or chat.
+
+There is no automatic key rotation. If rotation is ever required, plan a
+maintenance window: retain the old key securely, decrypt each submission's
+`secrets_encrypted` values with the old key, re-encrypt them with a newly
+ generated key, verify the files, then swap the environment variable and
+redeploy. Destroy the old key only after recovery has been verified. Do not
+attempt rotation without a tested backup and an operator-approved procedure.
 - Funds stay on Kalshi — this service never touches customer money; it only
   collects setup/subscription payment via Stripe.
