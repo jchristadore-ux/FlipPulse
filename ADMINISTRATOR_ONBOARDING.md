@@ -74,11 +74,19 @@ you as the deployer:
   manual resizing when a customer adds funds.
 - The three formats seed these percentage knobs (run `python formats.py` to print them):
 
-  | Format | Normal | Recovery | Max/trade | Ladder | Gates |
-  |---|---|---|---|---|---|
-  | `conservative` | 5% | 2% | 8% | off | strictest |
-  | `balanced` *(default)* | 10% | 3% | 15% | off | doctrine default |
-  | `aggressive` | 20% | 5% | 30% | on (≤2×) | relaxed |
+  | Format | Stake per trade | Max/trade | Gates |
+  |---|---|---|---|
+  | `conservative` | 5% of balance | 8% | strictest |
+  | `balanced` *(default)* | 10% of balance | 15% | doctrine default |
+  | `aggressive` | 20% of balance | 30% | relaxed |
+
+- The stake is **flat**: the same percentage of balance on every trade, in every
+  format. Nothing ladders it up on a win streak (the overlay was retired in
+  v10.2.0) and no format re-enables it.
+- Every format shares the **daily profit target**: once today's realized P&L
+  reaches `DAILY_PROFIT_TARGET_PCT` (default **3%**) of the balance the day opened
+  with, the bot stops trading until the next UTC day. Set
+  `DAILY_PROFIT_TARGET_ENABLED=false` to let a customer trade the full day.
 
 - To override a format for one customer, set `NORMAL_TRADE_PCT`, `RECOVERY_TRADE_PCT`,
   or `MAX_TRADE_PCT` (fractions, e.g. `0.12`) explicitly — an explicit env var always
@@ -116,7 +124,7 @@ code and a `main` branch.)*
 
 ## 3. Attach a volume for state
 
-The bot writes its recovery/probation/ladder/bucket/status files to `/data` so they
+The bot writes its recovery/probation/bucket/status files to `/data` so they
 survive redeploys.
 
 1. In the Railway service → **Volumes → New Volume**.
@@ -190,8 +198,9 @@ Each customer gets a dedicated bot so their alerts and commands are isolated.
 3. In the customer's Telegram chat, exercise the read-only commands (from
    `command_bot.py`, started by `bot.py` on boot):
    - **`/status`** — mode (paper/live), trading format, balance and session PnL, W/L
-     record, ladder/recovery/probation mode and **the active stake % (and ~$)**, open
-     positions, session state, last signal, last-tick time.
+     record, **progress toward today's profit goal**, the sizing mode and **the
+     active stake % (and ~$)**, open positions, session state, last signal,
+     last-tick time.
    - **`/health-log [n]`** — tails the recent health/activity log.
    - **`/help`** — lists the commands.
 
@@ -241,7 +250,7 @@ Do **not** do this during initial onboarding. When the customer is ready:
 
 | Charge | Amount | When | How |
 |---|---|---|---|
-| **Setup fee** | **$99** | Once, at signup | Stripe (first invoice) |
+| **Setup fee** | **$150** | Once, at signup | Stripe (first invoice) |
 | **Subscription** | **$99 / month** | Monthly | Stripe recurring |
 | ~~Performance fee~~ | **— on hold (not charged)** | — | Placeholder — see §9b to re-enable later |
 
@@ -258,7 +267,7 @@ Do **not** do this during initial onboarding. When the customer is ready:
 2. **Products & Prices:**
    - Product "FlipPulse Membership" → recurring **Price $99/month** → copy its
      `price_...` id → `STRIPE_MONTHLY_PRICE_ID`.
-   - Product "FlipPulse Setup" → one-time **Price $99** → copy its id →
+   - Product "FlipPulse Setup" → one-time **Price $150** → copy its id →
      `STRIPE_SETUP_PRICE_ID`.
 3. In the **onboarding service** (`onboarding/`) set `STRIPE_SECRET_KEY`,
    `STRIPE_MONTHLY_PRICE_ID`, `STRIPE_SETUP_PRICE_ID`, and `PUBLIC_BASE_URL` (its public
@@ -273,6 +282,31 @@ Do **not** do this during initial onboarding. When the customer is ready:
 
 See [`onboarding/README.md`](onboarding/README.md) for the full env-var list and how to
 deploy the form as its own Railway service.
+
+### 9a-i. Early-adopter offer — "Founder 100" (live)
+
+The launch offer: **the first 100 subscribers pay $0 on their first invoice** — the
+$150 setup fee **and** the first month ($99) are both waived — then normal $99/month
+billing begins from month 2. Regular list price stays **$150 setup + $99/mo**, so the
+discount is real and time-limited. It never touches the recurring price, so LTV is
+intact.
+
+**Stripe side (one-time):**
+1. Dashboard → **Product catalog → Coupons → + New** → **Amount off → $249.00 USD**
+   (= $150 setup + $99 first month), Duration **Once**, **Max redemptions 100**. Name it
+   `FOUNDING100`. Save — copy its **coupon id** (looks like `10xGeLZu`).
+2. Cap is enforced by Stripe's `max_redemptions`; when it hits 100 the coupon stops
+   applying automatically.
+
+**Onboarding service side — pick ONE delivery mode** (Stripe rejects a session that
+uses both):
+- **Automatic (recommended):** set `FOUNDING_COUPON_ID` to the coupon id. Every signup
+  gets the discount with nothing to type. When the coupon is exhausted/expired, checkout
+  **retries once at full price** so signups never break — the offer just ends. Unset the
+  var to end it early.
+- **Code-based:** leave `FOUNDING_COUPON_ID` unset, set `STRIPE_ALLOW_PROMO_CODES=true`,
+  and on the coupon create a **promotion code** (e.g. `FOUNDER100`) to hand out. The
+  Checkout page then shows an "Add promotion code" box.
 
 ### 9b. (Later) re-enabling a performance fee — currently DISABLED
 

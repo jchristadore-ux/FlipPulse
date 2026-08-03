@@ -28,7 +28,7 @@ VALID_FORM = {
     "starting_balance": "1000", "trading_format": "balanced",
     "kalshi_api_key_id": "key-id", "kalshi_private_key_pem": "PEM",
     "telegram_bot_token": "123:abc", "telegram_chat_id": "555",
-    "agree": "on",
+    "ack_risk": "on", "ack_software": "on", "ack_eligibility": "on", "agree": "on",
 }
 
 

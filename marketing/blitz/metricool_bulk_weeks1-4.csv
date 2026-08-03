@@ -16,7 +16,7 @@ It's an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — Kalshi 
 
 Every customer starts in paper mode — simulated money — and watches the bot make real decisions with zero risk. Your funds stay in your own Kalshi account the entire time. Every decision arrives on your own Telegram, and you can pause with one tap.
 
-$99 setup + $99/month, cancel anytime. If you'd like to watch a live paper-mode feed first (we publish one, unedited): t.me/flippulse
+$150 setup + $99/month, cancel anytime. If you'd like to watch a live paper-mode feed first (we publish one, unedited): t.me/flippulse
 
 Questions welcome in the comments — the founder answers every one.
 
@@ -132,14 +132,33 @@ No dashboard to log into. No spreadsheet. Just ask the bot how it's doing, any h
 
 The bot computes the statistically-safe LOWER estimate of its true win rate. If that drops under 50%, it stops trading. Evidence or nothing.",2026-07-14,08:15,FALSE,twitter,,FALSE
 ⚠️ THREAD (TH02) — DRAFT. Build the tweet chain manually in Metricool (+ Add tweet for each numbered tweet). Full text in 03_POST_LIBRARY.md §2/§3.2.,2026-07-14,12:30,TRUE,twitter,,FALSE
-"UTC 0–4 (post-US-close), the bot won't trade at all.
+"The Founders 100 Club is open — and it closes at 100.
 
-Thin books. One or two orders can fake an entire signal.
+The first 100 members join FlipPulse free: $150 setup + first month waived. $0 today, then $99/mo, cancel anytime.
 
-It's not missing opportunities at 2am. There are no opportunities at 2am — just noise wearing a costume.",2026-07-14,19:30,FALSE,twitter,,FALSE
-"""Where does my money actually sit?"" — the best question we get.
+Founders lock in that $99/mo for life + first access to everything we build.
 
-Answer: in YOUR Kalshi account, a CFTC-regulated US exchange. FlipPulse never holds a dollar. The bot trades through your own API key, which can place trades but cannot withdraw funds. We charge a flat software fee — $99/month — and that's the entire business model. [link] ⚠️ Trading involves risk.",2026-07-14,13:00,FALSE,facebook,,FALSE
+Starts in paper mode, so you watch it work before a real dollar moves.
+
+100 seats. Then the Club closes.
+👉 go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-07-14,19:30,TRUE,twitter,,FALSE
+"The Founders 100 Club is open.
+
+The first 100 people to join FlipPulse become Founders — for life. Here's what that means:
+
+🎟 $0 to start — we waive the full $150 setup fee AND your first month ($99). Then it's $99/month, cancel anytime.
+🔒 Your $99/mo is locked in for life — Founders are grandfathered against every future price increase.
+🏅 Permanent Founder status + first access to everything we ship next.
+
+FlipPulse is an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — it runs 9 checks before every trade and does nothing the rest of the time. Every member starts in PAPER mode (simulated money), so you watch it make real decisions before a single real dollar is at stake. Your funds never leave your own Kalshi account.
+
+There are exactly 100 seats. When they're gone, the Club closes and pricing reverts to $150 setup + $99/mo.
+
+👉 Claim a Founder seat: go.flippulse.com
+
+⚠️ FlipPulse is software, not investment advice. Trading involves risk, including loss of principal. Simulated results do not guarantee live results.",2026-07-14,13:00,TRUE,facebook,,FALSE
 "Weekly receipts 🧾
 
 Qualified setups found: [n]
@@ -150,7 +169,13 @@ Most common refusal: [reason]
 Full unedited feed: t.me/flippulse
 
 (Paper mode. Not advice. Risk disclosure in bio.)",2026-07-15,08:15,TRUE,twitter,,FALSE
-What would it take for you to trust an automated strategy? Serious question — building the answer is literally my job. Wrong answers also welcome.,2026-07-15,12:30,FALSE,twitter,,FALSE
+"We're not selling trades. We're selling the discipline to skip almost all of them — 9 checks before every trade, paper mode first, every decision on your Telegram.
+
+The first 100 people to trust that get in free and stay Founders for life: $0 to start, then $99/mo locked in.
+
+Seats left: [N]/100 → go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-07-15,12:30,TRUE,twitter,,FALSE
 "It took a loss this morning.
 
 Here's what happened next, automatically:
@@ -176,11 +201,7 @@ Because one signal isn't confirmation.
 The order book said UP. But spot momentum was NEUTRAL. The doctrine requires both to AGREE — explicitly. Neutral is a rejection.
 
 One signal = a guess. Two agreeing = a setup.",2026-07-16,08:15,FALSE,twitter,,FALSE
-"Most bots die of overtrading.
-
-Not bad signals — overtrading. Fees, spreads, and forced trades in dead markets bleed accounts one paper cut at a time.
-
-The cheapest edge in trading is simply refusing to play bad hands.",2026-07-16,12:30,FALSE,twitter,,FALSE
+"[N] of 100 Founders 100 Club seats left. $0 to start (setup + first month waived), then $99/mo locked in for life. go.flippulse.com",2026-07-16,12:30,TRUE,twitter,,FALSE
 "We publish our no-trade conditions. All 14 of them.
 
 Ask any other bot for their list. Watch what happens.",2026-07-16,19:30,FALSE,twitter,,FALSE
@@ -191,11 +212,15 @@ No command can place a trade or flip a bot to live mode. Not from Telegram, not 
 
 Some things should be hard.",2026-07-17,08:15,FALSE,twitter,,FALSE
 "If a bot could text you ""why"" before every trade it takes, would you actually read it — or do you just want the summary at the end of the day? Building for both, curious about the split.",2026-07-17,12:30,FALSE,twitter,,FALSE
-"Quiet BTC week = quiet bot week.
+"Founders 100 Club update: [N] of 100 seats left.
 
-Trades: few. Refusals: many. Account: intact.
+The deal for the first 100: $0 to start (we eat the $150 setup + your first month), then $99/mo — locked in for life.
 
-The flex is the third line.",2026-07-17,19:30,TRUE,twitter,,FALSE
+Every Founder started in paper mode. Every Founder keeps the price forever.
+
+When it's gone, it's gone: go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-07-17,19:30,TRUE,twitter,,FALSE
 "Founder note, week [n]: [milestone / lesson / fix]. Building this company in public because trust is the entire product in this category. Ask me anything below — including the uncomfortable questions. Especially those.",2026-07-17,13:00,TRUE,facebook,,FALSE
 "Red flag phrases in bot marketing, a thread-less thread:
 
@@ -210,7 +235,13 @@ What honest looks like: published rules, paper mode first, losses posted. Judge 
 Honest answer: 1–5 on a good day. Sometimes zero.
 
 If that number disappoints you, we're not for you — and the bots promising 50/day are not your friend.",2026-07-18,12:30,FALSE,twitter,,FALSE
-"The order book is the only place market participants put money where their mouth is. That's why it's our primary signal — not headlines, not indicators, not vibes.",2026-07-18,19:30,FALSE,twitter,,FALSE
+"We're not selling trades. We're selling the discipline to skip almost all of them — 9 checks before every trade, paper mode first, every decision on your Telegram.
+
+The first 100 people to trust that get in free and stay Founders for life: $0 to start, then $99/mo locked in.
+
+Seats left: [N]/100 → go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-07-18,19:30,TRUE,twitter,,FALSE
 "Three risk settings, plain English:
 
 🛡 Conservative — small stakes (5% of balance), strictest filters, fewest trades.
@@ -236,11 +267,7 @@ The cage is the feature.",2026-07-19,12:30,FALSE,twitter,,FALSE
 "Milestone: [n] customers 🎉
 
 Every single one started in paper mode. Several are still there, watching — and honestly? That's the system working exactly as designed. Go live when YOU'RE convinced, not when we say so.",2026-07-20,08:15,TRUE,twitter,,FALSE
-"Honest question for traders:
-
-What % of your worst losses came from a bad READ vs. bad DISCIPLINE (revenge trade, oversize, boredom)?
-
-Be honest. Mine were 80% discipline.",2026-07-20,12:30,TRUE,twitter,,FALSE
+"[N] of 100 Founders 100 Club seats left. $0 to start (setup + first month waived), then $99/mo locked in for life. go.flippulse.com",2026-07-20,12:30,TRUE,twitter,,FALSE
 "The free doc we probably shouldn't give away: ""The 9 Rules Our Bot Checks Before Risking a Dollar.""
 
 The actual entry doctrine, plain English. Steal it for your own trading, honestly.
@@ -277,12 +304,13 @@ Every single trade comes with its homework attached.",2026-07-22,19:30,TRUE,twit
 More action! More engagement! More dopamine!
 
 And worse expectancy. The doctrine line we wrote on day one still stands: ""If trade frequency drops 80% but expectancy rises, that is success.""",2026-07-23,08:15,FALSE,twitter,,FALSE
-"POV: it's a choppy, sideways Bitcoin day
+"We're not selling trades. We're selling the discipline to skip almost all of them — 9 checks before every trade, paper mode first, every decision on your Telegram.
 
-You: 14 trades, revenge-trading by noon
-The bot: ""RANGING (R²=0.31). Skipping."" ×34
+The first 100 people to trust that get in free and stay Founders for life: $0 to start, then $99/mo locked in.
 
-Same market. Different nervous systems.",2026-07-23,12:30,FALSE,twitter,,FALSE
+Seats left: [N]/100 → go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-07-23,12:30,TRUE,twitter,,FALSE
 "Things that make the bot refuse to trade:
 
 • sideways BTC
@@ -310,14 +338,36 @@ Keep these coming — they write our roadmap.",2026-07-24,12:30,TRUE,twitter,,FA
 "Everyone's a genius in a trend. The doctrine's job is the OTHER 70% of the time.
 
 This week that meant: [n] setups passed all 9 layers, [n] rejected. The rejections are the product.",2026-07-24,19:30,TRUE,twitter,,FALSE
-"Founder note, week [n]: [milestone / lesson / fix]. Building this company in public because trust is the entire product in this category. Ask me anything below — including the uncomfortable questions. Especially those.",2026-07-24,13:00,TRUE,facebook,,FALSE
+"The Founders 100 Club is open.
+
+The first 100 people to join FlipPulse become Founders — for life. Here's what that means:
+
+🎟 $0 to start — we waive the full $150 setup fee AND your first month ($99). Then it's $99/month, cancel anytime.
+🔒 Your $99/mo is locked in for life — Founders are grandfathered against every future price increase.
+🏅 Permanent Founder status + first access to everything we ship next.
+
+FlipPulse is an automated bot for Kalshi's 15-minute Bitcoin Up/Down markets — it runs 9 checks before every trade and does nothing the rest of the time. Every member starts in PAPER mode (simulated money), so you watch it make real decisions before a single real dollar is at stake. Your funds never leave your own Kalshi account.
+
+There are exactly 100 seats. When they're gone, the Club closes and pricing reverts to $150 setup + $99/mo.
+
+👉 Claim a Founder seat: go.flippulse.com
+
+⚠️ FlipPulse is software, not investment advice. Trading involves risk, including loss of principal. Simulated results do not guarantee live results.",2026-07-24,13:00,TRUE,facebook,,FALSE
 """Set and forget"" is marketing. FlipPulse is ""set and VERIFY"" — it runs itself, but every decision lands on your phone. Automation with receipts.",2026-07-25,08:15,FALSE,twitter,,FALSE
 "Hot take: your trading problem isn't information.
 
 It's that at 11:47pm, up 3% and feeling invincible, you take one more trade.
 
 A bot doesn't feel invincible. It checks 9 boxes or it goes back to sleep.",2026-07-25,12:30,FALSE,twitter,,FALSE
-"Two kinds of trading pain: losing money on a good process, and making money on a bad one. The second is more expensive. It just bills you later.",2026-07-25,19:30,FALSE,twitter,,FALSE
+"Founders 100 Club update: [N] of 100 seats left.
+
+The deal for the first 100: $0 to start (we eat the $150 setup + your first month), then $99/mo — locked in for life.
+
+Every Founder started in paper mode. Every Founder keeps the price forever.
+
+When it's gone, it's gone: go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-07-25,19:30,TRUE,twitter,,FALSE
 "Three risk settings, plain English:
 
 🛡 Conservative — small stakes (5% of balance), strictest filters, fewest trades.
@@ -332,7 +382,9 @@ If your current ""automated strategy"" goes quiet for hours, you don't have auto
 
 No % of profits. No AUM fee. No upsell tiers.
 
-We make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.",2026-07-26,12:30,FALSE,twitter,,FALSE
+We make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.
+
+And the first 100 (Founders 100 Club) lock that $99/mo in for life: go.flippulse.com",2026-07-26,12:30,FALSE,twitter,,FALSE
 "Reminder because finance Twitter needs it daily: paper-mode results are practice. Live results involve slippage, fills, and feelings. Anyone who shows you simulated numbers as proof of profit is selling something. (Yes, ours are labeled.)",2026-07-26,19:30,FALSE,twitter,,FALSE
 "Sunday reading: we wrote down every condition under which our bot is forbidden to trade — all 14 — and published the list. Sideways markets. Violent markets. Thin order books. Three losses in a row. The 2am hours. If a strategy's ""never trade"" list is longer than its sales page, that's a good sign. Full doc free: [lead magnet link]",2026-07-26,13:00,TRUE,facebook,,FALSE
 "Why one bot per customer instead of one big multi-tenant system:
@@ -343,9 +395,7 @@ We make the same $99 whether you deploy $500 or $50,000 — which means we have 
 • nobody's bug becomes your bug
 
 Costs us more to run. Worth it.",2026-07-27,08:15,FALSE,twitter,,FALSE
-"Fill in the blank: the hardest part of trading is ______.
-
-(We built a whole product around one specific answer. Curious how many say it.)",2026-07-27,12:30,FALSE,twitter,,FALSE
+"[N] of 100 Founders 100 Club seats left. $0 to start (setup + first month waived), then $99/mo locked in for life. go.flippulse.com",2026-07-27,12:30,TRUE,twitter,,FALSE
 "How FlipPulse starts, every time:
 
 1. Sign up (5 min) — go.flippulse.com
@@ -354,7 +404,7 @@ Costs us more to run. Worth it.",2026-07-27,08:15,FALSE,twitter,,FALSE
 4. You watch it decide, live
 5. Go live only if/when you choose
 
-$99 setup + $99/mo. Cancel anytime. Risk disclosure on site.",2026-07-27,19:30,FALSE,twitter,,FALSE
+Founders 100 Club: the first 100 pay $0 to start (setup + first month waived), then $99/mo locked in for life. Cancel anytime. Risk disclosure on site.",2026-07-27,19:30,FALSE,twitter,,FALSE
 "What the $99/month actually pays for: your own isolated bot deployment, your own Telegram alert bot, state that survives restarts, monitoring and heartbeats, and a human being who watches the fleet daily. The strategy is public — the reliability engineering is the product. [link]",2026-07-27,13:00,FALSE,facebook,,FALSE
 "What ""smart sizing"" actually means here:
 
@@ -370,7 +420,9 @@ No martingale. No doubling down. Ever.",2026-07-28,08:15,FALSE,twitter,,FALSE
 
 No % of profits. No AUM fee. No upsell tiers.
 
-We make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.",2026-07-28,19:30,FALSE,twitter,,FALSE
+We make the same $99 whether you deploy $500 or $50,000 — which means we have zero incentive to push you to oversize. Fee structure is risk management.
+
+And the first 100 (Founders 100 Club) lock that $99/mo in for life: go.flippulse.com",2026-07-28,19:30,FALSE,twitter,,FALSE
 """Where does my money actually sit?"" — the best question we get.
 
 Answer: in YOUR Kalshi account, a CFTC-regulated US exchange. FlipPulse never holds a dollar. The bot trades through your own API key, which can place trades but cannot withdraw funds. We charge a flat software fee — $99/month — and that's the entire business model. [link] ⚠️ Trading involves risk.",2026-07-28,13:00,FALSE,facebook,,FALSE
@@ -384,7 +436,18 @@ Most common refusal: [reason]
 Full unedited feed: t.me/flippulse
 
 (Paper mode. Not advice. Risk disclosure in bio.)",2026-07-29,08:15,TRUE,twitter,,FALSE
-What would it take for you to trust an automated strategy? Serious question — building the answer is literally my job. Wrong answers also welcome.,2026-07-29,12:30,FALSE,twitter,,FALSE
+"The Founders 100 Club is open — and it closes at 100.
+
+The first 100 members join FlipPulse free: $150 setup + first month waived. $0 today, then $99/mo, cancel anytime.
+
+Founders lock in that $99/mo for life + first access to everything we build.
+
+Starts in paper mode, so you watch it work before a real dollar moves.
+
+100 seats. Then the Club closes.
+👉 go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-07-29,12:30,TRUE,twitter,,FALSE
 "It took a loss this morning.
 
 Here's what happened next, automatically:
@@ -432,8 +495,16 @@ Ours sleeps on purpose, 5 hours a day, because the books are garbage after US cl
 Balanced: 10% stakes, doctrine defaults
 Aggressive: 20% stakes, more setups, higher variance
 
-Three postures, one switch, chosen by you at signup. All start in paper mode. go.flippulse.com",2026-08-01,12:30,FALSE,twitter,,FALSE
-A limit order 1¢ inside the spread is the bot equivalent of never paying retail.,2026-08-01,19:30,FALSE,twitter,,FALSE
+Three postures, one switch, chosen by you at signup. All start in paper mode — and the first 100 join free via the Founders 100 Club ($0 to start, then $99/mo for life). go.flippulse.com",2026-08-01,12:30,FALSE,twitter,,FALSE
+"Founders 100 Club update: [N] of 100 seats left.
+
+The deal for the first 100: $0 to start (we eat the $150 setup + your first month), then $99/mo — locked in for life.
+
+Every Founder started in paper mode. Every Founder keeps the price forever.
+
+When it's gone, it's gone: go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-08-01,19:30,TRUE,twitter,,FALSE
 "Poll for the traders here: what's cost you more over the years — bad analysis, or bad discipline (the revenge trade, the oversized position, the 1am ""one more"")? Honest answers only. Our bet when we built FlipPulse was that for most people it's discipline. 🗳",2026-08-01,13:00,TRUE,facebook,,FALSE
 "Binary market math in one tweet:
 
@@ -444,5 +515,11 @@ Edge isn't ""being right."" It's being right MORE OFTEN than the price implies. 
 "Paper mode isn't a demo. It's the full bot — same signals, same sizing, same alerts — with simulated money.
 
 Watch it for a week. Watch it for a month. Go live only when you've seen enough. Or don't go live at all.",2026-08-02,12:30,FALSE,twitter,,FALSE
-"The order book is the only place market participants put money where their mouth is. That's why it's our primary signal — not headlines, not indicators, not vibes.",2026-08-02,19:30,FALSE,twitter,,FALSE
+"We're not selling trades. We're selling the discipline to skip almost all of them — 9 checks before every trade, paper mode first, every decision on your Telegram.
+
+The first 100 people to trust that get in free and stay Founders for life: $0 to start, then $99/mo locked in.
+
+Seats left: [N]/100 → go.flippulse.com
+
+⚠️ Not financial advice. Trading involves risk of loss.",2026-08-02,19:30,TRUE,twitter,,FALSE
 "Sunday reading: we wrote down every condition under which our bot is forbidden to trade — all 14 — and published the list. Sideways markets. Violent markets. Thin order books. Three losses in a row. The 2am hours. If a strategy's ""never trade"" list is longer than its sales page, that's a good sign. Full doc free: [lead magnet link]",2026-08-02,13:00,TRUE,facebook,,FALSE

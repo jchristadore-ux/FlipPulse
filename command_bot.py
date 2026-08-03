@@ -4,8 +4,8 @@ The customer's own bot already *sends* alerts (telegram_utils.py). This module
 lets that same bot *answer* commands so the customer (and the operator) can check
 on it — and retune their own risk — from Telegram without any dashboard:
 
-  /status      — current mode (paper/live), balance, PnL, open positions /
-                 ladder state, session state, and the last tick time.
+  /status      — current mode (paper/live), balance, PnL, progress toward the
+                 daily profit goal, open positions, session state, last tick.
   /health-log  — tail of the recent health/activity log.
   /risk        — show the current full-size risk %, or `/risk <percent>` to set it
                  (e.g. `/risk 8`); `/risk reset` restores the configured default.
@@ -34,7 +34,6 @@ import json
 import logging
 import os
 import threading
-import time
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from typing import List, Optional
@@ -53,6 +52,10 @@ RISK_OVERRIDE_PATH   = os.environ.get("RISK_OVERRIDE_PATH", "").strip() or "/dat
 # Where /live and /paper write the desired mode for the engine to restart into.
 # Must match bot.py's MODE_OVERRIDE_PATH.
 MODE_OVERRIDE_PATH   = os.environ.get("MODE_OVERRIDE_PATH", "").strip() or "/data/mode_override.json"
+# Where /recoverynostakechange writes the toggle for the engine to read back.
+# Must match bot.py's RECOVERY_NSC_OVERRIDE_PATH (same default, same /data volume).
+RECOVERY_NSC_OVERRIDE_PATH = os.environ.get("RECOVERY_NSC_OVERRIDE_PATH", "").strip() \
+    or "/data/recovery_nsc_override.json"
 
 
 def _env_pct(name: str, default_frac: float) -> float:
@@ -70,13 +73,23 @@ RISK_MIN_PCT_FALLBACK = _env_pct("RISK_MIN_TRADE_PCT", 0.01)
 RISK_MAX_PCT_FALLBACK = _env_pct("MAX_TRADE_PCT", 0.15)
 
 HELP = (
-    "FlipPulse commands:\n"
-    "/status — mode, balance, PnL, open positions / ladder state, last tick\n"
-    "/health-log [n] — last n lines of the health/activity log (default 20)\n"
-    "/risk — show your current risk %; /risk <percent> to change it "
-    "(e.g. /risk 8), /risk reset for the default\n"
-    "/mode — show paper/live mode; /live confirm to go LIVE (real money), "
-    "/paper to go back to paper\n"
+    "📖 FlipPulse commands\n"
+    "\n"
+    "📊 Check performance\n"
+    "/status — mode, balance, P&L, win rate, positions, recovery state\n"
+    "/winrate [day|week] — win rate today, this week, or all-time (default: all three)\n"
+    "/pnl [day|week] — profit/loss today, this week, or all-time (default: all three)\n"
+    "/balance — current balance + P&L at a glance\n"
+    "/health-log [n] — last n lines of the activity log (default 20)\n"
+    "\n"
+    "🎚 Tune your bot\n"
+    "/risk [percent] — show or set your full-size stake %, e.g. /risk 8; /risk reset for the default\n"
+    "/recoverynostakechange on|off — keep the stake unchanged during recovery mode "
+    "(on = don't shrink the stake while clawing back); no arg shows the current setting\n"
+    "\n"
+    "🔴 Live / paper\n"
+    "/mode — show paper/live mode; /live confirm to go LIVE (real money), /paper to go back\n"
+    "\n"
     "/help — this message"
 )
 
@@ -111,12 +124,14 @@ class CommandHandler:
                  snapshot_path: str = STATUS_SNAPSHOT_PATH,
                  health_log_path: str = HEALTH_LOG_PATH,
                  risk_override_path: str = RISK_OVERRIDE_PATH,
-                 mode_override_path: str = MODE_OVERRIDE_PATH) -> None:
+                 mode_override_path: str = MODE_OVERRIDE_PATH,
+                 nsc_override_path: str = RECOVERY_NSC_OVERRIDE_PATH) -> None:
         self.authorized = {str(c) for c in authorized_chats}
         self.snapshot_path = snapshot_path
         self.health_log_path = health_log_path
         self.risk_override_path = risk_override_path
         self.mode_override_path = mode_override_path
+        self.nsc_override_path = nsc_override_path
 
     def handle(self, chat_id, text: str) -> Optional[str]:
         chat_id = str(chat_id)
@@ -126,11 +141,15 @@ class CommandHandler:
         if not text.startswith("/"):
             return None
         parts = text.split()
-        # tolerate "/status@mybot" and "/health-log"/"/health_log"
-        cmd = parts[0].lower().lstrip("/").split("@")[0].replace("_", "-")
+        # tolerate "/status@mybot", "/health-log"/"/health_log", and a stray
+        # trailing "%" (so "/winrate%" — as the customer guide writes it — works).
+        cmd = parts[0].lower().lstrip("/").split("@")[0].replace("_", "-").rstrip("%")
+        # a separator-insensitive form so "/RecoveryModeNoStakeChange",
+        # "/recovery-no-stake-change" and "/rnsc" all route the same way.
+        compact = cmd.replace("-", "")
         args = parts[1:]
 
-        if cmd in ("help", "start"):
+        if cmd in ("help", "start", "commands"):
             return HELP
         if cmd == "status":
             return self._do_status()
@@ -138,6 +157,15 @@ class CommandHandler:
             return self._do_health_log(args)
         if cmd == "risk":
             return self._do_risk(args, chat_id)
+        if compact in ("winrate", "wr"):
+            return self._do_winrate(args)
+        if compact in ("pnl", "pandl", "profit", "pl"):
+            return self._do_pnl(args)
+        if compact in ("balance", "bal"):
+            return self._do_pnl([])   # balance headline + P&L at a glance
+        if compact in ("recoverynostakechange", "recoverymodenostakechange",
+                       "rnsc", "nostakechange"):
+            return self._do_recovery_nsc(args, chat_id)
         if cmd in ("mode", "live", "paper"):
             return self._do_mode(cmd, args, chat_id)
         return f"Unknown command.\n{HELP}"
@@ -169,7 +197,14 @@ class CommandHandler:
             if isinstance(bal, (int, float)) and isinstance(pnl, (int, float))
             else f"Balance: {bal}  │  PnL: {pnl}",
         ]
-        if total:
+        # Prefer the PERSISTENT all-time record (survives redeploys); fall back to
+        # the session tally only before any lifetime data exists.
+        lt_w = snap.get("lifetime_wins", 0) or 0
+        lt_l = snap.get("lifetime_losses", 0) or 0
+        if lt_w + lt_l:
+            lwr = snap.get("lifetime_win_rate", 0) or 0
+            lines.append(f"Record (all-time): {lt_w}W/{lt_l}L ({lwr:.0f}%)")
+        elif total:
             wr = snap.get("win_rate", 0)
             lines.append(f"Record: {wins}W/{losses}L ({wr:.0f}%)")
         size_str = ""
@@ -179,7 +214,31 @@ class CommandHandler:
                 size_str += f" (~${size:,.2f})"
         elif isinstance(size, (int, float)):
             size_str = f" · size ${size:,.2f}"
-        lines.append(f"Ladder/mode: {active_mode}{size_str}")
+        lines.append(f"Sizing mode: {active_mode}{size_str}")
+        # Daily profit target: the day's goal and how far along it is. The stake
+        # no longer ladders, so this is the number that actually paces the day.
+        if snap.get("daily_target_enabled"):
+            goal = snap.get("daily_target_dollars")
+            prog = snap.get("daily_target_progress")
+            tpct = snap.get("daily_target_pct", 3.0)
+            if isinstance(goal, (int, float)) and isinstance(prog, (int, float)):
+                done = "✅ reached — stopped for today" if prog >= goal > 0 else ""
+                lines.append(f"Daily goal: ${prog:+,.2f} / ${goal:,.2f} "
+                             f"(+{tpct:.1f}% of the day's open) {done}".rstrip())
+        # Recovery Mode "No Stake Change" toggle + recovery-scoped win rate.
+        if snap.get("recovery_no_stake_change"):
+            lines.append("Recovery: No-Stake-Change ON (stake held while clawing back)")
+        if active_mode == "recovery":
+            tgt = snap.get("recovery_target")
+            if isinstance(tgt, (int, float)) and tgt > 0:
+                lines.append(f"Recovery target: ${tgt:,.2f} (balance to claw back to)")
+            rw = snap.get("recovery_wins", 0) or 0
+            rl = snap.get("recovery_losses", 0) or 0
+            if rw + rl:
+                rr  = snap.get("recovery_win_rate", 0)
+                thr = snap.get("recovery_winrate_restore_pct", 70)
+                lines.append(f"Recovery WR: {rr:.0f}% ({rw}W/{rl}L) — "
+                             f"auto-restore full stake at {thr:.0f}%")
         norm = snap.get("normal_trade_pct")
         if isinstance(norm, (int, float)):
             lines.append(f"Risk (full-size): {norm:.1f}% — change with /risk")
@@ -189,7 +248,10 @@ class CommandHandler:
         lines.append(f"Open positions: {open_str}")
         sess = snap.get("session_state", "?")
         if snap.get("halted"):
-            sess += " · HALTED ⛔"
+            # A banked profit target is not an emergency — say which halt it is.
+            sess += (" · DAILY GOAL HIT 🎯 (resumes next trading day)"
+                     if snap.get("halt_reason") == "profit_target"
+                     else " · HALTED ⛔")
         lines.append(f"Session: {sess}")
         lines.append(f"Last signal: {snap.get('last_signal', '—')}")
         lines.append(f"Last tick: {self._fmt_age(snap.get('updated_at'))}")
@@ -201,6 +263,147 @@ class CommandHandler:
                 return json.load(f)
         except (FileNotFoundError, ValueError, OSError):
             return None
+
+    def _no_snapshot_msg(self) -> str:
+        return ("No data yet — the bot writes a status snapshot each cycle once "
+                "it's booted. Give it a minute after deploy, then try again.")
+
+    @staticmethod
+    def _wl(snap: dict, suffix: str) -> tuple:
+        """(wins, losses) for a window suffix ('_today'/'_week'/'') from the snapshot."""
+        w = snap.get(f"wins{suffix}", 0) or 0
+        l = snap.get(f"losses{suffix}", 0) or 0
+        return int(w), int(l)
+
+    @staticmethod
+    def _lifetime_wl(snap: dict) -> tuple:
+        """(wins, losses) from the PERSISTENT all-time tally (survives redeploys)."""
+        return (int(snap.get("lifetime_wins", 0) or 0),
+                int(snap.get("lifetime_losses", 0) or 0))
+
+    # ── /winrate [day|week] ──────────────────────────────────────────────────────
+    def _do_winrate(self, args) -> str:
+        snap = self._read_snapshot()
+        if snap is None:
+            return self._no_snapshot_msg()
+        window = (args[0].strip().lower() if args else "")
+
+        def line(label: str, suffix: str, rate_key: str) -> str:
+            w, l = self._wl(snap, suffix)
+            n = w + l
+            if not n:
+                return f"{label}: no settled trades yet"
+            rate = snap.get(rate_key, 0) or 0
+            return f"{label}: {rate:.0f}% ({w}W/{l}L)"
+
+        def all_time() -> str:
+            w, l = self._lifetime_wl(snap)
+            if not (w + l):
+                return "All-time: no settled trades yet"
+            rate = snap.get("lifetime_win_rate", 0) or 0
+            return f"All-time: {rate:.0f}% ({w}W/{l}L)"
+
+        if window in ("day", "today", "d"):
+            return "🎯 Win rate — " + line("Today", "_today", "win_rate_today")
+        if window in ("week", "w", "7d"):
+            return "🎯 Win rate — " + line("This week", "_week", "win_rate_week")
+        if window in ("all", "session", "total", "alltime", "all-time", "lifetime"):
+            return "🎯 Win rate — " + all_time()
+        # No/unknown arg → show all three.
+        return (
+            "🎯 Win rate\n"
+            + line("Today", "_today", "win_rate_today") + "\n"
+            + line("This week", "_week", "win_rate_week") + "\n"
+            + all_time()
+            + "\n(Use /winrate day or /winrate week for one window.)"
+        )
+
+    # ── /pnl [day|week] ──────────────────────────────────────────────────────────
+    def _do_pnl(self, args) -> str:
+        snap = self._read_snapshot()
+        if snap is None:
+            return self._no_snapshot_msg()
+        window = (args[0].strip().lower() if args else "")
+
+        def line(label: str, pnl_key: str, suffix: str) -> str:
+            val = snap.get(pnl_key)
+            w, l = self._wl(snap, suffix)
+            if not isinstance(val, (int, float)):
+                return f"{label}: —"
+            return f"{label}: ${val:+,.2f} ({w}W/{l}L)"
+
+        def all_time() -> str:
+            val = snap.get("lifetime_pnl")
+            w, l = self._lifetime_wl(snap)
+            if not isinstance(val, (int, float)):
+                return "All-time: —"
+            return f"All-time: ${val:+,.2f} ({w}W/{l}L)"
+
+        if window in ("day", "today", "d"):
+            return "💵 P&L — " + line("Today", "pnl_today", "_today")
+        if window in ("week", "w", "7d"):
+            return "💵 P&L — " + line("This week", "pnl_week", "_week")
+        if window in ("all", "session", "total", "alltime", "all-time", "lifetime"):
+            return "💵 P&L — " + all_time()
+        bal = snap.get("balance")
+        head = f"🏦 Balance: ${bal:,.2f}\n" if isinstance(bal, (int, float)) else ""
+        return (
+            "💵 P&L\n" + head
+            + line("Today", "pnl_today", "_today") + "\n"
+            + line("This week", "pnl_week", "_week") + "\n"
+            + all_time()
+            + "\n(Use /pnl day or /pnl week for one window.)"
+        )
+
+    # ── /recoverynostakechange on|off ────────────────────────────────────────────
+    def _do_recovery_nsc(self, args, chat_id: str) -> str:
+        snap = self._read_snapshot() or {}
+        cur = snap.get("recovery_no_stake_change")
+        arg = (args[0].strip().lower() if args else "")
+        if not arg:
+            state = ("ON" if cur else "OFF") if isinstance(cur, bool) else "unknown (bot still booting)"
+            return (
+                f"🛟 Recovery Mode — No Stake Change: {state}\n"
+                "When ON, recovery still triggers and tracks the claw-back, but keeps "
+                "your stake at the full size — no stake reduction, no jump-back "
+                "on exit.\n"
+                "Turn it on with `/recoverynostakechange on`, off with "
+                "`/recoverynostakechange off`."
+            )
+        if arg in ("on", "true", "yes", "1", "enable", "enabled"):
+            enabled = True
+        elif arg in ("off", "false", "no", "0", "disable", "disabled"):
+            enabled = False
+        else:
+            return ("Say `/recoverynostakechange on` or `/recoverynostakechange off`.")
+        if not self._write_nsc_override(enabled, chat_id):
+            return ("Couldn't save the setting (storage unavailable). No change was "
+                    "made — please try again.")
+        if enabled:
+            return ("✅ Recovery Mode → No Stake Change is now ON.\n"
+                    "During recovery the bot keeps your full stake — takes effect "
+                    "immediately, even mid-recovery.")
+        return ("✅ Recovery Mode → No Stake Change is now OFF.\n"
+                "Recovery will use the standard reduced stake while clawing back. "
+                "Takes effect immediately.")
+
+    def _write_nsc_override(self, enabled: bool, chat_id: str) -> bool:
+        """Atomically persist the toggle for the engine to read back (mirror of the
+        /risk and /mode override writes)."""
+        payload = {"enabled": bool(enabled), "set_by": str(chat_id),
+                   "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        try:
+            parent = os.path.dirname(self.nsc_override_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp = self.nsc_override_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(payload, f)
+            os.replace(tmp, self.nsc_override_path)
+            return True
+        except OSError as exc:
+            log.warning("Failed to write NSC override (%s).", exc)
+            return False
 
     # ── /risk ────────────────────────────────────────────────────────────────────
     def _risk_bounds(self, snap: Optional[dict]) -> tuple:
@@ -408,10 +611,12 @@ class TelegramListener:
     def _send(self, chat_id, text: str) -> None:
         self._api("sendMessage", {"chat_id": chat_id, "text": text})
 
-    def poll_once(self) -> None:
+    def poll_once(self) -> bool:
+        """One getUpdates long-poll cycle. Returns False when the call itself
+        failed (network error or a non-ok response) so the caller can back off."""
         data = self._api("getUpdates", {"offset": self._offset, "timeout": 50})
         if not data or not data.get("ok"):
-            return
+            return False
         for upd in data.get("result", []):
             self._offset = upd["update_id"] + 1
             msg = upd.get("message") or upd.get("edited_message") or {}
@@ -425,15 +630,21 @@ class TelegramListener:
                 reply = f"Error: {exc}"
             if reply:
                 self._send(chat, reply)
+        return True
 
     def _run(self) -> None:
         log.info("Telegram command listener started (/status, /health-log).")
         while not self._stop.is_set():
             try:
-                self.poll_once()
+                if not self.poll_once():
+                    # getUpdates failed — a network blip, or HTTP 409 while a
+                    # second instance holds the long poll during a redeploy
+                    # overlap. Without this pause the thread busy-loops and
+                    # hammers Telegram; _stop.wait keeps stop() responsive.
+                    self._stop.wait(5)
             except Exception as exc:  # pragma: no cover
                 log.debug("listener cycle error: %s", exc)
-                time.sleep(5)
+                self._stop.wait(5)
 
     def start(self) -> "TelegramListener":
         if self._thread and self._thread.is_alive():

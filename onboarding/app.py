@@ -74,6 +74,31 @@ STRIPE_MONTHLY_PRICE= os.environ.get("STRIPE_MONTHLY_PRICE_ID", "").strip()
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
 PUBLIC_BASE_URL     = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
 
+# Founding-customer offer (e.g. the "Founder 100" $249-off-first-invoice coupon).
+# Two mutually-exclusive delivery modes — Stripe rejects a session that uses both:
+#   • FOUNDING_COUPON_ID set  → the coupon is auto-applied to every signup (no code
+#     to type). If the coupon is exhausted/expired/invalid, checkout retries once
+#     WITHOUT it so signups never break — the offer just quietly ends.
+#   • else STRIPE_ALLOW_PROMO_CODES truthy → the Checkout page shows an "Add
+#     promotion code" box so customers can enter a code (e.g. FOUNDER100).
+# Leave both unset for full-price checkout.
+FOUNDING_COUPON_ID      = os.environ.get("FOUNDING_COUPON_ID", "").strip()
+STRIPE_ALLOW_PROMO_CODES = os.environ.get("STRIPE_ALLOW_PROMO_CODES", "").strip().lower() in ("1", "true", "yes")
+
+# Whether to show the "Founders 100 Club" launch banner on the signup form. It's
+# on whenever a founding-offer delivery mode is configured (auto-coupon or a
+# promo-code box), so the marketing promise ("first 100 join free") matches what
+# checkout will actually apply. When the coupon is exhausted the operator unsets
+# FOUNDING_COUPON_ID (or sets FOUNDER_OFFER_ACTIVE=false) and the banner drops —
+# see 11_COMPLIANCE_KIT.md §7: never advertise a closed offer.
+_founder_env = os.environ.get("FOUNDER_OFFER_ACTIVE", "").strip().lower()
+if _founder_env in ("1", "true", "yes"):
+    FOUNDER_OFFER_ACTIVE = True
+elif _founder_env in ("0", "false", "no"):
+    FOUNDER_OFFER_ACTIVE = False
+else:
+    FOUNDER_OFFER_ACTIVE = bool(FOUNDING_COUPON_ID or STRIPE_ALLOW_PROMO_CODES)
+
 # The webhook secret is REQUIRED whenever Stripe is live: without it the
 # checkout.session.completed webhook cannot be verified, so paid customers are
 # never marked paid and auto-provisioning never fires — silently. Fail loudly
@@ -91,12 +116,22 @@ if STRIPE_SECRET_KEY and not STRIPE_WEBHOOK_SECRET:
 AUTO_PROVISION = os.environ.get("AUTO_PROVISION", "true").strip().lower() in ("1", "true", "yes")
 
 # Display-only pricing (kept in sync with the docs / Stripe prices).
-PRICE_SETUP   = os.environ.get("ONBOARDING_PRICE_SETUP", "99")
+PRICE_SETUP   = os.environ.get("ONBOARDING_PRICE_SETUP", "150")
 PRICE_MONTHLY = os.environ.get("ONBOARDING_PRICE_MONTHLY", "99")
 PERF_PCT      = os.environ.get("ONBOARDING_PERF_PCT", "0")   # placeholder — fee not shown/charged
 
 VALID_FORMATS = ("conservative", "balanced", "aggressive")
 SECRET_FIELDS = ("kalshi_api_key_id", "kalshi_private_key_pem", "telegram_bot_token")
+
+# Consent checkboxes on the signup form — each must be individually checked so
+# the customer's acceptance of the risk disclosure, the software-only/no-advice
+# terms, eligibility, and the full agreement is recorded separately rather than
+# lumped into one box. Keep in sync with the checkboxes in templates/form.html.
+CONSENT_FIELDS = ("ack_risk", "ack_software", "ack_eligibility", "agree")
+
+# Bump when the Risk Disclosure & Agreement text in form.html changes materially,
+# so each stored submission is provably tied to the terms version accepted.
+TERMS_VERSION = "2026-07-09"
 
 # Boot reconciliation: the provisioning queue is in-memory, so a restart between
 # Stripe's webhook (already acknowledged with a 200 — Stripe won't retry) and
@@ -241,8 +276,10 @@ def _validate_telegram_setup(token: str, chat_id: str) -> "str | None":
 
 
 def _slug(text: str) -> str:
+    # Lowercase alnum + dashes, capped so it stays a valid Railway project name
+    # (used as "flippulse-<handle>" and "<handle>-bot").
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
-    return s or "customer"
+    return (s[:40].strip("-") or "customer")
 
 
 def _send_operator_message(text: str) -> None:
@@ -297,6 +334,55 @@ def _submit_rate_limited(ip: str) -> bool:
     return False
 
 
+# Stripe ids resolved from a product to its default price are cached so we don't
+# re-hit the API on every signup. Keyed by the configured prod_… id.
+_price_id_cache: "dict[str, str]" = {}
+
+
+def _stripe_get(obj, key):
+    """Read a field from a Stripe API object *or* a plain dict.
+
+    stripe-python ≥ 8 (we run v15) returns `StripeObject` instances that — unlike
+    older releases — no longer subclass `dict`, so `obj.get("…")` raises
+    `AttributeError: 'Product' object has no attribute 'get'` (str(e) == "get").
+    That crashed real signups even though the unit tests (which mock `retrieve`
+    to return a plain dict) stayed green. Attribute access works on a StripeObject
+    and the isinstance(dict) branch keeps plain dicts working too."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _resolve_price_id(configured: str) -> str:
+    """Return a usable Stripe **Price** id for a configured value.
+
+    The Stripe dashboard shows a product's `prod_…` id far more prominently than
+    its `price_…` id, so operators routinely paste the product id into
+    STRIPE_MONTHLY_PRICE_ID / STRIPE_SETUP_PRICE_ID — which Checkout rejects with
+    "No such price: 'prod_…'". Rather than fail the signup, if we're handed a
+    product id we look up that product's default price and use it. A real price
+    id (or anything else) is returned unchanged."""
+    pid = (configured or "").strip()
+    if not pid.startswith("prod_"):
+        return pid                               # already a price id (or empty)
+    if pid in _price_id_cache:
+        return _price_id_cache[pid]
+    import stripe
+    product = stripe.Product.retrieve(pid)
+    default_price = _stripe_get(product, "default_price")
+    price_id = default_price if isinstance(default_price, str) else _stripe_get(default_price, "id")
+    if not price_id:
+        raise RuntimeError(
+            f"Stripe product {pid} has no default price — set a default price on "
+            f"the product, or configure a price id (price_…) instead of the "
+            f"product id.")
+    _price_id_cache[pid] = price_id
+    log.info("Resolved Stripe product %s → default price %s.", pid, price_id)
+    return price_id
+
+
 def _start_stripe_checkout(sub: dict):
     """Create a Stripe Checkout session (setup fee + monthly subscription, card on
     file). Returns the redirect URL, or None if Stripe is not configured."""
@@ -304,11 +390,11 @@ def _start_stripe_checkout(sub: dict):
         return None
     import stripe
     stripe.api_key = STRIPE_SECRET_KEY
-    line_items = [{"price": STRIPE_MONTHLY_PRICE, "quantity": 1}]
+    line_items = [{"price": _resolve_price_id(STRIPE_MONTHLY_PRICE), "quantity": 1}]
     if STRIPE_SETUP_PRICE:                      # one-time setup fee on the first invoice
-        line_items.append({"price": STRIPE_SETUP_PRICE, "quantity": 1})
+        line_items.append({"price": _resolve_price_id(STRIPE_SETUP_PRICE), "quantity": 1})
     base = PUBLIC_BASE_URL or request.host_url.rstrip("/")
-    session = stripe.checkout.Session.create(
+    params = dict(
         mode="subscription",
         line_items=line_items,
         customer_email=sub["email"],
@@ -319,6 +405,25 @@ def _start_stripe_checkout(sub: dict):
         success_url=f"{base}{url_for('success')}?sid={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{base}{url_for('cancelled')}?submission={sub['id']}",
     )
+    # Founding offer: auto-apply the coupon, OR (mutually exclusive) let the
+    # customer type a promotion code. Never both — Stripe rejects that combo.
+    if FOUNDING_COUPON_ID:
+        params["discounts"] = [{"coupon": FOUNDING_COUPON_ID}]
+    elif STRIPE_ALLOW_PROMO_CODES:
+        params["allow_promotion_codes"] = True
+
+    try:
+        session = stripe.checkout.Session.create(**params)
+    except stripe.error.StripeError as e:
+        # The founding coupon is exhausted/expired/invalid — don't break signup.
+        # Retry once at full price so the customer can still check out; the
+        # limited-time offer has simply run its course.
+        if FOUNDING_COUPON_ID and params.pop("discounts", None) is not None:
+            log.warning("Founding coupon %s rejected (%s) — retrying checkout at "
+                        "full price", FOUNDING_COUPON_ID, e)
+            session = stripe.checkout.Session.create(**params)
+        else:
+            raise
     return session.url
 
 
@@ -326,7 +431,8 @@ def _start_stripe_checkout(sub: dict):
 def form():
     return render_template("form.html", formats=VALID_FORMATS,
                            price_setup=PRICE_SETUP, price_monthly=PRICE_MONTHLY,
-                           perf_pct=PERF_PCT, error=request.args.get("error"))
+                           perf_pct=PERF_PCT, error=request.args.get("error"),
+                           founder_offer=FOUNDER_OFFER_ACTIVE)
 
 
 @app.post("/submit")
@@ -345,8 +451,13 @@ def submit():
         return redirect(url_for("form", error="Please complete: " + ", ".join(missing)))
     if f.get("trading_format") not in VALID_FORMATS:
         return redirect(url_for("form", error="Pick a trading format."))
-    if not f.get("agree"):
-        return redirect(url_for("form", error="Please accept the terms to continue."))
+    # Every consent box is separately required so acceptance of the risk
+    # disclosure, the software-only/no-advice terms, eligibility, and the full
+    # agreement is individually recorded — not a single lumped "agree".
+    if not all(f.get(c) for c in CONSENT_FIELDS):
+        return redirect(url_for("form", error=(
+            "Please read the Risk Disclosure & Agreement and check each "
+            "acknowledgment box to continue.")))
     try:
         balance = float(str(f.get("starting_balance")).replace(",", "").replace("$", ""))
         if balance <= 0:
@@ -373,7 +484,10 @@ def submit():
             error="Onboarding is temporarily unavailable — please contact us."))
 
     now = datetime.now(timezone.utc)
-    handle = _slug(f.get("full_name"))
+    # The customer may choose their own handle (names their bot + dashboard as
+    # "flippulse-<handle>"); it's slugified for safety and falls back to their
+    # name when left blank.
+    handle = _slug(f.get("handle")) if (f.get("handle") or "").strip() else _slug(f.get("full_name"))
     sub_id = f"{now.strftime('%Y%m%d-%H%M%S')}_{handle}_{uuid.uuid4().hex[:6]}"
     submission = {
         "id": sub_id,
@@ -385,6 +499,14 @@ def submit():
         "starting_balance": round(balance, 2),
         "telegram_chat_id": f.get("telegram_chat_id").strip(),
         "payment_status": "pending",
+        # Proof of consent: which terms version was accepted, when, from where.
+        "consent": {
+            "accepted": list(CONSENT_FIELDS),
+            "terms_version": TERMS_VERSION,
+            "accepted_at": now.isoformat(),
+            "ip": request.remote_addr or "",
+            "user_agent": request.headers.get("User-Agent", "")[:300],
+        },
         # secrets — encrypted at rest, decryptable only with ONBOARDING_FERNET_KEY
         "secrets_encrypted": {
             "kalshi_api_key_id": _encrypt(f.get("kalshi_api_key_id").strip()),
@@ -414,7 +536,9 @@ def submit():
             f"Customer: {submission['full_name']} <{submission['email']}>\n"
             f"Submission: {sub_id} (saved, payment_status=pending)\n"
             f"Error: {type(e).__name__}: {e}\n"
-            "Action: send them a payment link / invoice manually.")
+            "Action: send them a payment link / invoice manually.\n"
+            "To provision the bot now anyway (skips the paid gate):\n"
+            f"  python admin_cli.py provision {sub_id}")
         return redirect(url_for("success", pay="pending"))
     if checkout_url:
         return redirect(checkout_url, code=303)
@@ -455,13 +579,17 @@ def stripe_webhook():
         log.warning("Bad Stripe webhook: %s", e)
         return ("", 400)
     if event["type"] == "checkout.session.completed":
-        sid = event["data"]["object"].get("client_reference_id")
+        # event["data"]["object"] is a StripeObject, not a dict — .get() raises
+        # AttributeError on stripe ≥ 8 (see _stripe_get), which 500'd every real
+        # completed checkout and left paid customers stuck on payment_status=pending.
+        session = event["data"]["object"]
+        sid = _stripe_get(session, "client_reference_id")
         p = SUBMISSIONS_DIR / f"{sid}.json"
         if sid and p.exists():
             d = json.loads(p.read_text())
             d["payment_status"] = "paid"
-            d["stripe_customer"] = event["data"]["object"].get("customer")
-            d["stripe_subscription"] = event["data"]["object"].get("subscription")
+            d["stripe_customer"] = _stripe_get(session, "customer")
+            d["stripe_subscription"] = _stripe_get(session, "subscription")
             p.write_text(json.dumps(d, indent=2))
             log.info("Submission %s marked paid.", sid)
             # Payment confirmed → provision the customer's Railway bot with no
@@ -533,6 +661,10 @@ def admin_provision(sub_id: str):
     if not provisioner.is_configured():
         return redirect(url_for("admin_detail", sub_id=sub_id))
     if (sub.get("provisioning") or {}).get("status") != "in_progress":
+        # Mark it in_progress on disk before enqueuing so the redirect below
+        # immediately shows "⏳ deploying" instead of racing the worker's first
+        # checkpoint and looking like the button did nothing.
+        provisioner.mark_queued(sub_id)
         provisioner.enqueue(sub_id, require_paid=False)
     return redirect(url_for("admin_detail", sub_id=sub_id))
 

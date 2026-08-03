@@ -119,6 +119,44 @@ def test_disabled_gate_blocks_sends(monkeypatch):
     assert tg.send_telegram_message("nope") is False
 
 
+# ── minimal-alerts mode (Task 4) ──────────────────────────────────────────────
+def test_minimal_alerts_defaults_on(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_MINIMAL_ALERTS", raising=False)
+    assert tg.minimal_alerts() is True
+
+
+def test_minimal_alerts_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_MINIMAL_ALERTS", "false")
+    assert tg.minimal_alerts() is False
+
+
+def test_status_message_suppressed_in_minimal_mode(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_MINIMAL_ALERTS", raising=False)   # default → quiet
+    tg._telegram_enabled = True
+    monkeypatch.setattr(tg, "_send_raw", lambda *_: pytest.fail("status msg must be suppressed"))
+    assert tg.send_status_message("🤖 boot summary") is False
+
+
+def test_status_message_delivered_when_not_minimal(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_MINIMAL_ALERTS", "false")
+    tg._telegram_enabled = True
+    sent = []
+    monkeypatch.setattr(tg, "_send_raw", lambda text: sent.append(text) or True)
+    assert tg.send_status_message("recovery notice") is True
+    assert sent == ["recovery notice"]
+
+
+def test_safety_message_always_delivered_even_in_minimal_mode(monkeypatch):
+    """send_telegram_message (used by HALT / circuit breaker) is never gated by
+    minimal-alerts mode."""
+    monkeypatch.delenv("TELEGRAM_MINIMAL_ALERTS", raising=False)   # minimal ON
+    tg._telegram_enabled = True
+    sent = []
+    monkeypatch.setattr(tg, "_send_raw", lambda text: sent.append(text) or True)
+    assert tg.send_telegram_message("⛔ HALTED") is True
+    assert sent == ["⛔ HALTED"]
+
+
 class JsonResp:
     def __init__(self, payload):
         self._payload = payload

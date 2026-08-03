@@ -362,18 +362,21 @@ class StakeLadder:
                      Omitted → the drawdown guard only fires on the explicit
                      dollar override (cfg.max_daily_loss), if set.
         """
+        mult, tier, reason = self._decide(balance)
+        return self._finalize(base_stake, mult, tier, reason, max_stake)
+
+    def _decide(self, balance: Optional[float]) -> Tuple[float, str, str]:
+        """Resolve the (multiplier, tier, reason) for the next trade. Pure aside
+        from the UTC-day roll; no logging. Shared by get_stake (which sizes and
+        logs) and peek_multiplier (which just reads the current multiplier)."""
         self._roll_day_if_needed()
         tracker = self.tracker
 
         # Warm-up: not enough data to trust a win_rate yet -> baseline.
         if tracker.total < self.cfg.min_trades:
-            mult, tier = 1.0, "T2-BASELINE(warmup)"
-            reason = f"warmup {tracker.total}/{self.cfg.min_trades} trades"
-            return self._finalize(base_stake, mult, tier, reason, max_stake)
+            return 1.0, "T2-BASELINE(warmup)", f"warmup {tracker.total}/{self.cfg.min_trades} trades"
 
-        win_rate    = tracker.win_rate
-        base_mult, tier = StakeManager.tier_for(win_rate)
-
+        base_mult, tier = StakeManager.tier_for(tracker.win_rate)
         guard = self.guards.apply(
             base_multiplier = base_mult,
             tier_name       = tier,
@@ -383,10 +386,13 @@ class StakeLadder:
             cooldown_active = self._cooldown_active(),
             daily_loss_cap  = self._daily_loss_cap(balance),
         )
+        return guard.multiplier, ("PAUSED" if guard.paused else tier), guard.reason
 
-        if guard.paused:
-            tier = "PAUSED"
-        return self._finalize(base_stake, guard.multiplier, tier, guard.reason, max_stake)
+    def peek_multiplier(self, balance: Optional[float] = None) -> float:
+        """The stake multiplier the next get_stake() would apply, without sizing
+        or logging. <1.0 means the ladder is currently holding stake BELOW base
+        (a cold-streak demote, a drawdown/vol cap, or a cooldown/pause)."""
+        return self._decide(balance)[0]
 
     def _finalize(self, base_stake: float, mult: float, tier: str,
                   reason: str, max_stake: Optional[float]) -> StakeDecision:
@@ -448,6 +454,19 @@ class StakeLadder:
                                   self.tracker.cycles + int(cycles))
         log.info("LADDER │ size-up paused for %d trades (until cycle %d).",
                  cycles, self.cooldown_cycle)
+        if self.cfg.persist:
+            self._save()
+
+    def resume_size_up(self) -> None:
+        """Clear any active baseline hold — the anti-chase cooldown AND any
+        pause_size_up() hold — so the ladder can immediately size up per its
+        rolling win rate again. Used by the recovery win-rate restore: on a hot
+        streak we return to the base stake and want the ladder to start laddering
+        up straight away rather than wait out a pending hold. Downside guardrails
+        (drawdown revert/pause, loss-streak demote, vol cap) still apply on top."""
+        self.cooldown_until = 0.0
+        self.cooldown_cycle = -1
+        log.info("LADDER │ baseline hold cleared — size-up re-enabled.")
         if self.cfg.persist:
             self._save()
 

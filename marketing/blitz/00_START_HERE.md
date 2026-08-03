@@ -14,10 +14,20 @@ piece of copy you paste.
 ## Executive Summary
 
 **The business:** FlipPulse is a done-for-you automated trading bot for Kalshi's
-15-minute Bitcoin Up/Down markets. $99 setup + $99/month. Every customer starts
+15-minute Bitcoin Up/Down markets. $150 setup + $99/month. Every customer starts
 in paper mode. Funds never leave the customer's own Kalshi account (Kalshi is a
 CFTC-regulated US exchange). The bot reports every decision to the customer's
 own Telegram.
+
+**Launch offer — the "Founders 100 Club":** the first 100 members join free — the
+$150 setup fee **and** first month are waived ($0 today, then $99/mo), and every one
+of them locks in **Founder status for life**: their $99/mo price is grandfathered
+forever, they keep a permanent Founder badge, and they get first access to everything
+we ship. It's a $249-off-first-invoice Stripe coupon (`FOUNDING100`) capped at 100
+redemptions; lead every launch-phase post with it — **early and often, until the 100
+seats are gone** (`03_POST_LIBRARY.md` §2.0) — then drop it once the cap is hit. See
+`01_MASTER_MARKETING_PLAN.md` §1 for the framing and `ADMINISTRATOR_ONBOARDING.md` §9a-i
+for the Stripe/onboarding wiring.
 
 **The strategy in one paragraph:** We win by being the *most transparent,
 most disciplined* voice in a niche full of hype. Trading-bot marketing is a
@@ -53,6 +63,7 @@ customers by Day 90** (≈$7.4K MRR). Full KPI ladder in `09_METRICS_KPI_DASHBOA
 | `06_SCHEDULER_SETUP.md` | Metricool chosen + full click-by-click setup and bulk-upload workflow | One-time setup, then weekly |
 | `07_AUTOMATION.md` | Make.com / AI workflows: content gen, lead capture, email, reporting | One-time setup |
 | `08_DAILY_OPERATING_PROCEDURE.md` | The daily/weekly/monthly checklist you actually run | Every single day |
+| `Run_the_Blitz.xlsx` | **The daily execution cockpit** — one tab per week, every task in clock order (`RUN_THE_BLITZ.md` explains it) | **Open it every morning** |
 | `09_METRICS_KPI_DASHBOARD.md` | KPI definitions, tracking sheet, 30/60/90-day targets | Friday reviews |
 | `kpi_tracker_template.csv` | Import into Google Sheets — your dashboard | One-time import |
 | `10_SCALING_PLAN.md` | What changes at 100 / 500 / 1,000 / 5,000 / 10,000 customers | When milestones hit |

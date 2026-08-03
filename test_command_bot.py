@@ -29,7 +29,7 @@ os.environ.setdefault("KALSHI_PRIVATE_KEY_PEM_B64",
                       base64.b64encode(_PEM.encode()).decode())
 os.environ.setdefault("DEMO_MODE", "true")
 for _persist in ("RECOVERY_PERSIST", "PROBATION_PERSIST",
-                 "BUCKET_PERSIST", "BILLING_PERSIST"):
+                 "BUCKET_PERSIST", "BILLING_PERSIST", "LIFETIME_PERSIST"):
     os.environ.setdefault(_persist, "false")
 
 import bot  # noqa: E402  (env must be set first)
@@ -47,6 +47,7 @@ def _handler(tmp_path, snap=None):
         health_log_path=str(tmp_path / "health.log"),
         risk_override_path=str(tmp_path / "risk_override.json"),
         mode_override_path=str(tmp_path / "mode_override.json"),
+        nsc_override_path=str(tmp_path / "nsc_override.json"),
     )
 
 
@@ -144,6 +145,37 @@ def test_risk_reset_when_none_set(tmp_path):
     h = _handler(tmp_path, _SNAP)
     reply = h.handle("123", "/risk reset")
     assert "already" in reply.lower()
+
+
+# ── /status daily goal (v10.2.0) ──────────────────────────────────────────────
+_GOAL_SNAP = dict(_SNAP, balance=1000.0, session_pnl=12.5,
+                  daily_target_enabled=True, daily_target_pct=3.0,
+                  daily_target_dollars=30.0, daily_target_progress=12.5)
+
+
+def test_status_shows_progress_toward_the_daily_goal(tmp_path):
+    reply = _handler(tmp_path, _GOAL_SNAP).handle("123", "/status")
+    assert "Daily goal: $+12.50 / $30.00" in reply
+    assert "reached" not in reply
+
+
+def test_status_reports_a_banked_goal_as_good_news(tmp_path):
+    snap = dict(_GOAL_SNAP, daily_target_progress=31.0, halted=True,
+                halt_reason="profit_target")
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "DAILY GOAL HIT" in reply
+    assert "HALTED ⛔" not in reply           # not an emergency
+
+
+def test_status_still_flags_a_real_halt(tmp_path):
+    snap = dict(_GOAL_SNAP, halted=True, halt_reason="session_stop")
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "HALTED ⛔" in reply
+
+
+def test_status_omits_the_goal_line_when_target_is_off(tmp_path):
+    reply = _handler(tmp_path, _SNAP).handle("123", "/status")
+    assert "Daily goal" not in reply
 
 
 # ── /mode · /live · /paper ─────────────────────────────────────────────────────
@@ -246,3 +278,159 @@ def test_round_trip_command_to_engine(tmp_path, monkeypatch):
     monkeypatch.setattr(bot, "RISK_OVERRIDE_PATH", path)
     monkeypatch.setattr(bot, "_risk_override_cache", None)
     assert bot.effective_normal_trade_pct() == 0.06
+
+
+# ── /winrate + /pnl ───────────────────────────────────────────────────────────
+_PERF_SNAP = dict(
+    _SNAP,
+    balance=1200.0, session_pnl=51.0, win_rate=75.0, wins=6, losses=2,
+    wins_today=2, losses_today=1, win_rate_today=66.7, pnl_today=1.0,
+    wins_week=6, losses_week=2, win_rate_week=75.0, pnl_week=51.0,
+    # persistent all-time tally (bigger than the session — proves it's used)
+    lifetime_wins=140, lifetime_losses=60, lifetime_win_rate=70.0, lifetime_pnl=825.0,
+)
+
+
+def test_winrate_all_windows(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/winrate")
+    assert "Today: 67% (2W/1L)" in reply
+    assert "This week: 75% (6W/2L)" in reply
+    # all-time uses the persistent lifetime tally, not the session W/L
+    assert "All-time: 70% (140W/60L)" in reply
+
+
+def test_winrate_all_time_uses_lifetime(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/winrate all")
+    assert "All-time: 70% (140W/60L)" in reply
+
+
+def test_pnl_all_time_uses_lifetime(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/pnl all")
+    assert "$+825.00" in reply and "(140W/60L)" in reply
+
+
+def test_status_record_uses_lifetime(tmp_path):
+    snap = dict(_PERF_SNAP, active_mode="normal", active_trade_pct=10.0,
+                active_trade_size=120.0, session_state="ACTIVE",
+                updated_at="2026-07-12T00:00:00Z")
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "Record (all-time): 140W/60L (70%)" in reply
+
+
+def test_winrate_week_only(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/winrate week")
+    assert "This week: 75% (6W/2L)" in reply
+    assert "Today" not in reply
+
+
+def test_winrate_percent_suffix_and_day(tmp_path):
+    """The guide writes '/winrate% day' — the '%' must not break routing."""
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/WinRate% day")
+    assert "Today: 67% (2W/1L)" in reply
+
+
+def test_winrate_no_snapshot_is_graceful(tmp_path):
+    h = _handler(tmp_path, snap=None)
+    assert "minute" in h.handle("123", "/winrate").lower()
+
+
+def test_pnl_all_and_week(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    allr = h.handle("123", "/pnl")
+    assert "$+1.00" in allr and "$+51.00" in allr
+    wk = h.handle("123", "/pnl week")
+    assert "This week: $+51.00 (6W/2L)" in wk
+
+
+# ── /recoverynostakechange ────────────────────────────────────────────────────
+def _nsc_file(h):
+    return json.loads(open(h.nsc_override_path).read())
+
+
+def test_nsc_status_no_arg(tmp_path):
+    h = _handler(tmp_path, dict(_SNAP, recovery_no_stake_change=False))
+    reply = h.handle("123", "/recoverynostakechange")
+    assert "OFF" in reply
+
+
+def test_nsc_on_writes_override(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    reply = h.handle("123", "/RecoveryModeNoStakeChange on")
+    assert "ON" in reply
+    assert _nsc_file(h)["enabled"] is True and _nsc_file(h)["set_by"] == "123"
+
+
+def test_nsc_off_writes_override(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    h.handle("123", "/rnsc off")
+    assert _nsc_file(h)["enabled"] is False
+
+
+def test_nsc_bad_arg_rejected_no_write(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    reply = h.handle("123", "/rnsc maybe")
+    assert "on" in reply.lower() and "off" in reply.lower()
+    assert not os.path.exists(h.nsc_override_path)
+
+
+def test_nsc_ignored_for_stranger(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    assert h.handle("999", "/rnsc on") is None
+    assert not os.path.exists(h.nsc_override_path)
+
+
+def test_nsc_round_trip_to_engine(tmp_path, monkeypatch):
+    """The toggle the command writes is exactly what the engine reads back."""
+    h = _handler(tmp_path, _SNAP)
+    h.handle("123", "/rnsc on")
+    monkeypatch.setattr(bot, "RECOVERY_NSC_OVERRIDE_PATH", h.nsc_override_path)
+    monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
+    assert bot.recovery_no_stake_change_enabled() is True
+    h.handle("123", "/rnsc off")
+    monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
+    assert bot.recovery_no_stake_change_enabled() is False
+
+
+def test_status_shows_nsc_and_recovery_wr(tmp_path):
+    snap = dict(
+        _SNAP, balance=1000.0, session_pnl=0.0, active_mode="recovery",
+        recovery_no_stake_change=True, recovery_wins=4, recovery_losses=1,
+        recovery_win_rate=80.0, recovery_winrate_restore_pct=70.0,
+        active_trade_pct=10.0, active_trade_size=100.0,
+        session_state="ACTIVE", updated_at="2026-07-12T00:00:00Z",
+    )
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "No-Stake-Change ON" in reply
+    assert "Recovery WR: 80% (4W/1L)" in reply
+
+
+# ── /balance + /commands aliases · /status recovery target ────────────────────
+def test_balance_alias_shows_balance_and_pnl(tmp_path):
+    h = _handler(tmp_path, _PERF_SNAP)
+    reply = h.handle("123", "/balance")
+    assert "Balance: $1,200.00" in reply
+    assert "All-time: $+825.00" in reply
+    assert h.handle("123", "/bal") == reply
+
+
+def test_commands_alias_returns_help(tmp_path):
+    h = _handler(tmp_path, _SNAP)
+    assert h.handle("123", "/commands") == h.handle("123", "/help")
+    assert "/balance" in h.handle("123", "/help")
+
+
+def test_status_shows_recovery_target(tmp_path):
+    snap = dict(
+        _SNAP, balance=900.0, session_pnl=-100.0, active_mode="recovery",
+        recovery_target=1000.0, recovery_wins=1, recovery_losses=1,
+        recovery_win_rate=50.0, recovery_winrate_restore_pct=70.0,
+        active_trade_pct=3.0, active_trade_size=27.0,
+        session_state="ACTIVE", updated_at="2026-07-12T00:00:00Z",
+    )
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "Recovery target: $1,000.00" in reply
