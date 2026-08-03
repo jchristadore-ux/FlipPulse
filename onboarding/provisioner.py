@@ -49,6 +49,13 @@ from pathlib import Path
 
 import requests
 
+try:
+    from submission_store import locked, read as read_submission, write as write_submission, write_unlocked
+except ImportError:
+    from onboarding.submission_store import (locked, read as read_submission,
+                                               write as write_submission,
+                                               write_unlocked)
+
 log = logging.getLogger("flippulse.provisioner")
 
 # ── Config (all via env) ──────────────────────────────────────────────────────
@@ -271,22 +278,33 @@ def load_submission(sub_id: str) -> dict:
     path = _sub_path(sub_id)
     if not path.exists():
         raise ProvisionError("load", f"No submission {sub_id!r} in {SUBMISSIONS_DIR}")
-    return json.loads(path.read_text())
+    return read_submission(path)
 
 
 def _save_submission(sub: dict) -> None:
-    path = _sub_path(sub["id"])
-    path.write_text(json.dumps(sub, indent=2))
-    os.chmod(path, 0o600)
+    write_submission(_sub_path(sub["id"]), sub)
 
 
 def _checkpoint(sub: dict, **updates) -> dict:
-    """Merge updates into sub['provisioning'] and persist — the resume record."""
-    prov = sub.setdefault("provisioning", {})
-    prov.update(updates)
-    prov["updated_at"] = datetime.now(timezone.utc).isoformat()
-    _save_submission(sub)
-    return prov
+    """Merge a checkpoint under the per-submission lock and atomically persist it.
+
+    Reloading before the merge prevents a Stripe webhook update (or another
+    process) from being clobbered by this worker's older in-memory snapshot.
+    """
+    path = _sub_path(sub["id"])
+    with locked(path):
+        current = json.loads(path.read_text())
+        existing_prov = sub.setdefault("provisioning", {})
+        sub.clear()
+        sub.update({k: v for k, v in current.items() if k != "provisioning"})
+        existing_prov.clear()
+        existing_prov.update(current.get("provisioning") or {})
+        sub["provisioning"] = existing_prov
+        prov = existing_prov
+        prov.update(updates)
+        prov["updated_at"] = datetime.now(timezone.utc).isoformat()
+        write_unlocked(path, sub)
+        return prov
 
 
 # ── Variable set (runbook §4, complete — nothing left to add by hand) ─────────
@@ -412,14 +430,17 @@ def provision(sub_id: str, client: RailwayClient | None = None,
                 "the shared project to deploy the customer service into. Railway injects "
                 "these into every service automatically; set them explicitly only when "
                 "running onboarding outside Railway.")
-        if prov.get("project_id") and prov.get("project_id") != RAILWAY_PROJECT_ID:
+        stale_project = prov.get("project_id") and prov.get("project_id") != RAILWAY_PROJECT_ID
+        if stale_project:
             log.warning("%s: recorded project %s != shared project %s — recreating the "
                         "service in the shared project.",
                         sub_id, prov.get("project_id"), RAILWAY_PROJECT_ID)
-            for stale in ("service_id", "volume_id", "dashboard_domain"):
-                prov.pop(stale, None)
         _checkpoint(sub, project_id=RAILWAY_PROJECT_ID,
                     environment_id=RAILWAY_ENVIRONMENT_ID, step="locate_project")
+        if stale_project:
+            for stale in ("service_id", "volume_id", "dashboard_domain"):
+                prov.pop(stale, None)
+            _save_submission(sub)
 
         secrets = _decrypt_secrets(sub)
         # The dashboard password is generated ONCE and persisted in the checkpoint
@@ -650,7 +671,7 @@ def reconcile_pending() -> list[str]:
     now = datetime.now(timezone.utc)
     for path in sorted(SUBMISSIONS_DIR.glob("*.json")):
         try:
-            sub = json.loads(path.read_text())
+            sub = read_submission(path)
         except (OSError, ValueError):
             continue
         if sub.get("payment_status") != "paid" or not sub.get("id"):

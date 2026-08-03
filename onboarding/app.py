@@ -39,6 +39,13 @@ from flask import (Flask, abort, make_response, redirect, render_template,
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 try:
+    from submission_store import locked, read as read_submission, write as write_submission, write_unlocked
+except ImportError:
+    from onboarding.submission_store import (locked, read as read_submission,
+                                               write as write_submission,
+                                               write_unlocked)
+
+try:
     import provisioner                     # gunicorn/app run from onboarding/
 except ImportError:                        # imported as the onboarding.* package
     from onboarding import provisioner
@@ -194,7 +201,7 @@ def _load_submission(sub_id: str) -> "dict | None":
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text())
+        return read_submission(path)
     except (OSError, ValueError):
         return None
 
@@ -517,8 +524,7 @@ def submit():
 
     SUBMISSIONS_DIR.mkdir(parents=True, exist_ok=True)
     path = SUBMISSIONS_DIR / f"{sub_id}.json"
-    path.write_text(json.dumps(submission, indent=2))
-    os.chmod(path, 0o600)                        # least-privilege on the secret file
+    write_submission(path, submission)
     log.info("Stored submission %s (secrets encrypted).", sub_id)
 
     _notify_operator(submission)
@@ -586,11 +592,17 @@ def stripe_webhook():
         sid = _stripe_get(session, "client_reference_id")
         p = SUBMISSIONS_DIR / f"{sid}.json"
         if sid and p.exists():
-            d = json.loads(p.read_text())
-            d["payment_status"] = "paid"
-            d["stripe_customer"] = _stripe_get(session, "customer")
-            d["stripe_subscription"] = _stripe_get(session, "subscription")
-            p.write_text(json.dumps(d, indent=2))
+            # Hold the same per-submission lock used by all writers: webhook
+            # updates must not clobber a provisioner checkpoint.
+            with locked(p):
+                try:
+                    d = json.loads(p.read_text())
+                except (OSError, ValueError):
+                    return ("", 500)
+                d["payment_status"] = "paid"
+                d["stripe_customer"] = _stripe_get(session, "customer")
+                d["stripe_subscription"] = _stripe_get(session, "subscription")
+                write_unlocked(p, d)
             log.info("Submission %s marked paid.", sid)
             # Payment confirmed → provision the customer's Railway bot with no
             # operator action. Queued in the background so Stripe gets its 200
@@ -622,7 +634,7 @@ def admin_list():
     subs = []
     for p in sorted(SUBMISSIONS_DIR.glob("*.json"), reverse=True):
         try:
-            subs.append(json.loads(p.read_text()))
+            subs.append(read_submission(p))
         except (OSError, ValueError):
             continue
     return render_template("admin_list.html", subs=subs)
