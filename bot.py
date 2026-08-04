@@ -1,7 +1,29 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  FLIPPULSE (MarkeyMachine core)  v10.3.1  —  Production Build                ║
+║  FLIPPULSE (MarkeyMachine core)  v10.3.2  —  Production Build                ║
 ║  "No disassemble."                                                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  v10.3.2 — THE DAILY HALT NO LONGER DEPENDS ON A FILE SURVIVING.             ║
+║                                                                              ║
+║  v10.3.1 persisted the day's state, which fixes the restart — but only when  ║
+║  the record is there to read. Three ways it is not: the deploy that FIRST    ║
+║  shipped the persistence (no file existed yet — this is what cleared the     ║
+║  2026-08-04 halt when its own PR merged and Railway redeployed), a volume    ║
+║  that is not mounted where DAILY_STATE_PATH points (every write failed       ║
+║  silently), and a wiped/re-created volume. Two layers now:                   ║
+║                                                                              ║
+║  1. THE PATH IS PROVEN AT BOOT. verify_daily_state_path() write-probes the   ║
+║     directory, falls back to RAILWAY_VOLUME_MOUNT_PATH, and logs an ERROR    ║
+║     when nothing is durable — instead of discovering it on the redeploy      ║
+║     that needed it.                                                          ║
+║  2. THE EXCHANGE IS THE BACKSTOP. With no usable local record, a LIVE boot   ║
+║     rebuilds today from Kalshi's own settlements since 00:00 UTC             ║
+║     (reconcile_today_from_exchange): today's realized P&L, the day's opening ║
+║     balance inferred as balance − realized (errs LOW, so it stops earlier,   ║
+║     never later), the session-stop floor, and the halt itself if the goal    ║
+║     was already banked. Kalshi remembers the day whatever happens to this    ║
+║     container, so the +3% goal holds for the whole UTC day across any number ║
+║     of restarts, redeploys and merged PRs.                                   ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  v10.3.1 — THE DAY'S HALT SURVIVES A RESTART.                                ║
 ║                                                                              ║
@@ -394,7 +416,7 @@
 
 from __future__ import annotations
 
-BOT_VERSION = "10.3.1"
+BOT_VERSION = "10.3.2"
 
 import base64
 import json
@@ -3654,6 +3676,48 @@ def daily_profit_target_check(balance: float) -> bool:
 DAILY_STATE_SCHEMA = 1
 
 
+def verify_daily_state_path() -> bool:
+    """Prove at boot that the day's state can actually be written somewhere that
+    survives a container restart, and say so LOUDLY when it cannot.
+
+    A silent per-cycle write failure is the worst outcome available here: the
+    halt looks armed and evaporates on the next redeploy. If the configured
+    directory is not writable, fall back to the Railway volume mount
+    (RAILWAY_VOLUME_MOUNT_PATH) before giving up. Returns True when the path is
+    usable."""
+    global DAILY_STATE_PATH
+    if not DAILY_STATE_PERSIST:
+        log.warning("  Daily state: PERSISTENCE OFF — a restart re-arms today's "
+                    "+%.1f%% goal from scratch.", DAILY_PROFIT_TARGET_PCT * 100)
+        return False
+    candidates = [DAILY_STATE_PATH]
+    vol = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    if vol:
+        candidates.append(os.path.join(vol, "daily_state.json"))
+    for path in candidates:
+        directory = os.path.dirname(path) or "."
+        try:
+            os.makedirs(directory, exist_ok=True)
+            probe = f"{path}.probe"
+            with open(probe, "w") as f:
+                f.write("ok")
+            os.remove(probe)
+        except OSError as e:
+            log.warning("  Daily state: %s is not writable (%s)", directory, e)
+            continue
+        if path != DAILY_STATE_PATH:
+            log.warning("  Daily state: falling back to the mounted volume at %s", path)
+            DAILY_STATE_PATH = path
+        log.info("  Daily state: %s (the +%.1f%% halt survives a restart)",
+                 DAILY_STATE_PATH, DAILY_PROFIT_TARGET_PCT * 100)
+        return True
+    log.error("  Daily state: NO WRITABLE PATH (%s). The daily halt cannot be "
+              "persisted — it will be rebuilt from the exchange's settlements "
+              "at boot instead. Mount a volume and set DAILY_STATE_PATH onto it.",
+              ", ".join(candidates))
+    return False
+
+
 def save_daily_state() -> None:
     """Persist today's risk state (atomic JSON write). Called once per main-loop
     cycle — including while halted — and again the instant a halt latches, so a
@@ -3726,6 +3790,87 @@ def restore_daily_state(current_balance: float) -> bool:
         log.info("Daily state │ restored today's session — opened at $%.2f, "
                  "realized $%+.2f, balance now $%.2f.",
                  session_start_balance, realized, current_balance)
+    return True
+
+
+def _settled_today(rec: dict) -> bool:
+    """True when a settlement record settled at/after 00:00 UTC today. A missing
+    or unparseable timestamp is treated as NOT today (never inflate the day)."""
+    ts = (rec.get("settled_time") or rec.get("created_time")
+          or rec.get("timestamp") or "")
+    if not ts:
+        return False
+    try:
+        settled = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0,
+                                                   microsecond=0)
+    return settled >= day_start
+
+
+def reconcile_today_from_exchange(current_balance: float) -> bool:
+    """LIVE fallback: rebuild today's realized P&L from the EXCHANGE's own
+    settlement records, and latch the halt if the day's goal is already banked.
+
+    The persisted record (restore_daily_state) is the primary source and carries
+    the day's true opening balance. This is the second, independent layer for
+    every case where that file cannot speak: the deploy that first shipped the
+    persistence, a wiped or unmounted volume, DAILY_STATE_PERSIST=false, a
+    corrupt record. Kalshi remembers the day's settlements whatever happens to
+    this container, so the +3% goal can always be reconstructed.
+
+    The day's opening balance is inferred as `balance − realized today`. Cash
+    tied up in a position that is still open is not in `balance`, so the estimate
+    errs LOW — a slightly smaller goal, i.e. it stops earlier rather than later,
+    which is the safe direction for a stop-trading rule. Returns True when the
+    day was established from exchange data.
+    """
+    global session_start_balance, session_stop_threshold, live_daily_realized
+    if DEMO_MODE:
+        return False       # paper has no exchange-side book to reconstruct from
+    try:
+        records = _fetch_settled_records(_session_day + "T00:00:00Z")
+    except Exception as e:      # never block boot on a settlements outage
+        log.warning("Daily reconcile │ settlements fetch failed: %s", e)
+        return False
+    today = [r for r in records if _settled_today(r)]
+    if not today:
+        log.info("Daily reconcile │ no settlements yet today — the day opens at "
+                 "$%.2f (goal $%.2f).", current_balance,
+                 daily_profit_target_dollars())
+        return False
+    if len(today) >= 100:
+        # The endpoint caps at the last 100 records account-wide, so a day with
+        # more settlements than that is only partially visible here.
+        log.warning("Daily reconcile │ %d settlements today fills the API's 100-"
+                    "record window — today's realized total may be partial.",
+                    len(today))
+    realized = 0.0
+    counted  = 0
+    for rec in today:
+        pnl = _extract_realized_dollars(rec)
+        if pnl is None:
+            continue
+        realized += pnl
+        counted  += 1
+    opening = round(max(current_balance - realized, 0.0), 2)
+    if opening <= 0:
+        log.warning("Daily reconcile │ implausible opening balance from $%.2f "
+                    "and realized $%+.2f — leaving the fresh-boot baseline.",
+                    current_balance, realized)
+        return False
+    live_daily_realized    = round(realized, 2)
+    session_start_balance  = opening
+    session_stop_threshold = opening * SESSION_STOP_FRACTION
+    log.warning("Daily reconcile │ no local record — rebuilt today from %d "
+                "exchange settlements: realized $%+.2f, day opened ≈$%.2f, "
+                "goal $%.2f.", counted, live_daily_realized, opening,
+                daily_profit_target_dollars())
+    # Latches the halt (and notifies) when the goal was already banked before
+    # this restart — the whole point of the fallback.
+    daily_profit_target_check(current_balance)
+    save_daily_state()
     return True
 
 
@@ -4707,6 +4852,8 @@ def main() -> None:
               % (DAILY_PROFIT_TARGET_PCT * 100))
              if DAILY_PROFIT_TARGET_ENABLED and DAILY_PROFIT_TARGET_PCT > 0
              else "OFF (trades the full day)")
+    # Proven at boot, not discovered on the redeploy that needed it.
+    verify_daily_state_path()
     log.info("  SessionScore≥%d", MIN_SESSION_SCORE)
     log.info("  TimePrior: %dh buckets fullN=%d | now=%s prior=%.3f n=%d",
              BUCKET_GROUP_HOURS, BUCKET_PRIOR_FULL_N, bucket_stats.key_now(),
@@ -4769,8 +4916,11 @@ def main() -> None:
         running_pnl        = 0.0
         live_daily_realized = 0.0
         # A restart must not hand the day a fresh +3% budget: adopt today's
-        # persisted opening balance, realized P&L and halt when there is one.
-        restore_daily_state(bal)
+        # persisted opening balance, realized P&L and halt when there is one —
+        # and when there is no local record to adopt, rebuild the day from the
+        # exchange's settlements so the halt holds even on a wiped volume.
+        if not restore_daily_state(bal):
+            reconcile_today_from_exchange(bal)
         recovery.reconcile_on_boot(bal)
         probation.reconcile_on_boot()
         billing.reconcile_on_boot(bal)
