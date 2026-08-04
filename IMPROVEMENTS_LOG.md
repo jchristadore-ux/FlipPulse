@@ -30,6 +30,7 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 | IMP-006 | 2026-08-01 | engine / sizing | Daily +3% profit target halts trading for the day; laddering disabled so risk stays a flat % of balance | High | Done |
 | IMP-007 | 2026-08-01 | engine / sizing / liquidity | Balance-independence audit: make the rules identical at $20 and $20,000 (round-down sizing, no dollar cutoff, order-relative liquidity gate) | High | Done |
 | IMP-008 | 2026-08-04 | engine / risk | Daily +3% halt survives a restart: the day's opening balance, realized P&L and halt state persist to `/data` and are restored at boot | High | Done |
+| IMP-009 | 2026-08-04 | engine / risk | Daily +3% halt no longer depends on a file surviving: the state path is proven at boot and a LIVE boot rebuilds the day from Kalshi's own settlements when there is no record | High | Done |
 
 ---
 
@@ -242,6 +243,41 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
   (latch-is-written, restart resumes a banked day, opening balance and stop floor not
   re-based, mid-day restart below target keeps trading, stale-day and other-mode records
   ignored, rollover overwrites, corrupt/missing/unwritable paths, persistence off).
+
+### IMP-009 — The daily halt no longer depends on a local file surviving
+- **Added:** 2026-08-04
+- **Area:** engine / risk
+- **Priority:** High
+- **Status:** Done (v10.3.2)
+- **Problem / motivation (owner report):** "the 3% profit halt is restarting any time Railway
+  restarts after a PR." IMP-008 persists the day's state, which is the right primary
+  mechanism — but it only helps when the record is actually there to read. Three ways it is
+  not: (a) the deploy that FIRST shipped the persistence had no file yet, which is exactly
+  what cleared the 2026-08-04 halt when its own PR merged and Railway redeployed; (b) the
+  volume is not mounted where `DAILY_STATE_PATH` points, so every per-cycle write fails and
+  the halt only *looks* armed; (c) the volume is wiped or re-created. In all three the bot
+  came back with a fresh +3% budget on a day it had already banked.
+- **Change — two independent layers:**
+  - **The path is proven at boot.** `verify_daily_state_path()` write-probes the directory,
+    falls back to `RAILWAY_VOLUME_MOUNT_PATH` when the configured one is unwritable, and
+    logs an ERROR when nothing durable is available — instead of that being discovered on
+    the redeploy that needed it.
+  - **The exchange is the backstop.** When no usable local record exists, a LIVE boot calls
+    `reconcile_today_from_exchange()`: it sums Kalshi's own settlements since 00:00 UTC to
+    get today's realized P&L, infers the day's opening balance as `balance − realized`,
+    restores the session-stop floor from it, and latches the halt if the goal was already
+    banked. Kalshi remembers the day whatever happens to the container.
+- **Why the inference is safe:** cash tied up in a still-open position is not in `balance`,
+  so the opening estimate errs LOW — a slightly smaller goal, i.e. it stops earlier rather
+  than later, which is the correct direction for a stop-trading rule. Records without a
+  parseable timestamp, and anything settled before today, are never counted. The local
+  record always wins when present, because it carries the day's true opening balance.
+- **Impact / risk:** one extra settlements call per LIVE boot, wrapped so an outage can
+  never block startup (it logs and falls through to the fresh-day baseline). Paper mode has
+  no exchange book to rebuild from and is unchanged. The settlements endpoint returns the
+  last 100 records account-wide, so a day with more than 100 settlements is only partially
+  visible — the reconstruction logs a warning when it hits that window. Covered by 11 new
+  cases in `test_daily_target.py`.
 
 <!--
 Template for a detailed entry — copy below when an item needs more than one line.

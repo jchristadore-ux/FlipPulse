@@ -381,3 +381,139 @@ def test_live_mode_round_trips_the_live_accumulator(_daily_state, monkeypatch):
     assert bot.live_daily_realized == 30.0
     assert bot.today_realized_pnl() == 30.0
     assert bot._session_halted is True
+
+
+# ── second layer: rebuild the day from the exchange (v10.3.2) ────────────────
+
+def _settlement(pnl_dollars, when=None):
+    """A settlement record in the real KXBTC15M schema: revenue is in CENTS,
+    costs and fees in dollars (see _extract_realized_dollars)."""
+    when = when or bot.datetime.now(bot.timezone.utc)
+    return {
+        "ticker": "KXBTC15M-TEST",
+        "settled_time": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "revenue": (pnl_dollars + 1.0) * 100,     # cost is $1.00, so pnl = revenue/100 - 1
+        "yes_total_cost_dollars": 1.0,
+        "no_total_cost_dollars": 0.0,
+        "fee_cost": 0.0,
+    }
+
+
+@pytest.fixture
+def _live_boot(monkeypatch, tmp_path):
+    """LIVE mode, no local daily record — the state the fallback exists for."""
+    monkeypatch.setattr(bot, "DEMO_MODE", False)
+    monkeypatch.setattr(bot, "DAILY_STATE_PATH", str(tmp_path / "daily_state.json"))
+    monkeypatch.setattr(bot, "DAILY_STATE_PERSIST", True)
+    monkeypatch.setattr(bot, "_session_day", bot.datetime.now(bot.timezone.utc)
+                        .strftime("%Y-%m-%d"))
+    monkeypatch.setattr(bot, "_session_halted", False)
+    monkeypatch.setattr(bot, "_halt_reason", "")
+    monkeypatch.setattr(bot, "live_daily_realized", 0.0)
+
+
+def test_no_local_record_rebuilds_the_day_from_the_exchange(_live_boot, monkeypatch):
+    """The case that bit us live: the redeploy that first shipped persistence had
+    no file to read. Today's settlements still prove the goal was banked."""
+    monkeypatch.setattr(bot, "_fetch_settled_records",
+                        lambda since: [_settlement(1.23), _settlement(0.74)])
+    monkeypatch.setattr(bot, "session_start_balance", 61.24)   # fresh-boot value
+    assert bot.reconcile_today_from_exchange(61.24) is True
+    assert bot.live_daily_realized == 1.97
+    assert bot.session_start_balance == 59.27      # inferred day-open, not 61.24
+    assert bot.daily_profit_target_dollars() == 1.78
+    assert bot._session_halted is True
+    assert bot._halt_reason == "profit_target"
+
+
+def test_rebuilt_day_below_target_keeps_trading(_live_boot, monkeypatch):
+    monkeypatch.setattr(bot, "_fetch_settled_records",
+                        lambda since: [_settlement(0.50)])
+    monkeypatch.setattr(bot, "session_start_balance", 59.77)
+    assert bot.reconcile_today_from_exchange(59.77) is True
+    assert bot.live_daily_realized == 0.50
+    assert bot.session_start_balance == 59.27
+    assert bot._session_halted is False
+
+
+def test_rebuild_restores_the_session_stop_floor(_live_boot, monkeypatch):
+    monkeypatch.setattr(bot, "_fetch_settled_records",
+                        lambda since: [_settlement(1.97)])
+    bot.reconcile_today_from_exchange(61.24)
+    assert bot.session_stop_threshold == 59.27 * bot.SESSION_STOP_FRACTION
+
+
+def test_rebuild_writes_the_record_it_reconstructed(_live_boot, monkeypatch):
+    monkeypatch.setattr(bot, "_fetch_settled_records",
+                        lambda since: [_settlement(1.97)])
+    bot.reconcile_today_from_exchange(61.24)
+    saved = json.loads(open(bot.DAILY_STATE_PATH).read())
+    assert saved["halted"] is True
+    assert saved["live_daily_realized"] == 1.97
+    assert saved["session_start_balance"] == 59.27
+
+
+def test_yesterdays_settlements_are_not_counted(_live_boot, monkeypatch):
+    old = bot.datetime.now(bot.timezone.utc) - bot.timedelta(days=1)
+    monkeypatch.setattr(bot, "_fetch_settled_records",
+                        lambda since: [_settlement(5.00, when=old)])
+    monkeypatch.setattr(bot, "session_start_balance", 61.24)
+    assert bot.reconcile_today_from_exchange(61.24) is False
+    assert bot.live_daily_realized == 0.0
+    assert bot.session_start_balance == 61.24      # fresh-boot baseline stands
+
+
+def test_a_settlements_outage_never_blocks_boot(_live_boot, monkeypatch):
+    def _boom(_since):
+        raise RuntimeError("Kalshi 503")
+    monkeypatch.setattr(bot, "_fetch_settled_records", _boom)
+    assert bot.reconcile_today_from_exchange(61.24) is False
+    assert bot._session_halted is False
+
+
+def test_paper_mode_has_nothing_to_reconcile(monkeypatch):
+    monkeypatch.setattr(bot, "DEMO_MODE", True)
+    monkeypatch.setattr(bot, "_fetch_settled_records",
+                        lambda since: [_settlement(99.0)])
+    assert bot.reconcile_today_from_exchange(1030.0) is False
+
+
+def test_the_local_record_wins_over_the_exchange(_daily_state, monkeypatch):
+    """restore_daily_state carries the day's TRUE opening balance, so when it
+    succeeds the (approximating) exchange rebuild must not run."""
+    monkeypatch.setattr(bot, "paper_daily_pnl", 30.0)
+    bot.daily_profit_target_check(1030.0)
+    called = []
+    monkeypatch.setattr(bot, "_fetch_settled_records",
+                        lambda since: called.append(since) or [])
+    monkeypatch.setattr(bot, "_session_halted", False)
+    monkeypatch.setattr(bot, "session_start_balance", 1030.0)
+    assert bot.restore_daily_state(1030.0) is True
+    assert bot.session_start_balance == 1000.0
+    assert called == []
+
+
+# ── the state path is proven writable at boot ────────────────────────────────
+
+def test_boot_confirms_a_writable_state_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(bot, "DAILY_STATE_PERSIST", True)
+    monkeypatch.setattr(bot, "DAILY_STATE_PATH", str(tmp_path / "daily_state.json"))
+    assert bot.verify_daily_state_path() is True
+
+
+def test_boot_falls_back_to_the_mounted_volume(monkeypatch, tmp_path):
+    """An unwritable configured path must not silently mean 'no halt tomorrow'."""
+    monkeypatch.setattr(bot, "DAILY_STATE_PERSIST", True)
+    monkeypatch.setattr(bot, "DAILY_STATE_PATH", "/proc/nope/daily_state.json")
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", str(tmp_path))
+    assert bot.verify_daily_state_path() is True
+    assert bot.DAILY_STATE_PATH == str(tmp_path / "daily_state.json")
+    bot.save_daily_state()
+    assert (tmp_path / "daily_state.json").exists()
+
+
+def test_boot_reports_no_writable_path(monkeypatch):
+    monkeypatch.setattr(bot, "DAILY_STATE_PERSIST", True)
+    monkeypatch.setattr(bot, "DAILY_STATE_PATH", "/proc/nope/daily_state.json")
+    monkeypatch.delenv("RAILWAY_VOLUME_MOUNT_PATH", raising=False)
+    assert bot.verify_daily_state_path() is False
