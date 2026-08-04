@@ -165,9 +165,32 @@ class JsonResp:
         return self._payload
 
 
-def test_config_diagnostic_lists_reachable_chats(monkeypatch, caplog):
-    """On a 'chat not found' failure the bot should name its @username and the
-    chat ids that HAVE messaged it — handing the operator the correct value."""
+def test_config_diagnostic_skips_updates_when_command_bot_enabled(monkeypatch, caplog):
+    """The command bot owns Telegram's update stream, so diagnostics must not
+    start a second getUpdates consumer when TELEGRAM_CHAT_ID is configured."""
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "555")
+    calls = []
+
+    def fake_get(url, **k):
+        calls.append(url)
+        if url.endswith("/getUpdates"):
+            pytest.fail("diagnostic must not call getUpdates when command bot is enabled")
+        return JsonResp({"ok": True, "result": {"username": "CustBot", "first_name": "Cust"}})
+
+    monkeypatch.setattr(tg.requests, "get", fake_get)
+    with caplog.at_level("ERROR"):
+        tg._log_config_diagnostic("token123")
+    assert calls == ["https://api.telegram.org/bottoken123/getMe"]
+    text = caplog.text
+    assert "CustBot" in text
+    assert "Skipping getUpdates diagnostic" in text
+
+
+def test_config_diagnostic_lists_reachable_chats_when_command_bot_disabled(monkeypatch, caplog):
+    """Without a configured command bot, diagnostics still inspect updates and
+    list the chat ids that HAVE messaged this bot."""
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
     def fake_get(url, **k):
         if url.endswith("/getMe"):
             return JsonResp({"ok": True, "result": {"username": "CustBot", "first_name": "Cust"}})
