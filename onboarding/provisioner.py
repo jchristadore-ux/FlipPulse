@@ -332,6 +332,9 @@ def deploy_variables(sub: dict, secrets: dict,
         "PROBATION_STATE_PATH": "/data/probation_state.json",
         "BUCKET_STATS_PATH": "/data/bucket_stats.json",
         "BILLING_STATE_PATH": "/data/billing_state.json",
+        # Today's opening balance, realized P&L and halt state — on /data so a
+        # redeploy cannot clear a banked daily target and re-arm a second +3%.
+        "DAILY_STATE_PATH": "/data/daily_state.json",
         "STATUS_SNAPSHOT_PATH": "/data/status_snapshot.json",
         "HEALTH_LOG_PATH": "/data/health.log",
         # Self-service dashboard + Telegram /risk override files (all on /data so

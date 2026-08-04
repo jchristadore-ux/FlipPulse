@@ -1,7 +1,28 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  FLIPPULSE (MarkeyMachine core)  v10.3.0  —  Production Build                ║
+║  FLIPPULSE (MarkeyMachine core)  v10.3.1  —  Production Build                ║
 ║  "No disassemble."                                                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  v10.3.1 — THE DAY'S HALT SURVIVES A RESTART.                                ║
+║                                                                              ║
+║  AUDIT (owner directive "validate the daily 3% halt is engaged"): the halt   ║
+║  itself is correct in both modes — verified live on 2026-08-04, the day      ║
+║  opened at $59.27, two wins banked $+1.97 ≥ the $1.78 goal and the bot       ║
+║  latched at 13:01 UTC and took no further entry. But ALL of the day's state  ║
+║  (`_session_halted`, `session_start_balance`, the realized accumulators)     ║
+║  lived in process memory only. Boot re-based the opening balance to the      ║
+║  CURRENT balance and zeroed today's realized P&L, so any restart after the   ║
+║  target was banked — Railway redeploy, crash restart, or the paper↔live      ║
+║  flip in _maybe_restart_for_mode_change() — silently cleared the halt and    ║
+║  started a SECOND +3% hunt on the same UTC day (and re-armed the session-    ║
+║  stop floor 3% higher). Same class as the v9.7.0 daily-loss latch bug.       ║
+║                                                                              ║
+║  FIX: the day's state is written to DAILY_STATE_PATH every cycle and at the  ║
+║  instant each halt latches, and restored at boot when the record is for      ║
+║  TODAY (UTC) and the SAME mode — a stale day or the other book's record is   ║
+║  ignored, falling through to a normal fresh-day boot. The UTC rollover       ║
+║  overwrites it, so nothing can resurrect a finished day.                     ║
+║  RAILWAY: DAILY_STATE_PATH (/data/daily_state.json), DAILY_STATE_PERSIST.    ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  v10.3.0 — BALANCE INDEPENDENCE: the same rules at $20 and $20,000.          ║
 ║                                                                              ║
@@ -373,7 +394,7 @@
 
 from __future__ import annotations
 
-BOT_VERSION = "10.3.0"
+BOT_VERSION = "10.3.1"
 
 import base64
 import json
@@ -710,6 +731,24 @@ RECOVERY_WINRATE_MIN_TRADES      = _env_int("RECOVERY_WINRATE_MIN_TRADES", 5)
 # Set DAILY_PROFIT_TARGET_ENABLED=false (or the pct to 0) to trade the full day.
 DAILY_PROFIT_TARGET_ENABLED = _env_bool("DAILY_PROFIT_TARGET_ENABLED", True)
 DAILY_PROFIT_TARGET_PCT     = _env_float("DAILY_PROFIT_TARGET_PCT", 0.03)
+
+# ── The day's state SURVIVES a restart (v10.3.1) ──────────────────────────────
+# The halt, the day's opening balance and today's realized P&L all lived in
+# process memory only. Boot re-based session_start_balance to the CURRENT
+# balance and zeroed the realized accumulators, so any restart after the target
+# was banked — a Railway redeploy, an OOM/crash restart, a paper↔live flip —
+# silently cleared the halt and started a SECOND +3% hunt on the same UTC day
+# (and re-armed the session-stop floor 3% higher). Exactly the class of bug
+# v9.7.0 fixed for the daily-loss cap, still open on the profit target.
+#
+# The day's state is now written to DAILY_STATE_PATH on every cycle and at the
+# moment of each halt latch, and restored at boot when — and only when — the
+# record is for TODAY (UTC) and the SAME trading mode. A record from another
+# day is stale, and a record from the other mode belongs to a different book
+# (the paper day's P&L must never halt the live account, or vice-versa); both
+# fall through to a normal fresh-day boot.
+DAILY_STATE_PATH    = os.environ.get("DAILY_STATE_PATH", "").strip() or "/data/daily_state.json"
+DAILY_STATE_PERSIST = _env_bool("DAILY_STATE_PERSIST", True)
 
 # ── Post-recovery graduated re-entry ("probation ramp") — OFF by default ──────
 # WHY (2026-06-29 log review): the book grinds back up a small step at a time but
@@ -3550,6 +3589,7 @@ def session_stop_check(balance: float) -> bool:
         _session_halted = True
         _halt_reason    = "session_stop"
         log.warning("SESSION STOP │ $%.2f < $%.2f — halted.", balance, session_stop_threshold)
+        save_daily_state()   # latch survives a restart
         telegram_halt(f"Session stop at ${balance:.2f}", balance)
         return False
     return True
@@ -3602,8 +3642,91 @@ def daily_profit_target_check(balance: float) -> bool:
                 "$%.2f) — trading halted until UTC rollover.",
                 realized, target, DAILY_PROFIT_TARGET_PCT * 100,
                 session_start_balance)
+    # Write the latch immediately: a redeploy/crash between here and the next
+    # cycle's save must not resurrect the day and start a second +3% hunt.
+    save_daily_state()
     telegram_profit_target(realized, target, balance)
     return False
+
+
+# ── The day's state across restarts ───────────────────────────────────────────
+
+DAILY_STATE_SCHEMA = 1
+
+
+def save_daily_state() -> None:
+    """Persist today's risk state (atomic JSON write). Called once per main-loop
+    cycle — including while halted — and again the instant a halt latches, so a
+    crash between cycles can never lose the halt. Never raises: persistence is
+    observability, it must not be able to stop trading."""
+    if not DAILY_STATE_PERSIST:
+        return
+    try:
+        tmp = f"{DAILY_STATE_PATH}.tmp"
+        with open(tmp, "w") as f:
+            json.dump({
+                "schema":                DAILY_STATE_SCHEMA,
+                "day":                   _session_day,
+                "demo_mode":             DEMO_MODE,
+                "session_start_balance": round(session_start_balance, 4),
+                "halted":                _session_halted,
+                "halt_reason":           _halt_reason,
+                "paper_daily_pnl":       round(paper_daily_pnl, 4),
+                "live_daily_realized":   round(live_daily_realized, 4),
+                "consecutive_losses":    consecutive_losses,
+            }, f)
+        os.replace(tmp, DAILY_STATE_PATH)   # atomic on POSIX
+    except OSError as e:
+        log.warning("Daily state │ save failed: %s", e)
+
+
+def restore_daily_state(current_balance: float) -> bool:
+    """Restore today's risk state at boot. Returns True when a record was
+    adopted.
+
+    Only a record written TODAY (UTC) in the SAME mode is adopted — anything
+    else is stale or belongs to the other book, and the caller's fresh-day
+    values stand. Restores the day's OPENING balance (so the +3% goal is not
+    re-based upward by the restart), the session-stop floor derived from it,
+    today's realized P&L for the active mode, and any latched halt.
+    """
+    global session_start_balance, session_stop_threshold, consecutive_losses
+    global paper_daily_pnl, live_daily_realized, _session_halted, _halt_reason
+    if not DAILY_STATE_PERSIST:
+        return False
+    try:
+        with open(DAILY_STATE_PATH) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(d, dict):
+        return False
+    if d.get("day") != _session_day or bool(d.get("demo_mode")) != DEMO_MODE:
+        return False
+    try:
+        opening = float(d.get("session_start_balance", 0.0) or 0.0)
+        if opening > 0:
+            session_start_balance  = opening
+            session_stop_threshold = opening * SESSION_STOP_FRACTION
+        paper_daily_pnl     = float(d.get("paper_daily_pnl", 0.0) or 0.0)
+        live_daily_realized = float(d.get("live_daily_realized", 0.0) or 0.0)
+        consecutive_losses  = int(d.get("consecutive_losses", 0) or 0)
+        _session_halted     = bool(d.get("halted", False))
+        _halt_reason        = str(d.get("halt_reason", "") or "")
+    except (TypeError, ValueError) as e:
+        log.warning("Daily state │ corrupt record ignored: %s", e)
+        return False
+    realized = today_realized_pnl()
+    if _session_halted:
+        log.warning("Daily state │ RESUMING today's halt (%s) — realized $%+.2f, "
+                    "day opened at $%.2f (goal $%.2f). Paused until UTC rollover.",
+                    _halt_reason or "halted", realized, session_start_balance,
+                    daily_profit_target_dollars())
+    else:
+        log.info("Daily state │ restored today's session — opened at $%.2f, "
+                 "realized $%+.2f, balance now $%.2f.",
+                 session_start_balance, realized, current_balance)
+    return True
 
 
 def spread_check(bid: int, ask: int) -> bool:
@@ -3814,6 +3937,14 @@ def telegram_boot(balance: float) -> None:
     goal   = (f"Today's goal: +{DAILY_PROFIT_TARGET_PCT*100:.1f}% "
               f"(${target:.2f}) — trading stops when it's hit\n"
               if target > 0 else "Daily profit target: OFF\n")
+    # A restart that lands on a day already halted says so, or the customer sees
+    # a "STARTED" message and expects trading that (correctly) will not resume
+    # until the UTC rollover.
+    if _session_halted:
+        goal += ("🎯 Today's goal is already banked — paused until the UTC "
+                 "rollover.\n" if _halt_reason == "profit_target"
+                 else "⏸️ Today is halted (session stop) — paused until the UTC "
+                      "rollover.\n")
     tg.send_status_message(
         f"🤖 FlipPulse {BOT_VERSION} STARTED\n"
         f"{mode} │ State: {session_state.value}\n"
@@ -4480,6 +4611,10 @@ def maybe_roll_session_day(current_balance: float) -> bool:
              today, current_balance,
              " (target hit yesterday — trading resumed)" if was_target
              else " (halt cleared)" if was_halted else "", goal)
+    # Overwrite yesterday's record straight away, so a restart in the first
+    # cycles of the new day restores TODAY's baseline rather than falling back
+    # to a fresh boot (or, worse, adopting a record the rollover just voided).
+    save_daily_state()
     return True
 
 
@@ -4588,6 +4723,9 @@ def main() -> None:
         running_pnl            = 0.0
         session_start_balance  = paper_balance
         session_stop_threshold = paper_balance * SESSION_STOP_FRACTION
+        # A restart must not hand the day a fresh +3% budget: adopt today's
+        # persisted opening balance, realized P&L and halt when there is one.
+        restore_daily_state(paper_balance)
         recovery.reconcile_on_boot(paper_balance)
         probation.reconcile_on_boot()
         billing.reconcile_on_boot(paper_balance)
@@ -4630,6 +4768,9 @@ def main() -> None:
         consecutive_losses = 0
         running_pnl        = 0.0
         live_daily_realized = 0.0
+        # A restart must not hand the day a fresh +3% budget: adopt today's
+        # persisted opening balance, realized P&L and halt when there is one.
+        restore_daily_state(bal)
         recovery.reconcile_on_boot(bal)
         probation.reconcile_on_boot()
         billing.reconcile_on_boot(bal)
@@ -4658,6 +4799,7 @@ def main() -> None:
                 # summary is exactly what a paused customer wants to see).
                 report_scheduler.maybe_send(halt_bal)
                 write_status_snapshot(halt_bal)
+                save_daily_state()
                 if not maybe_roll_session_day(halt_bal):
                     log.info("Halted for the day (%s) — paused until UTC rollover.",
                              _halt_reason or "halted")
@@ -4706,6 +4848,9 @@ def main() -> None:
             billing.maybe_month_rollover(current_balance)
             run_decision(market, current_balance)
             write_status_snapshot(current_balance)
+            # Today's opening balance, realized P&L and halt state — so a restart
+            # resumes the day instead of re-arming a fresh +3% hunt.
+            save_daily_state()
             # Twice-daily P&L + win-rate briefing (9am/9pm ET by default). Idempotent
             # per slot, so calling it every cycle only fires once per scheduled time.
             report_scheduler.maybe_send(current_balance)
