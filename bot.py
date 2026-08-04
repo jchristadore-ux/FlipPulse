@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  FLIPPULSE (MarkeyMachine core)  v10.3.1  —  Production Build                ║
+║  FLIPPULSE (FlipPulse core)  v10.3.1  —  Production Build                ║
 ║  "No disassemble."                                                           ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  v10.3.1 — THE DAY'S HALT SURVIVES A RESTART.                                ║
@@ -430,7 +430,7 @@ logging.basicConfig(
     format="%(asctime)s │ %(levelname)-8s │ %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-log = logging.getLogger("MarkeyMachine")
+log = logging.getLogger("flippulse.bot")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -591,6 +591,12 @@ def _boot_demo_mode() -> bool:
 
 DEMO_MODE           = _boot_demo_mode()
 POLL_INTERVAL       = _env_int("POLL_INTERVAL_SECS", 30)
+# Operational polling intervals are read once at startup; defaults preserve the
+# historical timing while allowing deployments to tune load/recovery behavior.
+HEARTBEAT_INTERVAL_SECS = _env_int("HEARTBEAT_INTERVAL_SECS", 900)
+HALT_POLL_INTERVAL_SECS = _env_int("HALT_POLL_INTERVAL_SECS", 300)
+STALE_ORDER_PURGE_INTERVAL_SECS = _env_int("STALE_ORDER_PURGE_INTERVAL_SECS", 1200)
+DEMO_SETTLE_INTERVAL_SECS = _env_int("DEMO_SETTLE_INTERVAL_SECS", 900)
 
 # ── Capital & sizing (PERCENTAGE-BASED — v10.0.0) ─────────────────────────────
 # Every stake is a FRACTION OF THE CURRENT BALANCE, resolved to dollars at the
@@ -1259,6 +1265,11 @@ session_traded_tickers:    Set[str] = set()
 # re-processing: the settlements endpoint only returns the last ~100 records,
 # so keeping the newest few thousand ids guarantees a pruned id can't reappear.
 _processed_settlement_ids: "dict[str, None]" = {}
+# Kalshi returns only a small recent settlement window. Keeping substantially
+# more ids than that makes pruning safe: a pruned id cannot reappear in normal
+# operation, so this bounds memory without double-settling old records.
+PROCESSED_SETTLEMENT_IDS_MAX = 4000
+PREV_OB_MAX = 96 * 28  # four weeks of 15-minute markets
 
 paper_balance:          float = 25.0
 paper_daily_pnl:        float = 0.0
@@ -1287,6 +1298,22 @@ _shutdown_requested:   bool         = False
 _last_known_balance:   float        = 0.0
 
 _prev_ob: dict = {}
+
+def _remember_prev_ob(ticker: str, value: tuple, now: float) -> None:
+    """Store order-book state while retaining only recent market history."""
+    _prev_ob[ticker] = value
+    if len(_prev_ob) > PREV_OB_MAX:
+        oldest = sorted(_prev_ob, key=lambda key: _prev_ob[key][2])
+        for key in oldest[:len(_prev_ob) - PREV_OB_MAX]:
+            del _prev_ob[key]
+
+def _remember_settlement_id(rec_id: str) -> None:
+    """Record a settlement id and prune oldest ids beyond the safety window."""
+    _processed_settlement_ids[rec_id] = None
+    excess = len(_processed_settlement_ids) - PROCESSED_SETTLEMENT_IDS_MAX
+    if excess > 0:
+        for key in list(_processed_settlement_ids)[:excess]:
+            del _processed_settlement_ids[key]
 
 _vol_circuit_open:  bool  = False
 _vol_circuit_until: float = 0.0
@@ -2591,14 +2618,7 @@ def analyze_order_book(ob_data: dict, yes_mid: int) -> Optional[dict]:
 def check_ob_trend(ticker: str, direction: str, imbalance: float) -> bool:
     now  = time.time()
     prev = _prev_ob.get(ticker)
-    _prev_ob[ticker] = (direction, imbalance, now)
-
-    # Prune: a new 15-minute market exists every quarter hour, so without
-    # eviction this dict grows forever in a 24/7 process (~35k entries/year).
-    # Entries older than 10 min are already ignored by the logic below.
-    if len(_prev_ob) > 64:
-        for k in [k for k, (_, _, ts) in _prev_ob.items() if now - ts > 600]:
-            del _prev_ob[k]
+    _remember_prev_ob(ticker, (direction, imbalance, now), now)
 
     if prev is None:
         return True
@@ -3182,7 +3202,7 @@ def resolve_open_orders() -> None:
         now = time.time()
         for oid in list(open_orders.keys()):
             trade = open_orders[oid]
-            if now - trade.get("placed_at", now) < 900:
+            if now - trade.get("placed_at", now) < DEMO_SETTLE_INTERVAL_SECS:
                 continue
             open_orders.pop(oid)
             ticker    = trade.get("ticker", "")
@@ -3296,10 +3316,7 @@ def resolve_open_orders() -> None:
                         matched_oid = oid
                         break
 
-            _processed_settlement_ids[rec_id] = None
-            if len(_processed_settlement_ids) > 4000:      # 24/7 memory bound
-                for k in list(_processed_settlement_ids)[:2000]:
-                    del _processed_settlement_ids[k]
+            _remember_settlement_id(rec_id)
 
             if not matched_oid:
                 # Pre-restart trade: count toward W/L so RECOVERY can exit.
@@ -3431,7 +3448,7 @@ def resolve_open_orders() -> None:
 
         now   = time.time()
         stale = [oid for oid, t in open_orders.items()
-                 if now - t.get("placed_at", now) > 1200]
+                 if now - t.get("placed_at", now) > STALE_ORDER_PURGE_INTERVAL_SECS]
         for oid in stale:
             trade = open_orders.pop(oid)
             active_tickers.discard(trade.get("ticker", ""))
@@ -4803,7 +4820,7 @@ def main() -> None:
                 if not maybe_roll_session_day(halt_bal):
                     log.info("Halted for the day (%s) — paused until UTC rollover.",
                              _halt_reason or "halted")
-                    time.sleep(300)
+                    time.sleep(HALT_POLL_INTERVAL_SECS)
                     continue
 
             # Telegram policy: messages fire on a trade entry, a trade settlement,
