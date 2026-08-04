@@ -29,6 +29,7 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 | IMP-005 | 2026-07-08 | dashboard / command bot / engine | Paper↔live flip from the dashboard and Telegram (`/live confirm` · `/paper`), confirmation-gated, applied by a clean auto-restart when flat | High | In Progress |
 | IMP-006 | 2026-08-01 | engine / sizing | Daily +3% profit target halts trading for the day; laddering disabled so risk stays a flat % of balance | High | Done |
 | IMP-007 | 2026-08-01 | engine / sizing / liquidity | Balance-independence audit: make the rules identical at $20 and $20,000 (round-down sizing, no dollar cutoff, order-relative liquidity gate) | High | Done |
+| IMP-008 | 2026-08-04 | engine / risk | Daily +3% halt survives a restart: the day's opening balance, realized P&L and halt state persist to `/data` and are restored at boot | High | Done |
 
 ---
 
@@ -201,6 +202,46 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
   Covered by `test_balance_independence.py`, which pins the invariants (ceiling never
   exceeded at any balance/price, no dollar cutoff, liquidity requirement identical at every
   size, granularity converges and is never an over-risk).
+
+### IMP-008 — The daily +3% halt survives a restart
+- **Added:** 2026-08-04
+- **Area:** engine / risk
+- **Priority:** High
+- **Status:** Done (v10.3.1)
+- **Problem / motivation (owner directive):** "validate that the daily 3% profit halt is
+  engaged, in full mode or auto mode." Log audit of the 2026-08-03 → 2026-08-04 live run
+  (Railway, `balanced`, LIVE): the halt itself is correct end to end. The UTC rollover
+  re-based the day at `$59.27` and set the goal to `$1.78`; two wins (`+$1.23`, `+$0.74`)
+  banked `+$1.97` and the engine latched at 13:01:11 UTC —
+  `DAILY TARGET │ realized $+1.97 ≥ target $1.78 (3.0% of $59.27)` — then took no further
+  entry for the remaining 2.5 hours of log, only settlement bookkeeping. Both settlement
+  paths (paper and live) and the pre-entry gate call the same check, so the halt is
+  mode-agnostic and identical across all three trading formats.
+- **The hole the audit found:** every piece of the day's state (`_session_halted`,
+  `session_start_balance`, `paper_daily_pnl` / `live_daily_realized`) lived in process
+  memory only. Boot re-based the opening balance to the CURRENT balance and zeroed today's
+  realized P&L, so any restart after the target was banked — a Railway redeploy, an
+  OOM/crash restart, or the paper↔live flip in `_maybe_restart_for_mode_change()` (which is
+  reachable *while halted*) — silently cleared the halt and started a SECOND +3% hunt on
+  the same UTC day, with the session-stop floor re-armed 3% higher. Same class as the
+  v9.7.0 daily-loss latch bug. It did not fire in this log (one continuous container run),
+  but nothing prevented it.
+- **Change:** the day's state is written to `DAILY_STATE_PATH` (`/data/daily_state.json`,
+  atomic replace) every main-loop cycle — including while halted — and again the instant a
+  halt latches, so a crash between cycles cannot lose it. At boot it is restored only when
+  the record is for TODAY (UTC) **and** the same trading mode; a stale day or the other
+  book's record is ignored and the bot boots fresh as before. The restore brings back the
+  day's opening balance (so the goal is not re-based upward), the session-stop floor
+  derived from it, today's realized P&L, and any latched halt. The UTC rollover overwrites
+  the record immediately, so a finished day can never be resurrected. A restart that lands
+  on a halted day says so in the boot Telegram message. `DAILY_STATE_PERSIST=false`
+  restores the old in-memory-only behaviour.
+- **Impact / risk:** write-only side effect on the hot path (one small JSON per cycle, same
+  pattern as the status snapshot); every failure is caught and logged, never raised, so
+  persistence can't stop trading. Covered by 13 new cases in `test_daily_target.py`
+  (latch-is-written, restart resumes a banked day, opening balance and stop floor not
+  re-based, mid-day restart below target keeps trading, stale-day and other-mode records
+  ignored, rollover overwrites, corrupt/missing/unwritable paths, persistence off).
 
 <!--
 Template for a detailed entry — copy below when an item needs more than one line.

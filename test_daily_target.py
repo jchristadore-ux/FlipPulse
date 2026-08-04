@@ -1,7 +1,7 @@
 """Tests for the v10.2.0 owner directive: a daily +3% profit target that halts
 trading for the day, and flat risk (no laddering).
 
-Two behaviours under test:
+Three behaviours under test:
 
   1. DAILY PROFIT TARGET — daily_profit_target_dollars() is a percentage of the
      balance the day OPENED with; daily_profit_target_check() latches the halt
@@ -11,6 +11,11 @@ Two behaviours under test:
      laddering overlay is gone from the engine, the probation ramp is off by
      default, and recovery defaults to "No Stake Change", so nothing steps the
      dollar risk up or down independently of the balance.
+  3. RESTART SURVIVAL (v10.3.1) — the halt, the day's opening balance and
+     today's realized P&L are persisted and restored at boot, so a redeploy or
+     crash cannot clear a banked target and start a second +3% hunt on the same
+     UTC day. A record from another day, or from the other trading mode, is
+     ignored.
 
 Same import shim as test_bot_engine.py (bot.py needs Kalshi credentials at
 import; all persistence is disabled so no state files are written).
@@ -19,6 +24,7 @@ Run: pytest test_daily_target.py
 """
 
 import base64
+import json
 import os
 
 import pytest
@@ -34,7 +40,8 @@ os.environ.setdefault("KALSHI_PRIVATE_KEY_PEM_B64",
                       base64.b64encode(_PEM.encode()).decode())
 os.environ.setdefault("DEMO_MODE", "true")
 for _persist in ("RECOVERY_PERSIST", "PROBATION_PERSIST", "BUCKET_PERSIST",
-                 "BILLING_PERSIST", "REPORT_PERSIST", "LIFETIME_PERSIST"):
+                 "BILLING_PERSIST", "REPORT_PERSIST", "LIFETIME_PERSIST",
+                 "DAILY_STATE_PERSIST"):
     os.environ.setdefault(_persist, "false")
 
 import bot  # noqa: E402  (env must be set first)
@@ -219,3 +226,158 @@ def test_stake_does_not_grow_with_a_hot_streak(monkeypatch):
     for _ in range(25):
         bot.perf_guard_record(True)
     assert bot.kelly_bet(0.70, 50, 1000.0) == cold
+
+
+# ── the day's state survives a restart (v10.3.1) ─────────────────────────────
+
+@pytest.fixture
+def _daily_state(monkeypatch, tmp_path):
+    """Persistence pointed at a tmp file, with today's date as the session day."""
+    path = tmp_path / "daily_state.json"
+    monkeypatch.setattr(bot, "DAILY_STATE_PATH", str(path))
+    monkeypatch.setattr(bot, "DAILY_STATE_PERSIST", True)
+    monkeypatch.setattr(bot, "_session_day", bot.datetime.now(bot.timezone.utc)
+                        .strftime("%Y-%m-%d"))
+    return path
+
+
+def _boot_fresh(monkeypatch, balance):
+    """Simulate what main() sets up before restore_daily_state() runs."""
+    monkeypatch.setattr(bot, "_session_halted", False)
+    monkeypatch.setattr(bot, "_halt_reason", "")
+    monkeypatch.setattr(bot, "session_start_balance", balance)
+    monkeypatch.setattr(bot, "session_stop_threshold",
+                        balance * bot.SESSION_STOP_FRACTION)
+    monkeypatch.setattr(bot, "paper_daily_pnl", 0.0)
+    monkeypatch.setattr(bot, "live_daily_realized", 0.0)
+
+
+def test_halt_is_written_the_moment_it_latches(_daily_state, monkeypatch):
+    monkeypatch.setattr(bot, "paper_daily_pnl", 30.0)
+    assert bot.daily_profit_target_check(1030.0) is False
+    saved = json.loads(_daily_state.read_text())
+    assert saved["halted"] is True
+    assert saved["halt_reason"] == "profit_target"
+    assert saved["session_start_balance"] == 1000.0
+    assert saved["paper_daily_pnl"] == 30.0
+
+
+def test_restart_resumes_a_banked_day(_daily_state, monkeypatch):
+    """The whole point: the bot banks +3%, is restarted at a HIGHER balance, and
+    must come back halted with the day's ORIGINAL opening balance — not a fresh
+    3% budget measured off the profit it just made."""
+    monkeypatch.setattr(bot, "paper_daily_pnl", 30.0)
+    bot.daily_profit_target_check(1030.0)
+
+    _boot_fresh(monkeypatch, 1030.0)               # boot re-reads the live balance
+    assert bot.restore_daily_state(1030.0) is True
+    assert bot._session_halted is True
+    assert bot._halt_reason == "profit_target"
+    assert bot.session_start_balance == 1000.0     # NOT re-based to 1030
+    assert bot.daily_profit_target_dollars() == 30.0
+    assert bot.paper_daily_pnl == 30.0
+    assert bot.daily_profit_target_check(1030.0) is False
+
+
+def test_restart_restores_the_session_stop_floor(_daily_state, monkeypatch):
+    """The floor is 40% of the day's OPENING balance; a restart must not re-arm
+    it against a balance the day's trading already moved."""
+    monkeypatch.setattr(bot, "paper_daily_pnl", 30.0)
+    bot.daily_profit_target_check(1030.0)
+    _boot_fresh(monkeypatch, 1030.0)
+    bot.restore_daily_state(1030.0)
+    assert bot.session_stop_threshold == 1000.0 * bot.SESSION_STOP_FRACTION
+
+
+def test_restart_mid_day_below_target_keeps_trading(_daily_state, monkeypatch):
+    """Restoring is not halting: a day that had NOT hit the goal resumes trading
+    with its progress intact."""
+    monkeypatch.setattr(bot, "paper_daily_pnl", 12.0)
+    bot.save_daily_state()
+    _boot_fresh(monkeypatch, 1012.0)
+    assert bot.restore_daily_state(1012.0) is True
+    assert bot._session_halted is False
+    assert bot.paper_daily_pnl == 12.0             # progress carried, not zeroed
+    assert bot.daily_profit_target_check(1012.0) is True
+
+
+def test_yesterdays_record_is_ignored(_daily_state, monkeypatch):
+    monkeypatch.setattr(bot, "paper_daily_pnl", 30.0)
+    bot.daily_profit_target_check(1030.0)
+    monkeypatch.setattr(bot, "_session_day", "2099-12-31")   # a different day
+    _boot_fresh(monkeypatch, 1030.0)
+    assert bot.restore_daily_state(1030.0) is False
+    assert bot._session_halted is False
+    assert bot.session_start_balance == 1030.0
+    assert bot.paper_daily_pnl == 0.0
+
+
+def test_the_other_modes_record_is_ignored(_daily_state, monkeypatch):
+    """A paper day's P&L must never halt the live account (or vice-versa) —
+    they are different books."""
+    monkeypatch.setattr(bot, "paper_daily_pnl", 30.0)
+    bot.daily_profit_target_check(1030.0)          # written in PAPER mode
+    monkeypatch.setattr(bot, "DEMO_MODE", False)   # ...restarted into LIVE
+    _boot_fresh(monkeypatch, 1030.0)
+    assert bot.restore_daily_state(1030.0) is False
+    assert bot._session_halted is False
+    assert bot.session_start_balance == 1030.0
+
+
+def test_rollover_overwrites_the_record(_daily_state, monkeypatch):
+    """A finished day can never be resurrected: the rollover rewrites the file
+    with the new day's baseline before the next cycle can restart."""
+    monkeypatch.setattr(bot, "paper_daily_pnl", 30.0)
+    bot.daily_profit_target_check(1030.0)
+    monkeypatch.setattr(bot, "_session_day", "1999-01-01")   # force a rollover
+    monkeypatch.setattr(bot.probation, "start", lambda *a, **k: None)
+    assert bot.maybe_roll_session_day(1030.0) is True
+    saved = json.loads(_daily_state.read_text())
+    assert saved["halted"] is False
+    assert saved["halt_reason"] == ""
+    assert saved["session_start_balance"] == 1030.0
+    assert saved["day"] == bot.datetime.now(bot.timezone.utc).strftime("%Y-%m-%d")
+
+
+def test_a_corrupt_record_never_blocks_boot(_daily_state, monkeypatch):
+    _daily_state.write_text("{not json")
+    _boot_fresh(monkeypatch, 1030.0)
+    assert bot.restore_daily_state(1030.0) is False
+    assert bot._session_halted is False
+
+
+def test_a_missing_record_never_blocks_boot(monkeypatch, tmp_path):
+    monkeypatch.setattr(bot, "DAILY_STATE_PATH", str(tmp_path / "absent.json"))
+    monkeypatch.setattr(bot, "DAILY_STATE_PERSIST", True)
+    _boot_fresh(monkeypatch, 1030.0)
+    assert bot.restore_daily_state(1030.0) is False
+    assert bot._session_halted is False
+
+
+def test_an_unwritable_path_never_stops_trading(monkeypatch):
+    monkeypatch.setattr(bot, "DAILY_STATE_PERSIST", True)
+    monkeypatch.setattr(bot, "DAILY_STATE_PATH", "/nonexistent-dir/daily.json")
+    bot.save_daily_state()                          # must not raise
+    monkeypatch.setattr(bot, "paper_daily_pnl", 30.0)
+    assert bot.daily_profit_target_check(1030.0) is False
+    assert bot._session_halted is True
+
+
+def test_persistence_off_is_a_clean_no_op(monkeypatch, tmp_path):
+    path = tmp_path / "daily_state.json"
+    monkeypatch.setattr(bot, "DAILY_STATE_PATH", str(path))
+    monkeypatch.setattr(bot, "DAILY_STATE_PERSIST", False)
+    bot.save_daily_state()
+    assert not path.exists()
+    assert bot.restore_daily_state(1000.0) is False
+
+
+def test_live_mode_round_trips_the_live_accumulator(_daily_state, monkeypatch):
+    monkeypatch.setattr(bot, "DEMO_MODE", False)
+    monkeypatch.setattr(bot, "live_daily_realized", 30.0)
+    assert bot.daily_profit_target_check(1030.0) is False
+    _boot_fresh(monkeypatch, 1030.0)
+    assert bot.restore_daily_state(1030.0) is True
+    assert bot.live_daily_realized == 30.0
+    assert bot.today_realized_pnl() == 30.0
+    assert bot._session_halted is True
