@@ -31,7 +31,7 @@ from typing import Optional, Tuple
 
 import requests
 
-log = logging.getLogger("MarkeyMachine.telegram")
+log = logging.getLogger("flippulse.telegram")
 
 # ── Module state ──────────────────────────────────────────────────────────────
 _telegram_enabled: bool = False
@@ -288,6 +288,14 @@ def _log_config_diagnostic(token: str) -> None:
             return
     except Exception as exc:  # pragma: no cover - network
         log.debug("getMe diagnostic error: %s", exc)
+        return
+
+    # The command bot owns Telegram's sole getUpdates consumer. During normal
+    # operation, skip this best-effort diagnostic rather than colliding with its
+    # long poll (Telegram responds 409 to the second consumer).
+    if os.environ.get("TELEGRAM_CHAT_ID", "").strip():
+        log.error("Skipping getUpdates diagnostic because the command bot is enabled; "
+                  "it owns the Telegram update stream.")
         return
 
     try:
