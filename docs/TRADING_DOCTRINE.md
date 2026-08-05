@@ -204,28 +204,54 @@ truth:
 
 **Lifecycle**
 
-1. A **normal-mode** trade settles a **loss** → recovery activates. The
-   **recovery target** is set to the realized balance recorded *immediately
-   before that trade was entered* (stamped on the order at placement, so it is
-   exact — never reconstructed from PnL).
+1. A **normal-mode** trade settles a **loss** → recovery activates, owing
+   exactly the **realized dollars that trade lost** (the `deficit`).
 2. While recovering, every trade uses `RECOVERY_TRADE_PCT` of balance. Trade
    evaluation, P/L tracking, halts, cooldowns and the streak pause are unchanged.
-3. As soon as the realized balance is **≥ the recovery target**, recovery
-   deactivates and sizing returns to `NORMAL_TRADE_PCT` of balance — no manual step.
+   Every settlement is booked against the deficit: a win pays it down, a further
+   loss deepens it.
+3. As soon as the **deficit reaches zero** — the loss has been traded back —
+   recovery deactivates and sizing returns to `NORMAL_TRADE_PCT` of balance — no
+   manual step.
+
+**Deposits and withdrawals never touch recovery (v10.3.3)**
+
+Recovery answers one question: *has the bot earned back what it lost trading?*
+It is therefore measured in **realized trade P&L**, and only a settled trade can
+move it. Money the customer moves into or out of Kalshi is not trading and is
+ignored by the claw-back entirely.
+
+Until v10.3.3 recovery stored an absolute target — the balance immediately
+before the losing trade — and waited for the live balance to climb back to it.
+That anchor could not tell a trading loss from a cash transfer, so:
+
+- **withdrawing between entry and settlement** added the withdrawn cash to the
+  claw-back (a $3 loss with a $400 withdrawal armed a $403 claw-back);
+- **withdrawing mid-recovery** put the target permanently out of reach and
+  latched recovery — boot reconciliation faithfully resumed it forever;
+- **depositing mid-recovery** met the target on the transfer alone and cleared
+  recovery without a dollar being earned back.
+
+The **balance to climb back to is now derived for display** — today's balance
+plus what is still owed. It holds steady while trading (a $4 win lifts the
+balance $4 and drops the deficit $4) and re-bases with the account: withdraw
+$400 and the shown target falls $400, rather than becoming $400 of extra hole.
 
 **Invariants / edge cases (why it can't get stuck or oscillate)**
 
-- **Entry is event-driven** (a settled full-size loss). A loss that occurs while
-  *already* recovering does **not** move the target — the goal stays the
-  original pre-loss balance.
-- **Exit is balance-driven and checked every cycle and on boot**, independent of
-  whether any trade fires. So once balance reaches the target even once,
-  recovery clears. It cannot wedge.
-- **No oscillation:** crossing the target only ever *exits* recovery; re-entry
+- **Entry is event-driven** (a settled full-size loss) and sized from that
+  trade's realized P&L. A loss while *already* recovering does not re-arm
+  recovery; it deepens the existing deficit, so the goal stays "net flat on
+  trading since entry".
+- **Exit is P&L-driven and checked every cycle and on boot**, independent of the
+  balance. Once the loss has been earned back recovery clears — at any account
+  size, so a withdrawal can never wedge it.
+- **No oscillation:** paying off the deficit only ever *exits* recovery; re-entry
   requires a brand-new full-size loss, so there is no per-cycle flip-flop.
-- **Boot reconciliation** clears recovery if balance already ≥ target (e.g. it
-  recovered while the bot was offline) and clears a corrupt/zero target.
-- **Persistence:** state `{active, target_balance}` is written atomically to
+- **Boot reconciliation** clears recovery when nothing is left to claw back and
+  migrates a pre-v10.3.3 state file once (`deficit = old target − balance`);
+  every settlement after that is pure trade P&L.
+- **Persistence:** state `{active, deficit}` (schema 2) is written atomically to
   `RECOVERY_STATE_PATH`. This survives an in-container restart. **Railway's
   container filesystem is wiped on every redeploy**, so for the state to survive
   a *redeploy* you must mount a **Railway Volume** and point

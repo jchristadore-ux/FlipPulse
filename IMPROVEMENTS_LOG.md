@@ -31,6 +31,7 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
 | IMP-007 | 2026-08-01 | engine / sizing / liquidity | Balance-independence audit: make the rules identical at $20 and $20,000 (round-down sizing, no dollar cutoff, order-relative liquidity gate) | High | Done |
 | IMP-008 | 2026-08-04 | engine / risk | Daily +3% halt survives a restart: the day's opening balance, realized P&L and halt state persist to `/data` and are restored at boot | High | Done |
 | IMP-009 | 2026-08-04 | engine / risk | Daily +3% halt no longer depends on a file surviving: the state path is proven at boot and a LIVE boot rebuilds the day from Kalshi's own settlements when there is no record | High | Done |
+| IMP-010 | 2026-08-05 | engine / risk | Kalshi withdrawals no longer feed recovery mode: the claw-back is measured in realized trade P&L, not in account balance | High | Done |
 
 ---
 
@@ -278,6 +279,44 @@ moves from `Proposed` → `Approved` → `In Progress` → `Done` (or `Rejected`
   last 100 records account-wide, so a day with more than 100 settlements is only partially
   visible — the reconstruction logs a warning when it hits that window. Covered by 11 new
   cases in `test_daily_target.py`.
+
+### IMP-010 — Withdrawals no longer feed recovery mode
+- **Added:** 2026-08-05
+- **Area:** engine / risk
+- **Priority:** High
+- **Status:** Done (v10.3.3)
+- **Problem / motivation (owner directive):** "Withdrawals from the Kalshi account should not
+  trigger recovery mode — recovery should only trigger based on trade losses." Recovery
+  *armed* correctly (only a settled full-size loss ever called `enter()`), but it was
+  **measured in cash**: entry stored the balance recorded immediately before the losing
+  trade and exit waited for the live balance to climb back to that number. An absolute
+  balance target cannot tell a trading loss from money the customer moved off Kalshi, so a
+  withdrawal was indistinguishable from a loss. Withdraw between entry and settlement and a
+  $3 loss armed a claw-back of $3 + the withdrawal; withdraw mid-recovery and the target
+  went permanently out of reach, latching recovery across every restart (boot reconciliation
+  faithfully resumed it); deposit mid-recovery and the target was met by the transfer alone,
+  clearing recovery without a dollar being earned back.
+- **Change:** `RecoveryState` now stores `deficit` — the realized trade dollars still owed —
+  instead of a balance. It is seeded with the size of the losing trade and moves **only**
+  when a trade settles (`on_trade_settled` → `apply_pnl`: a win pays it down, a further loss
+  deepens it). Exit is "deficit paid", still checked every cycle and on boot. Pre-restart
+  settlements that arrive without a matching order record are booked too, so nothing is
+  double-counted. Deposits and withdrawals touch nothing. The balance to climb back to is
+  **derived** for display (`target_for` = current balance + what is owed), so it holds steady
+  while trading and re-bases with the account — withdraw $400 and the shown target drops
+  $400 instead of becoming $400 of extra hole. `/status`, the dashboard snapshot and the
+  boot banner report the dollars still owed (`recovery_deficit`).
+- **Impact / risk:** what *arms* recovery is unchanged (a settled full-size normal-mode
+  loss), as are the No-Stake-Change default, the win-rate restore, the probation ramp and
+  every guard. Persisted state is schema 2; a schema-1 file is migrated once at boot
+  (`deficit = old target − balance`) and is pure trade P&L from then on, so an in-flight
+  recovery survives the deploy. With No Stake Change ON (the default) recovery does not
+  move the stake at all, so the change is observability-only for current deployments —
+  it matters for anyone running the reduced recovery tier. Covered by 19 new cases in
+  `test_recovery_pnl_anchor.py` plus a `/status` case in `test_command_bot.py`.
+- **Notes:** the daily +3% goal and the 40% session stop are still balance-anchored by
+  design (they are cash rules, re-based at each UTC rollover), so a large mid-day withdrawal
+  can still trip the session stop for the remainder of that day. Out of scope here.
 
 <!--
 Template for a detailed entry — copy below when an item needs more than one line.

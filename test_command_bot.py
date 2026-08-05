@@ -434,3 +434,18 @@ def test_status_shows_recovery_target(tmp_path):
     )
     reply = _handler(tmp_path, snap).handle("123", "/status")
     assert "Recovery target: $1,000.00" in reply
+
+
+def test_status_shows_trade_losses_left_to_claw_back(tmp_path):
+    """v10.3.3: the claw-back is reported in TRADE LOSSES owed — a withdrawal
+    moves the balance target without changing what the bot has to earn back."""
+    snap = dict(
+        _SNAP, balance=597.0, session_pnl=-3.0, active_mode="recovery",
+        recovery_deficit=3.0, recovery_target=600.0,
+        recovery_wins=0, recovery_losses=0,
+        active_trade_pct=3.0, active_trade_size=17.91,
+        session_state="ACTIVE", updated_at="2026-08-05T00:00:00Z",
+    )
+    reply = _handler(tmp_path, snap).handle("123", "/status")
+    assert "$3.00 of trade losses left to claw back" in reply
+    assert "$600.00" in reply
