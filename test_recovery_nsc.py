@@ -47,15 +47,16 @@ def _clean_state(monkeypatch):
     # a private, non-existent override path by default (→ env default)
     monkeypatch.setattr(bot, "RECOVERY_NSC_OVERRIDE_PATH", "/nonexistent/nsc.json")
     bot.recovery.active = False
-    bot.recovery.target_balance = 0.0
+    bot.recovery.deficit = 0.0
     yield
     bot.recovery.active = False
-    bot.recovery.target_balance = 0.0
+    bot.recovery.deficit = 0.0
 
 
-def _activate_recovery():
-    bot.recovery.active = True
-    bot.recovery.target_balance = 1000.0
+def _activate_recovery(deficit: float = 100.0):
+    """Arm recovery owing `deficit` dollars of trade losses."""
+    bot.recovery.active  = True
+    bot.recovery.deficit = deficit
 
 
 # ── the toggle read ───────────────────────────────────────────────────────────
@@ -125,7 +126,7 @@ def test_enter_nsc_sends_no_stake_change_message(monkeypatch):
                         lambda msg: sent.append(msg) or True)
     monkeypatch.setattr(bot, "RECOVERY_NO_STAKE_CHANGE", True)
     monkeypatch.setattr(bot, "_recovery_nsc_cache", None)
-    assert bot.recovery.enter(1000.0, 900.0) is True
+    assert bot.recovery.enter(-100.0, 900.0) is True   # a $100 trade loss
     assert bot.recovery.active is True
     assert any("No Stake Change" in m for m in sent)
 
@@ -137,8 +138,8 @@ def test_exit_nsc_reports_nothing_to_ramp_back(monkeypatch):
     sent = []
     monkeypatch.setattr(bot.tg, "send_status_message",
                         lambda msg: sent.append(msg) or True)
-    _activate_recovery()
-    assert bot.recovery.maybe_exit(1000.0) is True   # target met → exits
+    _activate_recovery(deficit=0.0)                  # loss fully earned back
+    assert bot.recovery.maybe_exit(1000.0) is True
     assert bot.recovery.active is False
     assert any("nothing to ramp back" in m for m in sent)
 
@@ -148,15 +149,15 @@ def test_exit_standard_reports_size_restored(monkeypatch):
     sent = []
     monkeypatch.setattr(bot.tg, "send_status_message",
                         lambda msg: sent.append(msg) or True)
-    _activate_recovery()
+    _activate_recovery(deficit=0.0)
     assert bot.recovery.maybe_exit(1000.0) is True
     assert any("Trade size →" in m for m in sent)
 
 
 # ── win-rate restore (owner directive) ────────────────────────────────────────
 def _prime_recovery(wins, losses):
-    bot.recovery.active = True
-    bot.recovery.target_balance = 1000.0
+    bot.recovery.active  = True
+    bot.recovery.deficit = 100.0
     bot.recovery.wins = wins
     bot.recovery.losses = losses
 

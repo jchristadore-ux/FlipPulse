@@ -229,8 +229,16 @@ class CommandHandler:
         if snap.get("recovery_no_stake_change"):
             lines.append("Recovery: No-Stake-Change ON (stake held while clawing back)")
         if active_mode == "recovery":
+            # The claw-back is measured in trade losses, not in cash: deposits and
+            # withdrawals move the target but never the amount still owed.
             tgt = snap.get("recovery_target")
-            if isinstance(tgt, (int, float)) and tgt > 0:
+            due = snap.get("recovery_deficit")
+            if isinstance(due, (int, float)) and due > 0:
+                target_note = (f" → balance ${tgt:,.2f}"
+                               if isinstance(tgt, (int, float)) and tgt > 0 else "")
+                lines.append(f"Recovery: ${due:,.2f} of trade losses left to claw "
+                             f"back{target_note}")
+            elif isinstance(tgt, (int, float)) and tgt > 0:
                 lines.append(f"Recovery target: ${tgt:,.2f} (balance to claw back to)")
             rw = snap.get("recovery_wins", 0) or 0
             rl = snap.get("recovery_losses", 0) or 0

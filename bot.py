@@ -1,7 +1,37 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  FLIPPULSE (MarkeyMachine core)  v10.3.2  —  Production Build                ║
+║  FLIPPULSE (MarkeyMachine core)  v10.3.3  —  Production Build                ║
 ║  "No disassemble."                                                           ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  v10.3.3 — WITHDRAWALS NO LONGER FEED RECOVERY MODE (owner directive).       ║
+║                                                                              ║
+║  Recovery is meant to answer one question: has the bot earned back what it   ║
+║  lost trading? It was answering a different one. Entry recorded the balance  ║
+║  immediately before the losing trade and exit waited for the live balance to ║
+║  climb back to that number — an absolute cash target that cannot tell a      ║
+║  trading loss from money the customer moved off Kalshi. Three consequences,  ║
+║  all of them the withdrawal's fault and none of them the bot's:              ║
+║    • Withdraw between entry and settlement → the target still contained the  ║
+║      withdrawn cash, so a $3 loss armed a claw-back of $3 + the withdrawal.  ║
+║    • Withdraw mid-recovery → the target went permanently out of reach and    ║
+║      recovery latched; reconcile_on_boot dutifully resumed it forever.       ║
+║    • Deposit mid-recovery → the target was met by the transfer alone and     ║
+║      recovery cleared without a dollar being earned back.                    ║
+║                                                                              ║
+║  FIX: RecoveryState now stores `deficit` — the realized trade dollars still  ║
+║  owed — instead of a balance. It is seeded with the size of the losing trade ║
+║  and moves ONLY when a trade settles (a win pays it down, a further loss     ║
+║  deepens it, via on_trade_settled → apply_pnl). Exit is "deficit paid",      ║
+║  still checked every cycle and on boot. Deposits and withdrawals touch       ║
+║  nothing. The balance to climb back to is now DERIVED for display            ║
+║  (target_for = current balance + what is owed), so it re-bases with the      ║
+║  account: withdraw $400 and the shown target drops $400, it does not become  ║
+║  $400 of extra hole. Persisted state is schema 2; a schema-1 file is         ║
+║  migrated once at boot (deficit = old target − balance) and is pure trade    ║
+║  P&L from then on. /status and the dashboard gain `recovery_deficit`.        ║
+║                                                                              ║
+║  Unchanged: what ARMS recovery (a settled full-size loss), the No-Stake-     ║
+║  Change default, the win-rate restore, the probation ramp, every guard.      ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  v10.3.2 — THE DAILY HALT NO LONGER DEPENDS ON A FILE SURVIVING.             ║
 ║                                                                              ║
@@ -416,7 +446,7 @@
 
 from __future__ import annotations
 
-BOT_VERSION = "10.3.2"
+BOT_VERSION = "10.3.3"
 
 import base64
 import json
@@ -668,11 +698,11 @@ FORMAT_OVERRIDE_PATH  = os.environ.get("FORMAT_OVERRIDE_PATH", "").strip() or "/
 # gate in kelly_bet, never as a stake scaler).
 
 # ── Recovery Mode persistence ─────────────────────────────────────────────────
-# Where the recovery state (active flag + target balance) is written so it
-# survives an in-container process restart. NOTE: Railway's container filesystem
-# is ephemeral across REDEPLOYS — mount a Railway Volume and point
-# RECOVERY_STATE_PATH at it (e.g. /data/recovery_state.json) for the state to
-# survive a redeploy. Without a Volume, a redeploy resets to NORMAL sizing
+# Where the recovery state (active flag + the trade losses still to claw back)
+# is written so it survives an in-container process restart. NOTE: Railway's
+# container filesystem is ephemeral across REDEPLOYS — mount a Railway Volume
+# and point RECOVERY_STATE_PATH at it (e.g. /data/recovery_state.json) for the
+# state to survive a redeploy. Without a Volume, a redeploy resets to NORMAL sizing
 # (boot reconciliation makes this a safe, non-stuck default).
 RECOVERY_STATE_PATH = os.environ.get("RECOVERY_STATE_PATH", "recovery_state.json")
 RECOVERY_PERSIST    = _env_bool("RECOVERY_PERSIST", True)
@@ -1146,8 +1176,8 @@ NEUTRAL_ACCURACY_DRAG  = _env_float("NEUTRAL_ACCURACY_DRAG", 0.02)
 # / RECOVERY_EXIT_TRADES / RECOVERY_WIN_RATE_MIN / RECOVERY_MAX_SECS) was
 # removed by the v9.4.0 owner directive; those env vars were dead config and
 # are deleted. Today's "recovery" is the two-tier RecoveryState sizing below
-# (a settled full-size LOSS drops sizing to RECOVERY_TRADE_PCT until the
-# balance heals), which never blocks trading — only shrinks the stake.
+# (a settled full-size LOSS drops sizing to RECOVERY_TRADE_PCT until that loss
+# is traded back), which never blocks trading — only shrinks the stake.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1324,21 +1354,39 @@ _live_prior: float = OB_BASE_ACCURACY
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RECOVERY MODE  (two-tier position sizing — v9.5.0)
+# RECOVERY MODE  (two-tier position sizing — v9.5.0, re-anchored to P&L v10.3.3)
 #
 # After a FULL-SIZE (normal-mode) trade settles a LOSS, the bot drops to the
-# reduced RECOVERY_TRADE_PCT until the account balance climbs back to where it
-# was IMMEDIATELY BEFORE that losing trade. Then it returns to NORMAL_TRADE_PCT
-# automatically. The state (active flag + recovery target balance) is persisted
-# to disk so an in-container restart resumes mid-recovery.
+# reduced RECOVERY_TRADE_PCT until that loss has been earned back. Then it
+# returns to NORMAL_TRADE_PCT automatically. The state (active flag + the
+# dollars still owed) is persisted to disk so an in-container restart resumes
+# mid-recovery.
+#
+# THE CLAW-BACK IS MEASURED IN REALIZED TRADE P&L, NOT IN ACCOUNT BALANCE
+# (v10.3.3, owner directive: "withdrawals must not trigger recovery mode").
+# Recovery used to store an absolute target — the balance recorded immediately
+# before the losing trade — and exit when the live balance climbed back to it.
+# That anchor silently conflated trading with banking: money the customer moved
+# OUT of Kalshi read exactly like money the bot had lost.
+#   • Withdraw between entry and settlement → the target still included the
+#     withdrawn cash, so a $3 loss armed a claw-back of $3 + the withdrawal.
+#   • Withdraw mid-recovery → the target became unreachable and recovery latched
+#     forever (reconcile_on_boot faithfully resumed it across every restart).
+#   • Deposit mid-recovery → the target was met on the transfer alone and
+#     recovery cleared without a single dollar being earned back.
+# `deficit` is therefore the single source of truth: it is seeded with the size
+# of the losing trade and moves ONLY when a trade settles. Cash in and cash out
+# do not touch it, which is what makes recovery purely a function of trading.
+# The balance to claw back to is derived for display (target_for) as
+# current balance + what is still owed, so it re-bases with the account.
 #
 # Design guarantees (see also the edge-case notes in TRADING_DOCTRINE.md §6):
-#   • Entry is event-driven (a settled full-size loss), so the target is the
-#     exact recorded pre-trade balance — never reconstructed from PnL.
-#   • Exit is balance-driven and checked every cycle AND on boot, so the bot can
-#     never wedge in recovery once balance reaches the target even once.
-#   • enter() is a no-op while already active → a further loss never moves the
-#     target (the goal stays the original pre-loss balance).
+#   • Entry is event-driven (a settled full-size loss) and sized from that
+#     trade's realized P&L — never from a balance difference.
+#   • Exit is P&L-driven and checked every cycle AND on boot, so the bot can
+#     never wedge in recovery once the loss has been earned back.
+#   • enter() is a no-op while already active; a further loss deepens the
+#     deficit through apply_pnl instead (the goal stays "net flat since entry").
 #   • Single-threaded loop → mutate-then-persist is atomic w.r.t. sizing reads;
 #     there is no race and no per-cycle oscillation (entry needs a settlement).
 # This `recovery` object is mutated IN-PLACE only and must NEVER be reassigned
@@ -1347,21 +1395,42 @@ _live_prior: float = OB_BASE_ACCURACY
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RecoveryState:
-    """Persistent two-tier sizing mode. Owns {active, target_balance}."""
+    """Persistent two-tier sizing mode. Owns {active, deficit}."""
 
-    SCHEMA = 1
+    SCHEMA = 2
+
+    # Sub-cent residue from rounding must never hold recovery open.
+    EXIT_EPSILON = 0.005
 
     def __init__(self, path: str, persist: bool) -> None:
-        self.active:         bool  = False
-        self.target_balance: float = 0.0
+        self.active:  bool  = False
+        # Dollars of realized trade losses still to be earned back. Seeded from
+        # the losing trade, moved ONLY by settled trade P&L — never by deposits
+        # or withdrawals.
+        self.deficit: float = 0.0
         # Recovery-scoped settled outcomes (trades entered WHILE in recovery),
         # feeding the win-rate restore. Reset on every entry.
         self.wins:           int   = 0
         self.losses:         int   = 0
+        # A pre-v10.3.3 absolute target read off disk, converted to a deficit by
+        # reconcile_on_boot (which is the first place a balance is available).
+        self._legacy_target: float = 0.0
         self._path    = path
         self._persist = persist
         if self._persist:
             self._load()
+
+    # ── derived view ─────────────────────────────────────────────────────────
+    def target_for(self, current_balance: float) -> float:
+        """The balance the claw-back is aiming at, derived from where the account
+        is NOW: today's balance plus what is still owed. Reported, never stored —
+        storing it is what let a withdrawal move the goalposts. Constant while
+        trading (a $2 win lifts the balance $2 and drops the deficit $2) and
+        re-based by a transfer, so withdrawing $400 lowers the displayed target
+        by $400 rather than adding $400 to the hole."""
+        if not self.active:
+            return 0.0
+        return round(float(current_balance) + self.deficit, 2)
 
     # ── recovery-scoped win rate (feeds the win-rate restore) ─────────────────
     def record_result(self, won: bool) -> None:
@@ -1379,33 +1448,37 @@ class RecoveryState:
         return (self.wins / n) if n else 0.0
 
     # ── transitions ──────────────────────────────────────────────────────────
-    def enter(self, target_balance: float, current_balance: float) -> bool:
-        """Activate recovery with the given target. No-op if already active or
-        the target is not a usable, not-already-met value. Returns True on a
-        real activation."""
+    def enter(self, loss_amount: float, current_balance: float) -> bool:
+        """Arm recovery to claw back `loss_amount` — the realized dollars the
+        losing trade cost, NOT a balance difference. No-op if already active or
+        the loss is not a usable amount. Returns True on a real activation."""
         if self.active:
             return False
-        if target_balance is None or target_balance <= 0.0:
+        if loss_amount is None:
             return False
-        # If we are somehow already at/above the target, there is nothing to
-        # recover — stay in normal mode rather than enter-then-instantly-exit.
-        if current_balance >= target_balance:
+        loss = abs(round(float(loss_amount), 2))
+        # A no-fill/zero-P&L settlement lost nothing; there is nothing to claw
+        # back, so stay in normal mode rather than enter-then-instantly-exit.
+        if loss <= self.EXIT_EPSILON:
             return False
-        self.active         = True
-        self.target_balance = round(float(target_balance), 2)
+        self.active  = True
+        self.deficit = loss
         self.wins = self.losses = 0            # fresh recovery-scoped win-rate count
         self._save()
-        nsc = recovery_no_stake_change_enabled()
+        nsc    = recovery_no_stake_change_enabled()
+        target = self.target_for(current_balance)
         log.warning("Recovery mode ACTIVATED after losing full-size trade.")
-        log.warning("Previous balance: $%.2f", self.target_balance)
-        log.warning("Recovery target: $%.2f", self.target_balance)
+        log.warning("Trade loss to claw back: $%.2f", self.deficit)
+        log.warning("Recovery target: $%.2f (balance $%.2f + $%.2f owed)",
+                    target, current_balance, self.deficit)
         if nsc:
             # "No Stake Change" mode: track the claw-back, but do NOT drop the stake.
             log.warning("No-Stake-Change mode ON — keeping trade size at %.1f%% "
                         "of balance.", effective_normal_trade_pct() * 100)
             tg.send_status_message(
                 f"🛟 RECOVERY MODE ACTIVATED — No Stake Change\n"
-                f"Recovery target: ${self.target_balance:.2f}\n"
+                f"Clawing back the ${self.deficit:.2f} that trade lost "
+                f"(target ${target:.2f} at today's balance).\n"
                 f"Trade size stays at {effective_normal_trade_pct()*100:.1f}% of "
                 f"balance — no stake reduction, no jump-back on exit."
             )
@@ -1413,85 +1486,111 @@ class RecoveryState:
             log.warning("Switching trade size to: %.1f%% of balance", RECOVERY_TRADE_PCT * 100)
             tg.send_status_message(
                 f"🛟 RECOVERY MODE ACTIVATED\n"
-                f"Recovery target: ${self.target_balance:.2f}\n"
+                f"Clawing back the ${self.deficit:.2f} that trade lost "
+                f"(target ${target:.2f} at today's balance).\n"
                 f"Trade size → {RECOVERY_TRADE_PCT*100:.1f}% of balance "
                 f"(was {effective_normal_trade_pct()*100:.1f}%)"
             )
         return True
 
+    def apply_pnl(self, pnl: float) -> None:
+        """Book one settled trade's realized P&L against the claw-back: a win
+        pays the deficit down, a further loss deepens it. THE ONLY THING THAT
+        MOVES `deficit` — deposits and withdrawals deliberately do not, so the
+        bot never tries to "recover" money the customer simply moved."""
+        if not self.active:
+            return
+        try:
+            delta = float(pnl)
+        except (TypeError, ValueError):
+            return
+        if delta == 0.0:
+            return
+        self.deficit = round(self.deficit - delta, 2)
+        self._save()
+
     def maybe_exit(self, current_balance: float) -> bool:
-        """Deactivate recovery once balance has recovered to the target. Checked
-        every cycle and on boot. Returns True on a real deactivation."""
+        """Deactivate recovery once the loss has been earned back (deficit paid
+        down to zero by settled trades). Checked every cycle and on boot.
+        Returns True on a real deactivation."""
         if not self.active:
             return False
-        if current_balance < self.target_balance:
+        if self.deficit > self.EXIT_EPSILON:
             return False
-        reached = self.target_balance
         nsc = recovery_no_stake_change_enabled()
-        self.active         = False
-        self.target_balance = 0.0
+        self.active  = False
+        self.deficit = 0.0
         self.wins = self.losses = 0
         self._save()
-        log.warning("Recovery target reached.")
+        log.warning("Recovery target reached — the trade loss has been earned back.")
         log.warning("Recovery mode DEACTIVATED.")
         if nsc:
             # Stake never dropped, so there is nothing to ramp back to — exit is
             # a clean no-op on sizing.
             log.info("No-Stake-Change mode — sizing already at full; no ramp.")
             tg.send_status_message(
-                f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
-                f"${reached:.2f}\nStake never changed (No Stake Change mode) — "
-                f"nothing to ramp back."
+                f"✅ RECOVERY COMPLETE — the loss has been traded back.\n"
+                f"Balance ${current_balance:.2f}. Stake never changed (No Stake "
+                f"Change mode) — nothing to ramp back."
             )
             return True
         log.warning("Switching trade size back to: %.1f%% of balance", effective_normal_trade_pct() * 100)
         tg.send_status_message(
-            f"✅ RECOVERY COMPLETE — balance ${current_balance:.2f} ≥ target "
-            f"${reached:.2f}\nTrade size → {effective_normal_trade_pct()*100:.1f}% of balance"
+            f"✅ RECOVERY COMPLETE — the loss has been traded back.\n"
+            f"Balance ${current_balance:.2f}. Trade size → "
+            f"{effective_normal_trade_pct()*100:.1f}% of balance"
         )
         return True
 
     def clear_for_restore(self) -> None:
-        """Exit recovery WITHOUT the balance-target / probation-ramp path — used by
-        the win-rate restore, which returns straight to the full base stake.
+        """Exit recovery WITHOUT the deficit / probation-ramp path — used by the
+        win-rate restore, which returns straight to the full base stake.
         Silent: the caller owns the log/Telegram copy."""
-        self.active         = False
-        self.target_balance = 0.0
+        self.active  = False
+        self.deficit = 0.0
         self.wins = self.losses = 0
         self._save()
 
     def reconcile_on_boot(self, current_balance: float) -> None:
         """Self-heal persisted state at startup so the bot can never resume into
-        a stuck or nonsensical recovery."""
+        a stuck or nonsensical recovery, and migrate a pre-v10.3.3 absolute
+        target to a deficit (this is the first point a balance is known)."""
         if not self.active:
             return
-        if self.target_balance <= 0.0:
-            log.warning("Recovery boot │ corrupt target $%.2f — clearing.",
-                        self.target_balance)
-            self.active = False
+        if self._legacy_target > 0.0:
+            # Best effort: the old state recorded only "climb back to $X", so the
+            # outstanding loss can only be read as the gap from where we are now.
+            # Any transfer made under the old anchor is baked in here — this runs
+            # once, and every settlement after it is pure trade P&L.
+            self.deficit = round(max(0.0, self._legacy_target - current_balance), 2)
+            self._legacy_target = 0.0
+            log.warning("Recovery boot │ migrating legacy balance target to a "
+                        "P&L claw-back of $%.2f.", self.deficit)
             self._save()
-            return
-        if current_balance >= self.target_balance:
-            log.info("Recovery boot │ balance $%.2f already ≥ target $%.2f — "
-                     "exiting recovery.", current_balance, self.target_balance)
+        if self.deficit <= self.EXIT_EPSILON:
+            log.info("Recovery boot │ nothing left to claw back ($%.2f) — "
+                     "exiting recovery.", self.deficit)
             self.maybe_exit(current_balance)
             return
-        log.warning("Recovery boot │ RESUMING recovery. Balance $%.2f, target "
-                    "$%.2f, trade size %.1f%% of balance.",
-                    current_balance, self.target_balance, RECOVERY_TRADE_PCT * 100)
+        log.warning("Recovery boot │ RESUMING recovery. Balance $%.2f, $%.2f left "
+                    "to claw back (target $%.2f), trade size %.1f%% of balance.",
+                    current_balance, self.deficit, self.target_for(current_balance),
+                    RECOVERY_TRADE_PCT * 100)
 
     def status_line(self, current_balance: float) -> str:
         n  = self.wins + self.losses
         wr = f" WR={self.winrate()*100:.0f}% ({self.wins}W/{self.losses}L)" if n else ""
+        left = (f"${self.deficit:.2f} left to claw back "
+                f"(target ${self.target_for(current_balance):.2f}).")
         if recovery_no_stake_change_enabled():
             pct   = effective_normal_trade_pct()
             stake = pct * current_balance
             return (f"Recovery mode active (No Stake Change). Current balance: "
-                    f"${current_balance:.2f}. Target: ${self.target_balance:.2f}. "
+                    f"${current_balance:.2f}. {left} "
                     f"Trade size held at {pct*100:.1f}% (~${stake:.2f}).{wr}")
         stake = RECOVERY_TRADE_PCT * current_balance
         return (f"Recovery mode active. Current balance: ${current_balance:.2f}. "
-                f"Target: ${self.target_balance:.2f}. "
+                f"{left} "
                 f"Trade size: {RECOVERY_TRADE_PCT*100:.1f}% (~${stake:.2f}).{wr}")
 
     # ── persistence (atomic JSON write) ────────────────────────────────────────
@@ -1502,11 +1601,11 @@ class RecoveryState:
             tmp = f"{self._path}.tmp"
             with open(tmp, "w") as f:
                 json.dump({
-                    "schema":         self.SCHEMA,
-                    "active":         self.active,
-                    "target_balance": self.target_balance,
-                    "wins":           self.wins,
-                    "losses":         self.losses,
+                    "schema":  self.SCHEMA,
+                    "active":  self.active,
+                    "deficit": self.deficit,
+                    "wins":    self.wins,
+                    "losses":  self.losses,
                 }, f)
             os.replace(tmp, self._path)   # atomic on POSIX
         except OSError as e:
@@ -1518,10 +1617,15 @@ class RecoveryState:
                 d = json.load(f)
         except (OSError, ValueError):
             return
-        self.active         = bool(d.get("active", False))
-        self.target_balance = float(d.get("target_balance", 0.0) or 0.0)
-        self.wins           = int(d.get("wins", 0) or 0)
-        self.losses         = int(d.get("losses", 0) or 0)
+        self.active = bool(d.get("active", False))
+        self.wins   = int(d.get("wins", 0) or 0)
+        self.losses = int(d.get("losses", 0) or 0)
+        if "deficit" in d:
+            self.deficit = float(d.get("deficit") or 0.0)
+            return
+        # Schema 1 (pre-v10.3.3): an absolute balance target. Held until
+        # reconcile_on_boot, which has a balance to convert it against.
+        self._legacy_target = float(d.get("target_balance", 0.0) or 0.0)
 
 
 recovery = RecoveryState(RECOVERY_STATE_PATH, RECOVERY_PERSIST)
@@ -2212,17 +2316,29 @@ def in_clawback() -> bool:
     return probation.active
 
 
-def on_trade_settled(won: bool, trade_rec: dict, current_balance: float) -> None:
-    """Recovery ENTRY hook, called once per settled trade. Activates recovery
-    only when a normal-mode (full-size) trade loses and we are not already in
-    recovery; the target is the balance recorded just before that trade. A
-    full-size loss also cancels any in-flight probation ramp (we are dropping
-    back into the deeper recovery tier)."""
-    if won or recovery.active:
+def on_trade_settled(won: bool, trade_rec: dict, current_balance: float,
+                     pnl: "float | None" = None) -> None:
+    """Recovery ENTRY/PROGRESS hook, called once per settled trade — the ONLY
+    thing that moves recovery, so account transfers never can (v10.3.3).
+
+    While recovery is active every settlement is booked against the claw-back: a
+    win pays it down, a further loss deepens it. Otherwise a normal-mode
+    (full-size) LOSS arms recovery for exactly the dollars that trade lost, and
+    cancels any in-flight probation ramp (we are dropping back into the deeper
+    recovery tier).
+
+    `pnl` is the trade's realized dollars (negative on a loss); it falls back to
+    the value settlement stamped on the trade record."""
+    pnl_d = pnl if pnl is not None else (trade_rec or {}).get("pnl")
+    pnl_d = _coerce_float(pnl_d) or 0.0
+    if recovery.active:
+        recovery.apply_pnl(pnl_d)
+        return
+    if won:
         return
     if (trade_rec or {}).get("mode_at_entry") != "normal":
         return  # recovery/probation-mode losses and un-attributable trades skip
-    if recovery.enter((trade_rec or {}).get("balance_before"), current_balance):
+    if recovery.enter(pnl_d, current_balance):
         probation.cancel()
 
 
@@ -2259,7 +2375,7 @@ def maybe_winrate_restore(current_balance: float) -> bool:
     the stake is being held below the base, a strong recovery-scoped win rate
     (≥ RECOVERY_WINRATE_RESTORE_PCT over ≥ RECOVERY_WINRATE_MIN_TRADES settled
     recovery trades) returns straight to the full/original stake — bypassing the
-    slow probation ramp. Returns True when it fires."""
+    remaining claw-back and the slow probation ramp. Returns True when it fires."""
     if not RECOVERY_WINRATE_RESTORE_ENABLED or not recovery.active:
         return False
     n = recovery.wins + recovery.losses
@@ -3264,10 +3380,10 @@ def resolve_open_orders() -> None:
             perf_guard_record(won)
             bucket_stats.record(trade.get("entry_bucket"), won)
             lifetime.record(DEMO_MODE, won, trade_pnl)   # persistent all-time tally
-            # Recovery ENTRY hook: a full-size loss arms recovery (uses this
-            # trade's recorded pre-trade balance as the target). paper_balance is
-            # already updated above for this settlement.
-            on_trade_settled(won, trade, paper_balance)
+            # Recovery hook: a full-size loss arms recovery for exactly what this
+            # trade lost, and every settlement books its realized P&L against an
+            # active claw-back. paper_balance is already updated above.
+            on_trade_settled(won, trade, paper_balance, pnl=trade_pnl)
             # Probation RAMP hook: a probation-mode trade advances/steps the ramp.
             probation_record(won, trade, paper_balance)
             # Recovery win-rate restore feed: tally trades taken WHILE in recovery.
@@ -3350,6 +3466,13 @@ def resolve_open_orders() -> None:
                     live_daily_realized += pnl_d
                     perf_guard_record(pnl_d > 0)
                     lifetime.record(DEMO_MODE, pnl_d > 0, pnl_d)   # persistent all-time
+                    # It is still a settled TRADE, so it moves the claw-back like
+                    # any other. Without this a pre-restart win would be invisible
+                    # to recovery (the pre-v10.3.3 balance anchor saw it for free)
+                    # and the claw-back would over-count what is still owed. It
+                    # never ARMS recovery: there is no entry-mode stamp here, so a
+                    # reduced-size loss must not be mistaken for a full-size one.
+                    recovery.apply_pnl(pnl_d)
                     update_live_prior()
                 continue
 
@@ -3406,9 +3529,10 @@ def resolve_open_orders() -> None:
             perf_guard_record(won)
             bucket_stats.record(trade.get("entry_bucket"), won)
             lifetime.record(DEMO_MODE, won, pnl)   # persistent all-time tally
-            # Recovery ENTRY hook: `balance` was fetched (realized) above for
-            # this settled trade.
-            on_trade_settled(won, trade, balance)
+            # Recovery hook: arms on a full-size loss and books this trade's
+            # realized P&L against an active claw-back. `balance` was fetched
+            # (realized) above for this settled trade.
+            on_trade_settled(won, trade, balance, pnl=pnl)
             # Probation RAMP hook: a probation-mode trade advances/steps the ramp.
             probation_record(won, trade, balance)
             # Recovery win-rate restore feed: tally trades taken WHILE in recovery.
@@ -3939,9 +4063,10 @@ def place_order(ticker: str, direction: str, bet_dollars: float,
     cost      = (limit_cents * count) / 100.0
     client_id = f"mm-{uuid.uuid4().hex[:10]}"
     btc_entry = list(btc_prices)[-1] if btc_prices else 0
-    # v9.5.0: stamp the sizing mode + the realized balance immediately BEFORE
-    # this trade so settlement can (a) tell a full-size loss from a recovery-size
-    # loss and (b) set the recovery target to the exact pre-trade balance.
+    # v9.5.0: stamp the sizing mode so settlement can tell a full-size loss from
+    # a recovery-size one. `balance_before` is recorded for the trade log only —
+    # v10.3.3 removed it from the recovery path, because an absolute pre-trade
+    # balance also captures any cash the customer moves out before settlement.
     entry_mode = ("recovery" if recovery.active
                   else "probation" if probation.active
                   else "normal")
@@ -4097,7 +4222,7 @@ def telegram_boot(balance: float) -> None:
         f"{goal}"
         f"Size={active_trade_fraction()*100:.1f}% (~${active_trade_size(balance):.0f}) "
         f"(normal={NORMAL_TRADE_PCT*100:.1f}%/recovery={RECOVERY_TRADE_PCT*100:.1f}%/max={MAX_TRADE_PCT*100:.1f}%"
-        f"{' • RECOVERING→$%.0f' % recovery.target_balance if recovery.active else ''}) | "
+        f"{' • RECOVERING→$%.0f' % recovery.target_for(balance) if recovery.active else ''}) | "
         f"MaxConsecL={MAX_CONSEC_LOSSES}\n"
         f"MinConf={MIN_CONFIDENCE} | MinWinP={MIN_WIN_PROB*100:.0f}% | R²≥{R2_TREND_THRESHOLD}\n"
         f"OBDepth≥${MIN_OB_DEPTH:.0f} | OBImb≥{OB_IMBALANCE_THRESH*100:.0f}%\n"
@@ -4389,9 +4514,12 @@ def write_status_snapshot(balance: float) -> None:
             "recovery_losses": recovery.losses,
             "recovery_win_rate": round(recovery.winrate() * 100, 1),
             "recovery_winrate_restore_pct": round(RECOVERY_WINRATE_RESTORE_PCT * 100, 1),
-            # The balance recovery is clawing back to (0 when not in recovery),
-            # so /status and the dashboard can show how far there is to go.
-            "recovery_target": round(recovery.target_balance, 2),
+            # How far the claw-back has to go (both 0 when not in recovery).
+            # `recovery_deficit` is the authoritative figure — the trade losses
+            # still to be earned back; the target is that plus today's balance,
+            # so a withdrawal lowers the target instead of deepening the hole.
+            "recovery_deficit": round(recovery.deficit, 2) if recovery.active else 0.0,
+            "recovery_target": recovery.target_for(balance),
             "active_trade_pct": round(active_trade_fraction() * 100, 2),
             "active_trade_size": round(active_trade_size(balance), 2),
             # Full-size risk knob + the hard bounds the Telegram /risk command
@@ -4677,7 +4805,8 @@ def run_decision(market: dict, balance: float) -> None:
 
     last_signal_desc = f"SIGNAL {direction} conf={conf:.0f} p={win_prob:.2f}"
     # balance_before = the realized balance for this cycle (fetched before any
-    # order cost is debited) → the exact recovery target if this trade loses.
+    # order cost is debited), kept on the trade record for the log. Recovery
+    # sizes its claw-back from the settled P&L, not from this snapshot.
     place_order(ticker, direction, bet, limit_price, win_prob, edge,
                 balance_before=balance, count=count)
 
@@ -4840,7 +4969,8 @@ def main() -> None:
     # the prefix in sync with onboarding/provisioner.py LOG_MARKERS.
     log.info("  Sizing (%% of balance): normal=%.1f%% recovery=%.1f%% max=%.1f%%%s",
              NORMAL_TRADE_PCT * 100, RECOVERY_TRADE_PCT * 100, MAX_TRADE_PCT * 100,
-             " (RECOVERY active, target $%.2f)" % recovery.target_balance
+             " (RECOVERY active, $%.2f of trade losses left to claw back)"
+             % recovery.deficit
              if recovery.active else
              " (PROBATION ramp, rung %.1f%%→full %.1f%%)"
              % (probation.current_size() * 100, NORMAL_TRADE_PCT * 100)
@@ -4981,11 +5111,11 @@ def main() -> None:
             maybe_roll_session_day(current_balance)
             # Recovery win-rate restore runs first: a strong recovery win rate
             # while the stake is held below base fast-tracks straight back to the
-            # full stake (no balance target, no probation ramp). Otherwise fall
-            # through to the normal balance-target exit.
+            # full stake (claw-back forgiven, no probation ramp). Otherwise fall
+            # through to the normal claw-back-complete exit.
             if not maybe_winrate_restore(current_balance):
                 # Recovery EXIT check runs every cycle, independent of trading, so
-                # the bot can never wedge in recovery once balance reaches target.
+                # the bot can never wedge in recovery once the loss is earned back.
                 # On a real exit, begin the graduated probation ramp instead of
                 # snapping straight back to full size (no-op if the ramp is disabled
                 # or there is no sub-full room, in which case sizing resumes normal).

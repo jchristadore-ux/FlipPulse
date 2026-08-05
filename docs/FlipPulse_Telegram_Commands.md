@@ -56,8 +56,13 @@ target. Any position still open when the goal is hit settles normally.
 ### What is "Recovery Mode — No Stake Change"?
 
 Normally, after a full-size losing trade the bot enters **recovery mode** and
-*shrinks* your stake while it claws the balance back, then returns to full size
+*shrinks* your stake while it earns that loss back, then returns to full size
 once you're back to even.
+
+> **Withdrawals don't put you in recovery.** The claw-back counts only what
+> *trades* lost, so moving money in or out of Kalshi never adds to it (and never
+> clears it either). `/status` shows the dollars of trade losses still to earn
+> back; the balance target next to it re-bases when you deposit or withdraw.
 
 With **No Stake Change ON**, recovery still triggers and tracks the claw-back,
 but it **keeps your stake exactly where it was** — no stake reduction, and no jump
