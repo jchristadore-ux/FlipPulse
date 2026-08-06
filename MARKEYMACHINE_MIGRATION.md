@@ -182,8 +182,18 @@ Watch the new service's deploy logs for both markers:
 
 ```
 ✅ RSA private key loaded.
-Sizing (% of balance)
+  Sizing (% of balance): normal=5.0% recovery=1.5% max=4.0%
 ```
+
+The sizing line is the migration's own receipt — it prints the three converted
+percentages, and appends the carried-over state if any:
+
+- `(RECOVERY active, $X of trade losses left to claw back)` — confirms
+  `recovery_state.json` was read and the schema-1 target converted to a deficit.
+- `(PROBATION ramp, rung X%→full Y%)` — confirms the converted ramp resumed.
+
+Check those percentages against the **RESCALED** section of the migration report. If
+they disagree, the wrong config is deployed.
 
 Then confirm:
 
