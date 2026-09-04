@@ -27,6 +27,12 @@ def client():
 def _configure(monkeypatch, stripe_key: str, webhook_secret: str) -> None:
     monkeypatch.setattr(app_mod, "STRIPE_SECRET_KEY", stripe_key)
     monkeypatch.setattr(app_mod, "STRIPE_WEBHOOK_SECRET", webhook_secret)
+    # /healthz is only green when the service can actually complete a signup, and
+    # that needs the encryption key — otherwise the form refuses at the last step
+    # (after the customer has pasted their Kalshi key). Set it so these tests
+    # assert on the Stripe condition alone; test_healthz_requires_encryption_key
+    # covers its absence.
+    monkeypatch.setattr(app_mod, "FERNET_KEY", "x" * 44)
 
 
 def test_stripe_live_without_webhook_secret_fails_loudly(client, monkeypatch):

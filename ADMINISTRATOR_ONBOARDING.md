@@ -282,11 +282,19 @@ Do **not** do this during initial onboarding. When the customer is ready:
    https URL). The form then runs Checkout in `subscription` mode: the setup fee lands on
    the first invoice, the subscription recurs monthly, and the **card is saved** on file
    for any future invoices.
-4. Add a Stripe webhook to `POST /stripe/webhook` for
-   `checkout.session.completed` and set `STRIPE_WEBHOOK_SECRET` — the submission is then
-   auto-marked `paid`, **and (with `RAILWAY_API_TOKEN` set) the customer's bot is
-   provisioned automatically** — see
-   [`AUTOMATED_PROVISIONING.md`](AUTOMATED_PROVISIONING.md).
+4. Add a Stripe webhook to `POST /stripe/webhook` and set `STRIPE_WEBHOOK_SECRET`.
+   On `checkout.session.completed` the submission is auto-marked `paid`, **and
+   (with `RAILWAY_API_TOKEN` set) the customer's bot is provisioned
+   automatically** — see [`AUTOMATED_PROVISIONING.md`](AUTOMATED_PROVISIONING.md).
+   Enable the **full event list** in
+   [`onboarding/README.md` §1a](onboarding/README.md#1a-stripe-webhook-events--required),
+   not just that one event: the renewal, dunning, cancellation, refund and
+   chargeback events are what tell you when a customer stops paying. Without
+   `customer.subscription.deleted` in particular, a cancelled customer keeps a
+   free running bot indefinitely.
+5. Put `SUBMISSIONS_DIR` on a mounted volume (`/data/submissions`) before taking
+   live payments. The default path is inside the code checkout, which Railway
+   wipes on every redeploy — that file is the only record that a customer paid.
 
 See [`onboarding/README.md`](onboarding/README.md) for the full env-var list and how to
 deploy the form as its own Railway service.
