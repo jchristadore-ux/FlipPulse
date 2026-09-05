@@ -47,12 +47,12 @@ Environment variables:
 | `STRIPE_SECRET_KEY` | for payment | Stripe secret key (`sk_live_...` / `sk_test_...`). |
 | `STRIPE_MONTHLY_PRICE_ID` | for payment | Recurring $99/mo **Price** id (`price_...`). If you paste a **Product** id (`prod_...`) by mistake — the id the Stripe dashboard shows most prominently — the service auto-resolves it to that product's default price so checkout still works. |
 | `STRIPE_SETUP_PRICE_ID` | for payment | One-time $150 setup **Price** id (`price_...`); a `prod_...` is auto-resolved to its default price too. |
-| `STRIPE_WEBHOOK_SECRET` | **required with Stripe** | Verifies `checkout.session.completed` so a submission is marked **paid** (which triggers auto-provisioning). Without it, paid customers are never marked paid and never provisioned — the app logs an ERROR at boot, `/healthz` reports `ok: false`, and the webhook returns 500 so Stripe flags the endpoint. |
+| `STRIPE_WEBHOOK_SECRET` | **required with Stripe** | Verifies every webhook — the checkout that marks a submission **paid** (triggering auto-provisioning) and the whole billing lifecycle after it (see [§1a](#1a-stripe-webhook-events--required)). Without it, paid customers are never marked paid and never provisioned — the app logs an ERROR at boot, `/healthz` reports `ok: false`, and the webhook returns 500 so Stripe flags the endpoint. |
 | `FOUNDING_COUPON_ID` | optional | A Stripe **coupon** id (e.g. the "Founder 100" `$249-off-once` coupon, id like `10xGeLZu`) auto-applied to **every** signup — no code for the customer to type. When the coupon is exhausted/expired, checkout retries once at full price so signups never break; unset it to end the offer. Mutually exclusive with `STRIPE_ALLOW_PROMO_CODES`. |
 | `STRIPE_ALLOW_PROMO_CODES` | optional | `true` shows an "Add promotion code" box on the Stripe Checkout page so customers can type a code (e.g. `FOUNDER100`). Ignored when `FOUNDING_COUPON_ID` is set (Stripe rejects a session using both). |
 | `ADMIN_TOKEN` | optional | Enables the operator dashboard at `/admin`. Unset = dashboard disabled (routes 404). |
 | `PUBLIC_BASE_URL` | optional | Public https URL (for Stripe success/cancel redirects). Defaults to the request host. |
-| `SUBMISSIONS_DIR` | optional | Where submission files are written (default `./submissions`; put on a Railway volume to persist). |
+| `SUBMISSIONS_DIR` | optional | Where submission files are written. **Set this to `/data/submissions` on a mounted volume whenever Stripe is live** — the default `./submissions` is inside the code checkout, which Railway destroys on every redeploy, taking payment status, Stripe ids, billing history and encrypted credentials with it. The app logs an ERROR at boot in that combination, and `/healthz` reports `submissions_durable: false`. |
 | `ONBOARDING_PRICE_SETUP` / `ONBOARDING_PRICE_MONTHLY` | optional | Display-only pricing on the form (default `150` / `99`). |
 | `ONBOARDING_PERF_PCT` | optional | Placeholder for a future performance fee; default `0` and **not shown** on the form. |
 | `RAILWAY_API_TOKEN` | for auto-provisioning | Railway account/workspace token — enables zero-touch bot deployment on payment. |
@@ -66,6 +66,47 @@ Full provisioning reference (all knobs, failure handling, architecture):
 
 If Stripe is not configured the form still works — it stores the submission,
 alerts you, and shows a local success page (you collect payment manually).
+
+## 1a. Stripe webhook events — required
+
+Create one endpoint in the Stripe dashboard (**Developers → Webhooks → Add
+endpoint**) pointing at `POST https://<your-host>/stripe/webhook`, and enable
+**all** of the events below. Stripe only sends what you select: an event you
+leave off is not an error anywhere, it is simply a part of the money path that
+silently never happens.
+
+| Event | What it does | Cost of leaving it off |
+|---|---|---|
+| `checkout.session.completed` | Marks the submission **paid**, stores the Stripe customer/subscription ids, provisions the bot | Nobody is ever marked paid; no bot is ever deployed |
+| `checkout.session.async_payment_succeeded` | Provisions after a **delayed** payment method finally clears | Customers paying by bank debit pay and never get a bot |
+| `checkout.session.async_payment_failed` | Records the failure, keeps the signup unprovisioned | A declined delayed payment looks identical to a pending one |
+| `checkout.session.expired` | Marks an abandoned cart `abandoned` | `/admin` fills with signups stuck on "pending" forever |
+| `invoice.paid` *(or `invoice.payment_succeeded`)* | Records each renewal; clears `past_due` when a card is fixed | A customer who fixes their card stays flagged past due |
+| `invoice.payment_failed` | Flags `past_due` and alerts you while Stripe retries the card | You learn about churn only after the money has stopped |
+| `customer.subscription.updated` | Tracks status and a pending end-of-period cancellation | No warning before a cancellation lands |
+| `customer.subscription.deleted` | Flags `canceled` and alerts you to deprovision | **Cancelled customers keep a running bot for free, indefinitely** |
+| `charge.refunded` | Flags `refunded` | A refunded customer keeps their bot |
+| `charge.dispute.created` | Urgent alert with the stored consent evidence | A chargeback is **lost by default** if you miss the evidence deadline |
+
+Two deliberate behaviours worth knowing:
+
+* **Nothing is ever auto-deprovisioned.** A cancellation, refund or chargeback
+  records the state and alerts you — it never deletes the customer's service,
+  because that bot may be holding open positions with the customer's own money.
+  You run `python admin_cli.py deprovision <id>` once they have flattened.
+* **`past_due` keeps trading.** While Stripe is still retrying the card the
+  customer has not left; killing a live trading bot over one failed retry is
+  worse than carrying them for a few days. Only `canceled` / `unpaid` /
+  `refunded` / `disputed` block a (re-)deployment.
+
+Verify with **Stripe CLI** before going live:
+
+```bash
+stripe listen --forward-to localhost:8080/stripe/webhook
+stripe trigger checkout.session.completed
+stripe trigger invoice.payment_failed
+stripe trigger customer.subscription.deleted
+```
 
 ## 2. Run
 

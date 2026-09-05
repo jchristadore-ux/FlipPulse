@@ -55,13 +55,15 @@ def cmd_list() -> None:
     if not subs:
         print(f"(no submissions in {SUBMISSIONS_DIR})")
         return
-    print(f"{'ID':<40} {'NAME':<18} {'FORMAT':<12} {'BALANCE':>10}  PAID")
-    print("-" * 92)
+    print(f"{'ID':<40} {'NAME':<18} {'FORMAT':<12} {'BALANCE':>10}  {'PAID':<10} BILLING")
+    print("-" * 110)
     for p in subs:
         d = json.loads(p.read_text())
+        billing = (d.get("billing") or {}).get("status") or "—"
         print(f"{d['id']:<40} {d.get('full_name','')[:17]:<18} "
               f"{d.get('trading_format',''):<12} "
-              f"${d.get('starting_balance',0):>9,.0f}  {d.get('payment_status','?')}")
+              f"${d.get('starting_balance',0):>9,.0f}  "
+              f"{d.get('payment_status','?'):<10} {billing}")
 
 
 def _env_pairs(sub: dict) -> list[tuple[str, str]]:
@@ -112,6 +114,15 @@ def cmd_provision(sub_id: str) -> None:
 
 def cmd_status(sub_id: str) -> None:
     sub = _load(sub_id)
+    billing = sub.get("billing") or {}
+    print(f"{'payment_status':16} {sub.get('payment_status','?')}")
+    for k in ("status", "last_event", "failed_attempts", "cancel_at_period_end",
+              "last_invoice_paid_at", "canceled_at", "dispute_reason", "updated_at"):
+        if billing.get(k) not in (None, ""):
+            print(f"{'billing.' + k:16} {billing[k]}")
+    for k in ("stripe_customer", "stripe_subscription"):
+        if sub.get(k):
+            print(f"{k:16} {sub[k]}")
     prov = sub.get("provisioning") or {}
     if not prov:
         print(f"{sub_id}: not provisioned.")

@@ -38,6 +38,48 @@
   <div class="meta">{{ sub.email }} · format <b style="color:#7ef2a0;">{{ sub.trading_format }}</b> ·
     starting ${{ '{:,.0f}'.format(sub.starting_balance) }} · {{ sub.created_at[:16].replace('T',' ') }}</div>
 
+  <h2>Billing (Stripe)</h2>
+  <div class="prov">
+    {% set bst = billing.get('status') %}
+    {% if bst == 'active' %}
+      <span class="st ok">✅ ACTIVE</span> — subscription in good standing.
+      {% if billing.get('last_invoice_paid_at') %}Last invoice paid
+      {{ billing.last_invoice_paid_at[:16].replace('T',' ') }} UTC.{% endif %}
+    {% elif bst == 'past_due' %}
+      <span class="st run">⚠️ PAST DUE</span> — a renewal charge was declined
+      (attempt {{ billing.get('failed_attempts') or '?' }}). Stripe is still
+      retrying the card; the bot keeps running until the retries are exhausted.
+    {% elif bst in ('canceled', 'unpaid') %}
+      <span class="st bad">🔻 {{ bst|upper }}</span> — the customer has churned.
+      Their bot is <b>not</b> stopped automatically (it may hold open positions):
+      <code>python admin_cli.py deprovision {{ sub.id }}</code>
+    {% elif bst == 'refunded' %}
+      <span class="st bad">💸 REFUNDED</span> {{ billing.get('refunded_amount') or '' }}.
+      <code>python admin_cli.py deprovision {{ sub.id }}</code>
+    {% elif bst == 'disputed' %}
+      <span class="st bad">🚨 DISPUTED</span> — chargeback
+      ({{ billing.get('dispute_reason') or 'reason unknown' }}). Respond in Stripe
+      before the evidence deadline; this signup's consent record
+      ({{ (sub.consent or {}).get('terms_version') }}, accepted
+      {{ ((sub.consent or {}).get('accepted_at') or '')[:16].replace('T',' ') }} UTC
+      from {{ (sub.consent or {}).get('ip') }}) is the evidence.
+    {% elif bst == 'awaiting_payment' %}
+      <span class="st run">⏳ CLEARING</span> — checkout completed with a delayed
+      payment method. No bot until Stripe confirms the funds.
+    {% elif bst %}
+      <span class="st none">{{ bst }}</span>
+    {% else %}
+      <span class="st none">— no Stripe billing events recorded yet</span>
+    {% endif %}
+    {% if billing.get('cancel_at_period_end') %}
+      <br><span class="st run">Set to cancel at period end.</span>
+    {% endif %}
+    {% if sub.stripe_subscription %}
+      <br><a href="https://dashboard.stripe.com/subscriptions/{{ sub.stripe_subscription }}"
+             target="_blank">Open subscription in Stripe →</a>
+    {% endif %}
+  </div>
+
   <h2>Automated deployment</h2>
   <div class="prov">
     {% if prov.status == 'provisioned' %}

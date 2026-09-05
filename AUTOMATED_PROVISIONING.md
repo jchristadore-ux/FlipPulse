@@ -113,6 +113,13 @@ sequenceDiagram
 4. **Stripe webhook** (you likely have this already): endpoint
    `POST /stripe/webhook`, event `checkout.session.completed`, and
    `STRIPE_WEBHOOK_SECRET` set. This is the trigger for zero-touch provisioning.
+   Enable the rest of the billing-lifecycle events too — see
+   [`onboarding/README.md` §1a](onboarding/README.md#1a-stripe-webhook-events--required).
+   Provisioning is gated on billing state as well as payment: a submission whose
+   billing status is `canceled`, `unpaid`, `refunded` or `disputed` is refused by
+   `provision()` and skipped by the boot sweep, so a restart can never resurrect
+   a churned customer's bot. The operator override (`/admin` button,
+   `admin_cli.py provision`) still deploys it deliberately.
 5. Redeploy the onboarding service. `GET /healthz` now reports
    `"railway": true, "auto_provision": true`.
 
@@ -120,6 +127,8 @@ sequenceDiagram
 
 - [ ] `/healthz` shows `railway: true` and `auto_provision: true`
 - [ ] Stripe webhook delivers `checkout.session.completed` (Stripe dashboard → webhook → 200s)
+- [ ] The webhook endpoint subscribes to every event in `onboarding/README.md` §1a
+- [ ] `SUBMISSIONS_DIR` points at a mounted volume (`/healthz` → `submissions_durable: true`)
 - [ ] A test signup (Stripe test mode) produces a new service **in the onboarding's own project** with a green deploy
 - [ ] The provisioning result arrived on your operator Telegram
 - [ ] `/admin` shows the customer as “✅ running” with a working project link

@@ -127,6 +127,18 @@ DEPLOY_FAILED_STATUSES  = {"FAILED", "CRASHED", "REMOVED", "SKIPPED"}
 STEPS = ("locate_project", "create_service", "attach_volume",
          "create_domain", "set_variables", "deploy", "verify")
 
+# Billing states in which a customer must NOT get a (re-)deployed bot, even
+# though payment_status is still "paid" from their first invoice: they have
+# cancelled, exhausted Stripe's card retries, been refunded, or charged back.
+# Without this gate the boot sweep would happily resurrect a churned customer's
+# bot after a restart. "past_due" is deliberately NOT here — Stripe is still
+# retrying the card and the customer has not left.
+BILLING_BLOCKS_PROVISION = {"canceled", "unpaid", "refunded", "disputed"}
+
+
+def _billing_status(sub: dict) -> str:
+    return ((sub.get("billing") or {}).get("status") or "")
+
 
 class ProvisionError(RuntimeError):
     """A provisioning step failed. `step` names the checkpoint that failed."""
@@ -411,6 +423,11 @@ def provision(sub_id: str, client: RailwayClient | None = None,
     if require_paid and sub.get("payment_status") != "paid":
         raise ProvisionError("payment", f"Submission {sub_id} is not paid "
                              f"({sub.get('payment_status')!r}); use force to override.")
+    billing = _billing_status(sub)
+    if require_paid and billing in BILLING_BLOCKS_PROVISION:
+        raise ProvisionError("billing", f"Submission {sub_id} has billing status "
+                             f"{billing!r} — the customer has churned or charged "
+                             f"back; use the operator override to deploy anyway.")
 
     lock = _acquire_lock(sub_id)
     if lock is None:
@@ -666,6 +683,8 @@ def reconcile_pending() -> list[str]:
       • "provisioned" (done) and "deprovisioned" (deliberate operator delete —
         must never be silently resurrected)
       • "in_progress" with a fresh checkpoint (a live worker owns it)
+      • any billing status in BILLING_BLOCKS_PROVISION — a customer who
+        cancelled or charged back must not have a bot brought back by a restart
     provision() itself resumes from per-step checkpoints, so a re-enqueued job
     never duplicates Railway resources."""
     if not is_configured():
@@ -678,6 +697,10 @@ def reconcile_pending() -> list[str]:
         except (OSError, ValueError):
             continue
         if sub.get("payment_status") != "paid" or not sub.get("id"):
+            continue
+        if _billing_status(sub) in BILLING_BLOCKS_PROVISION:
+            log.info("Boot sweep: skipping %s (billing status %s).",
+                     sub["id"], _billing_status(sub))
             continue
         prov = sub.get("provisioning") or {}
         status = prov.get("status")
