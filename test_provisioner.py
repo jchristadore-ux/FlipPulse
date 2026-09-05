@@ -368,3 +368,19 @@ def test_sweep_noop_without_railway_token(submission, tmp_path, enqueue_recorder
     _write_sub(tmp_path, submission, "s-never")
     assert prov_mod.reconcile_pending() == []
     assert enqueue_recorder == []
+
+
+def test_paste_variables_includes_state_paths_without_dashboard_password(submission):
+    """Admin/CLI paste must include /data paths (so manual deploys are durable)
+    but must NOT mint a DASHBOARD_PASSWORD (provisioner owns that secret)."""
+    secrets = {"kalshi_api_key_id": "key-id",
+               "kalshi_private_key_pem": PEM,
+               "telegram_bot_token": "tok"}
+    pasted = prov_mod.paste_variables(submission, secrets)
+    assert pasted["DEMO_MODE"] == "true"
+    assert pasted["STATUS_SNAPSHOT_PATH"].startswith("/data/")
+    assert pasted["RECOVERY_STATE_PATH"].startswith("/data/")
+    assert "DASHBOARD_PASSWORD" not in pasted
+    full = prov_mod.deploy_variables(submission, secrets, dashboard_password="fixed-pass-16chars")
+    assert full["DASHBOARD_PASSWORD"] == "fixed-pass-16chars"
+    assert full["STATUS_SNAPSHOT_PATH"] == pasted["STATUS_SNAPSHOT_PATH"]

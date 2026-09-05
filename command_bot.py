@@ -40,7 +40,7 @@ from typing import List, Optional
 
 import requests
 
-log = logging.getLogger("FlipPulse.command_bot")
+log = logging.getLogger("flippulse.command_bot")
 
 # Where bot.py persists its state on the Railway volume. Defaults match
 # .env.example so a properly-configured deploy needs no extra wiring.
@@ -106,7 +106,7 @@ def attach_health_log(path: str = HEALTH_LOG_PATH) -> bool:
         handler = RotatingFileHandler(path, maxBytes=512_000, backupCount=1)
         handler.setFormatter(logging.Formatter(
             "%(asctime)s │ %(levelname)-8s │ %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-        bot_logger = logging.getLogger("MarkeyMachine")
+        bot_logger = logging.getLogger("flippulse.bot")
         # Avoid double-attaching if start_command_bot is called more than once.
         if not any(isinstance(h, RotatingFileHandler)
                    and getattr(h, "baseFilename", "") == handler.baseFilename

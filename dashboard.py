@@ -48,7 +48,7 @@ try:
 except Exception:                          # pragma: no cover - formats always present
     FORMATS = {}
 
-log = logging.getLogger("FlipPulse.dashboard")
+log = logging.getLogger("flippulse.dashboard")
 
 # Same /data paths bot.py uses — the dashboard and the engine meet on these files.
 STATUS_SNAPSHOT_PATH  = os.environ.get("STATUS_SNAPSHOT_PATH", "").strip() or "/data/status_snapshot.json"

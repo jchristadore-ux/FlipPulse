@@ -1,0 +1,25 @@
+# Keep customer bot images lean — Nixpacks still needs bot runtime + onboarding
+# for the onboarding service, but marketing/business media and local tooling
+# must not ship into every customer container.
+marketing/
+business/
+docs/
+*.mp4
+*.pdf
+IMG_7262.jpeg
+CHANGELOG.md
+AUDIT_*.md
+BASELINE.md
+IMPROVEMENTS_LOG.md
+PAYMENT_READINESS.md
+REENABLE_PERFORMANCE_FEE.md
+TEST_PROVISIONING.md
+.venv/
+venv/
+.env
+*.pem
+.git/
+.github/
+**/__pycache__/
+*.pyc
+.pytest_cache/

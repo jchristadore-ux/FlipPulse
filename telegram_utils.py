@@ -31,7 +31,7 @@ from typing import Optional, Tuple
 
 import requests
 
-log = logging.getLogger("MarkeyMachine.telegram")
+log = logging.getLogger("flippulse.telegram")
 
 # ── Module state ──────────────────────────────────────────────────────────────
 _telegram_enabled: bool = False
@@ -290,26 +290,14 @@ def _log_config_diagnostic(token: str) -> None:
         log.debug("getMe diagnostic error: %s", exc)
         return
 
-    try:
-        upd = requests.get(f"{base}/getUpdates", params={"timeout": 0}, timeout=8).json()
-        chats = {}
-        for u in upd.get("result", []) if upd.get("ok") else []:
-            msg = u.get("message") or u.get("edited_message") or {}
-            c = msg.get("chat") or {}
-            if c.get("id") is not None:
-                who = c.get("username") or c.get("title") or c.get("first_name") or "?"
-                chats[str(c["id"])] = who
-        if chats:
-            listing = ", ".join(f"{cid} ({who})" for cid, who in chats.items())
-            log.error("Chats that have messaged @%s: %s. Set TELEGRAM_CHAT_ID to "
-                      "the correct id from this list and redeploy.",
-                      me["result"].get("username", "this bot"), listing)
-        else:
-            log.error("No chats have messaged this bot yet — open Telegram, find "
-                      "@%s, press Start (or send it any message), then redeploy so "
-                      "it can reach you.", me["result"].get("username", "the bot"))
-    except Exception as exc:  # pragma: no cover - network
-        log.debug("getUpdates diagnostic error: %s", exc)
+    # Intentionally do NOT call getUpdates here. Telegram allows only one
+    # long-poll consumer per token; a diagnostic getUpdates races the command
+    # bot (HTTP 409) and can drop a pending update. getMe above already tells
+    # the operator the token is valid — the remaining fix is always: press
+    # Start on @bot and set TELEGRAM_CHAT_ID to that chat.
+    log.error("Open Telegram, find @%s, press Start (or send any message), then "
+              "set TELEGRAM_CHAT_ID to that chat's id and redeploy.",
+              me["result"].get("username", "the bot"))
 
 
 def _send_raw(text: str) -> bool:

@@ -320,16 +320,30 @@ def _checkpoint(sub: dict, **updates) -> dict:
 
 
 # ── Variable set (runbook §4, complete — nothing left to add by hand) ─────────
-def deploy_variables(sub: dict, secrets: dict,
-                     dashboard_password: str | None = None) -> dict:
-    """The FULL environment for a customer bot: the per-customer values from the
-    submission plus the /data state paths from .env.example. The Kalshi key goes
-    in as the single-line KALSHI_PRIVATE_KEY_PEM_B64 (can't be mangled).
+# Single source of truth for customer bot env. app.py admin paste + admin_cli.py
+# import these helpers so a manual deploy cannot omit the /data state paths.
 
-    dashboard_password must be passed by provision() from the persisted checkpoint
-    so it stays STABLE across resumes/reconciles (variables_upsert re-applies this
-    set on every run — a freshly-generated password each time would silently rotate
-    the customer's login). Defaults to a one-off value only for standalone callers."""
+# Paths that MUST live on the attached /data volume (survive redeploys).
+STATE_PATH_VARS: dict[str, str] = {
+    "RECOVERY_STATE_PATH": "/data/recovery_state.json",
+    "PROBATION_STATE_PATH": "/data/probation_state.json",
+    "BUCKET_STATS_PATH": "/data/bucket_stats.json",
+    "BILLING_STATE_PATH": "/data/billing_state.json",
+    "DAILY_STATE_PATH": "/data/daily_state.json",
+    "STATUS_SNAPSHOT_PATH": "/data/status_snapshot.json",
+    "HEALTH_LOG_PATH": "/data/health.log",
+    "DASHBOARD_SECRET_PATH": "/data/dashboard_secret",
+    "RISK_OVERRIDE_PATH": "/data/risk_override.json",
+    "RESERVE_OVERRIDE_PATH": "/data/reserve_override.json",
+    "FORMAT_OVERRIDE_PATH": "/data/format_override.json",
+    "TELEGRAM_PREFS_PATH": "/data/telegram_prefs.json",
+    "MODE_OVERRIDE_PATH": "/data/mode_override.json",
+    "BILLING_LOG_PATH": "/data/billing.log",
+}
+
+
+def credential_variables(sub: dict, secrets: dict) -> dict:
+    """Per-customer identity + trading config (no generated secrets, no state paths)."""
     pem_b64 = base64.b64encode(secrets.get("kalshi_private_key_pem", "").encode()).decode()
     variables = {
         "KALSHI_API_KEY_ID": secrets.get("kalshi_api_key_id", ""),
@@ -339,33 +353,34 @@ def deploy_variables(sub: dict, secrets: dict,
         "TRADING_FORMAT": sub.get("trading_format", "balanced"),
         "TELEGRAM_BOT_TOKEN": secrets.get("telegram_bot_token", ""),
         "TELEGRAM_CHAT_ID": sub.get("telegram_chat_id", ""),
-        # State on the /data volume so it survives redeploys (runbook §3–§4).
-        "RECOVERY_STATE_PATH": "/data/recovery_state.json",
-        "PROBATION_STATE_PATH": "/data/probation_state.json",
-        "BUCKET_STATS_PATH": "/data/bucket_stats.json",
-        "BILLING_STATE_PATH": "/data/billing_state.json",
-        # Today's opening balance, realized P&L and halt state — on /data so a
-        # redeploy cannot clear a banked daily target and re-arm a second +3%.
-        "DAILY_STATE_PATH": "/data/daily_state.json",
-        "STATUS_SNAPSHOT_PATH": "/data/status_snapshot.json",
-        "HEALTH_LOG_PATH": "/data/health.log",
-        # Self-service dashboard + Telegram /risk override files (all on /data so
-        # customer tuning survives redeploys). A strong per-customer password is
-        # generated here; the customer changes their setup at the bot's public URL.
-        "DASHBOARD_PASSWORD": dashboard_password or _gen_dashboard_password(),
-        "DASHBOARD_PORT": DASHBOARD_PORT,
-        "DASHBOARD_SECRET_PATH": "/data/dashboard_secret",
-        "RISK_OVERRIDE_PATH": "/data/risk_override.json",
-        "RESERVE_OVERRIDE_PATH": "/data/reserve_override.json",
-        "FORMAT_OVERRIDE_PATH": "/data/format_override.json",
-        "TELEGRAM_PREFS_PATH": "/data/telegram_prefs.json",
-        "MODE_OVERRIDE_PATH": "/data/mode_override.json",
-        # Performance fee stays a disabled placeholder (runbook §9b).
-        "PERF_FEE_PCT": "0.0",
-        "BILLING_LOG_PATH": "/data/billing.log",
+        "PERF_FEE_PCT": "0.0",                     # placeholder — fee not charged
     }
     if BOT_OPERATOR_CHAT_ID:
         variables["TELEGRAM_OPERATOR_CHAT_ID"] = BOT_OPERATOR_CHAT_ID
+    return variables
+
+
+def paste_variables(sub: dict, secrets: dict) -> dict:
+    """Admin/CLI paste set: credentials + /data state paths.
+    Omits DASHBOARD_PASSWORD (only the provisioner mints that) so a manual paste
+    cannot silently rotate a live customer's login."""
+    variables = credential_variables(sub, secrets)
+    variables.update(STATE_PATH_VARS)
+    variables["DASHBOARD_PORT"] = DASHBOARD_PORT
+    return variables
+
+
+def deploy_variables(sub: dict, secrets: dict,
+                     dashboard_password: str | None = None) -> dict:
+    """The FULL environment for a customer bot: credentials, /data state paths,
+    and a stable dashboard password.
+
+    dashboard_password must be passed by provision() from the persisted checkpoint
+    so it stays STABLE across resumes/reconciles (variables_upsert re-applies this
+    set on every run — a freshly-generated password each time would silently rotate
+    the customer's login). Defaults to a one-off value only for standalone callers."""
+    variables = paste_variables(sub, secrets)
+    variables["DASHBOARD_PASSWORD"] = dashboard_password or _gen_dashboard_password()
     return variables
 
 
