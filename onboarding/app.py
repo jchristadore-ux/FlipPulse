@@ -33,6 +33,7 @@ Design notes
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import json
 import logging
@@ -222,21 +223,12 @@ def _decrypt(token: str) -> str:
 
 
 def _deploy_env(sub: dict) -> list:
-    """Ready-to-paste Railway variables for a submission (matches admin_cli.py).
-    The Kalshi private key is emitted as a single-line base64 blob
-    (KALSHI_PRIVATE_KEY_PEM_B64) so it can't be mangled by a multi-line paste.
-    Decrypts the stored secrets — callers must be operator-authorized."""
+    """Ready-to-paste Railway variables for a submission.
+    Uses provisioner.paste_variables so manual deploys get the same /data state
+    paths as automated provisioning (credentials + volume paths). Decrypts the
+    stored secrets — callers must be operator-authorized."""
     s = {k: _decrypt(v) for k, v in sub.get("secrets_encrypted", {}).items()}
-    pem_b64 = base64.b64encode(s.get("kalshi_private_key_pem", "").encode()).decode()
-    return [
-        ("KALSHI_API_KEY_ID", s.get("kalshi_api_key_id", "")),
-        ("KALSHI_PRIVATE_KEY_PEM_B64", pem_b64),
-        ("DEMO_MODE", "true"),
-        ("PAPER_BALANCE", str(sub.get("starting_balance", ""))),
-        ("TRADING_FORMAT", sub.get("trading_format", "balanced")),
-        ("TELEGRAM_BOT_TOKEN", s.get("telegram_bot_token", "")),
-        ("TELEGRAM_CHAT_ID", sub.get("telegram_chat_id", "")),
-    ]
+    return list(provisioner.paste_variables(sub, s).items())
 
 
 def _load_submission(sub_id: str) -> "dict | None":
@@ -252,14 +244,26 @@ def _load_submission(sub_id: str) -> "dict | None":
         return None
 
 
+def _admin_session_cookie() -> str:
+    """Derived admin session value — never store the raw ADMIN_TOKEN in a cookie
+    (query-string logins still accept the raw token once, then set this cookie)."""
+    return hmac.new(b"flippulse-admin-v1", ADMIN_TOKEN.encode(),
+                    hashlib.sha256).hexdigest()
+
+
 def _admin_authorized() -> bool:
     """True when the request carries the operator token (cookie, header, or query)."""
     if not ADMIN_TOKEN:
         return False
-    supplied = (request.cookies.get("fp_admin")
-                or request.headers.get("X-Admin-Token")
+    cookie = request.cookies.get("fp_admin") or ""
+    if cookie and hmac.compare_digest(cookie, _admin_session_cookie()):
+        return True
+    # Legacy: older cookies stored the raw token — still accept, then rotate.
+    if cookie and hmac.compare_digest(cookie, ADMIN_TOKEN):
+        return True
+    supplied = (request.headers.get("X-Admin-Token")
                 or request.args.get("token") or "")
-    return hmac.compare_digest(supplied, ADMIN_TOKEN)
+    return bool(supplied) and hmac.compare_digest(supplied, ADMIN_TOKEN)
 
 
 def _pem_looks_valid(pem: str) -> bool:
@@ -1139,8 +1143,10 @@ def admin_list():
     q = request.args.get("token")
     if q and hmac.compare_digest(q, ADMIN_TOKEN):
         resp = make_response(redirect(url_for("admin_list")))
-        resp.set_cookie("fp_admin", ADMIN_TOKEN, httponly=True,
-                        samesite="Lax", secure=request.is_secure)
+        # Store a derived session cookie, not the raw token (proxy/access logs
+        # may retain the one-time ?token= URL; the cookie itself must not).
+        resp.set_cookie("fp_admin", _admin_session_cookie(), httponly=True,
+                        samesite="Lax", secure=request.is_secure, max_age=86400 * 14)
         return resp
     if not _admin_authorized():
         abort(404)

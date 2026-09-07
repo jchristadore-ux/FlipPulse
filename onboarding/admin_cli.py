@@ -20,7 +20,6 @@ Automated provisioning (also needs RAILWAY_API_TOKEN; see AUTOMATED_PROVISIONING
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import sys
@@ -67,27 +66,23 @@ def cmd_list() -> None:
 
 
 def _env_pairs(sub: dict) -> list[tuple[str, str]]:
-    """Ready-to-paste Railway variables. The Kalshi key is a single-line base64 blob
-    (KALSHI_PRIVATE_KEY_PEM_B64) so it can't be mangled by a multi-line paste."""
+    """Ready-to-paste Railway variables (credentials + /data state paths).
+    Single source of truth: provisioner.paste_variables."""
+    try:
+        import provisioner
+    except ImportError:
+        from onboarding import provisioner  # type: ignore
     secrets = _decrypt_secrets(sub)
-    pem_b64 = base64.b64encode(secrets.get("kalshi_private_key_pem", "").encode()).decode()
-    return [
-        ("KALSHI_API_KEY_ID", secrets.get("kalshi_api_key_id", "")),
-        ("KALSHI_PRIVATE_KEY_PEM_B64", pem_b64),
-        ("DEMO_MODE", "true"),
-        ("PAPER_BALANCE", str(sub.get("starting_balance", ""))),
-        ("TRADING_FORMAT", sub.get("trading_format", "balanced")),
-        ("TELEGRAM_BOT_TOKEN", secrets.get("telegram_bot_token", "")),
-        ("TELEGRAM_CHAT_ID", sub.get("telegram_chat_id", "")),
-    ]
+    return list(provisioner.paste_variables(sub, secrets).items())
 
 
 def cmd_show(sub_id: str) -> None:
     sub = _load(sub_id)
     print(f"# Submission {sub['id']}  ({sub.get('full_name')} <{sub.get('email')}>)")
     print(f"# Created {sub.get('created_at')}  ·  Payment: {sub.get('payment_status')}")
-    print("# Paste these into the Railway service Variables (plus the /data *_STATE_PATH")
-    print("# vars from .env.example). Every value is a single line — nothing to reformat.\n")
+    print("# Paste these into the Railway service Variables. Includes /data state paths.")
+    print("# DASHBOARD_PASSWORD is minted only by `provision` — add it separately if\n")
+    print("# you are deploying by hand. Every value is a single line.\n")
     for k, v in _env_pairs(sub):
         print(f"{k}={v}")
 

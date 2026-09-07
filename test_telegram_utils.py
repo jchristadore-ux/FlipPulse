@@ -165,18 +165,22 @@ class JsonResp:
         return self._payload
 
 
-def test_config_diagnostic_lists_reachable_chats(monkeypatch, caplog):
-    """On a 'chat not found' failure the bot should name its @username and the
-    chat ids that HAVE messaged it — handing the operator the correct value."""
+def test_config_diagnostic_names_bot_without_getupdates(monkeypatch, caplog):
+    """On a 'chat not found' failure the bot should name its @username via getMe
+    and tell the operator to press Start — without calling getUpdates (avoids
+    HTTP 409 races with the command listener)."""
+    calls = []
+
     def fake_get(url, **k):
+        calls.append(url)
         if url.endswith("/getMe"):
             return JsonResp({"ok": True, "result": {"username": "CustBot", "first_name": "Cust"}})
-        return JsonResp({"ok": True, "result": [
-            {"message": {"chat": {"id": 42, "username": "realuser"}}}]})
+        raise AssertionError(f"unexpected GET {url}")
 
     monkeypatch.setattr(tg.requests, "get", fake_get)
     with caplog.at_level("ERROR"):
         tg._log_config_diagnostic("token123")
     text = caplog.text
     assert "CustBot" in text
-    assert "42" in text and "realuser" in text
+    assert "Start" in text
+    assert all("/getUpdates" not in u for u in calls)

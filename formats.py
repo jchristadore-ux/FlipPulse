@@ -47,7 +47,7 @@ import os
 import sys
 from typing import Dict, List
 
-log = logging.getLogger("FlipPulse.formats")
+log = logging.getLogger("flippulse.formats")
 
 DEFAULT_FORMAT = "balanced"
 

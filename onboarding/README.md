@@ -37,6 +37,7 @@ submission):
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
+
 Environment variables:
 
 | Variable | Required | Purpose |
@@ -60,6 +61,19 @@ Environment variables:
 | `AUTO_PROVISION` | optional (default `true`) | Provision automatically on `checkout.session.completed`. `false` = use the `/admin` button or CLI. |
 | `PROVISION_REPO` / `PROVISION_REPO_BRANCH` | optional | Repo/branch every customer bot deploys from (default `jchristadore-ux/FlipPulse` @ `release` — the pinned fleet branch; promote with `git push origin main:release`). |
 | `BOT_OPERATOR_CHAT_ID` | recommended | Injected into every provisioned bot as `TELEGRAM_OPERATOR_CHAT_ID` so all customer-bot alerts fan out to you. |
+
+
+### Env-var prefix map (onboarding service ↔ customer bot)
+
+| Onboarding / provisioner | Becomes on the customer bot | Notes |
+|---|---|---|
+| `ONBOARDING_FERNET_KEY` | (never shipped) | Decrypt-only on the web service |
+| `ONBOARDING_TELEGRAM_*` | (operator alerts only) | Not the customer's bot |
+| `BOT_OPERATOR_CHAT_ID` | `TELEGRAM_OPERATOR_CHAT_ID` | Fan-out of customer-bot alerts to you |
+| `ADMIN_TOKEN` | (onboarding only) | `/admin` dashboard |
+| `AUTO_PROVISION` / `PROVISION_*` / `RAILWAY_*` | (onboarding only) | Provisioning knobs |
+| `SUBMISSIONS_DIR` | (onboarding only) | Prefer `/data/submissions` |
+| Submission fields → | `KALSHI_*`, `TELEGRAM_*`, `TRADING_FORMAT`, `PAPER_BALANCE`, `/data/*_PATH` | Via `provisioner.paste_variables` / `deploy_variables` |
 
 Full provisioning reference (all knobs, failure handling, architecture):
 [`../AUTOMATED_PROVISIONING.md`](../AUTOMATED_PROVISIONING.md).

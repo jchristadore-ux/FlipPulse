@@ -71,3 +71,16 @@ def test_checkout_failure_shows_pending_not_paid(client, tmp_path, monkeypatch):
     assert "No card was charged" in page
     page_ok = client.get("/success").get_data(as_text=True)
     assert "No card was charged" not in page_ok
+
+
+def test_admin_cookie_is_derived_not_raw_token(monkeypatch, client):
+    """?token= login must set a hashed session cookie, never the raw ADMIN_TOKEN."""
+    monkeypatch.setattr(app_mod, "ADMIN_TOKEN", "super-secret-admin-token")
+    r = client.get("/admin?token=super-secret-admin-token", follow_redirects=False)
+    assert r.status_code in (302, 303)
+    set_cookie = r.headers.get("Set-Cookie", "")
+    assert "fp_admin=" in set_cookie
+    assert "super-secret-admin-token" not in set_cookie
+    # Cookie value equals the derived session cookie helper.
+    expected = app_mod._admin_session_cookie()
+    assert f"fp_admin={expected}" in set_cookie.replace(" ", "")
